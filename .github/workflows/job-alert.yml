@@ -1,0 +1,43 @@
+name: Job Alert Scan
+
+on:
+  schedule:
+    # Every hour — adjust to taste (GitHub min is every 5 min; hourly is safe within free tier)
+    - cron: '0 * * * *'
+  workflow_dispatch:  # manual trigger from GitHub Actions tab
+
+jobs:
+  scan:
+    name: Scan LinkedIn & Indeed
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r cloud/requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Run job alert worker
+        run: python cloud/worker.py
+        env:
+          KEYWORDS:            ${{ secrets.KEYWORDS }}
+          LOCATION:            ${{ secrets.LOCATION }}
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          MAX_HOURS:           ${{ secrets.MAX_HOURS }}
+          LINKEDIN_COOKIE:     ${{ secrets.LINKEDIN_COOKIE }}
+          HIDE_APPLIED:        ${{ secrets.HIDE_APPLIED }}
+          SEARCH_LINKEDIN:     ${{ secrets.SEARCH_LINKEDIN }}
+          SEARCH_INDEED:       ${{ secrets.SEARCH_INDEED }}

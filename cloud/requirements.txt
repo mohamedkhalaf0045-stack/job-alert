@@ -1,0 +1,4 @@
+requests==2.32.3
+psycopg2-binary==2.9.9
+playwright==1.44.0
+playwright-stealth==1.0.6

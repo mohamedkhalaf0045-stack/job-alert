@@ -1,0 +1,15 @@
+# Sensitive credentials — never commit these
+settings.json
+
+# Runtime state files
+jobs.db
+seen-jobs.json
+telegram-offset.json
+worker.pid
+
+# Logs
+*.log
+worker-crash.log
+bot_stdout.txt
+bot_stderr.txt
+startup_error.txt
