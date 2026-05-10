@@ -144,13 +144,12 @@ def scrape_linkedin(
     hide_applied: bool = False,
     max_pages: int = 2,
 ) -> list[dict]:
-    use_auth = bool(cookie_header)
     all_jobs: list[dict] = []
     seen_ids: set[str] = set()
 
     for page_idx in range(max_pages):
         start = page_idx * 25
-        url = _auth_url(keyword, location, start) if use_auth else _guest_url(keyword, location, start)
+        url = _guest_url(keyword, location, start)
         html_text = _fetch(url, cookie_header)
         if html_text is None:
             print(f"[LinkedIn] HTTP 429 on '{keyword}' page {page_idx + 1} — skipping")
