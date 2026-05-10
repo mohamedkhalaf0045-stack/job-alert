@@ -26,7 +26,6 @@ jobs:
         run: pip install -r cloud/requirements.txt
 
       - name: Install Playwright browsers
-        if: ${{ vars.SEARCH_INDEED == 'true' || secrets.SEARCH_INDEED == 'true' }}
         run: playwright install chromium --with-deps
 
       - name: Run job alert worker
