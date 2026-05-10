@@ -83,6 +83,32 @@ def main() -> None:
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
 
+    # --- Handle pending Telegram commands (/status etc.) ---
+    if tg_token and tg_chat:
+        try:
+            tg_offset = int(db.get_config(supabase_url, supabase_key, "telegram_offset", "0"))
+            updates   = tg.get_updates(tg_token, offset=tg_offset)
+            commands  = tg.extract_commands(updates)
+            for cmd in commands:
+                if cmd["command"] == "/status":
+                    job_count = db.get_job_count(supabase_url, supabase_key)
+                    kw_preview = ", ".join(keywords[:3]) + ("..." if len(keywords) > 3 else "")
+                    msg = (
+                        f"Cloud worker — running OK\n"
+                        f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
+                        f"Keywords ({len(keywords)}): {kw_preview}\n"
+                        f"Location: {location}\n"
+                        f"Jobs in DB: {job_count}\n"
+                        f"Max age: {max_hours}h"
+                    )
+                    tg.send_message(tg_token, cmd["chat_id"], msg)
+                    _log(f"Replied to /status from chat {cmd['chat_id']}")
+            if updates:
+                new_offset = max(u["update_id"] for u in updates) + 1
+                db.set_config(supabase_url, supabase_key, "telegram_offset", str(new_offset))
+        except Exception as exc:
+            _log(f"Telegram command poll error: {exc}")
+
     # Load already-sent URLs to avoid duplicate Telegram alerts
     sent_urls = db.get_telegram_sent_urls(supabase_url, supabase_key)
     _log(f"Loaded {len(sent_urls)} previously sent URLs from DB.")

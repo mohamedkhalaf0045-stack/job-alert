@@ -89,6 +89,38 @@ def initialize_database(supabase_url: str, supabase_key: str) -> None:
             "Run the CREATE TABLE SQL in the Supabase SQL Editor first. "
             f"Details: {exc}"
         )
+    # Ensure bot_state table exists (best-effort — ignore if missing)
+    try:
+        sb.table("bot_state").select("key").limit(1).execute()
+    except Exception:
+        pass
+
+
+def get_config(supabase_url: str, supabase_key: str, key: str, default: str = "") -> str:
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = sb.table("bot_state").select("value").eq("key", key).execute()
+        rows = result.data or []
+        return rows[0]["value"] if rows else default
+    except Exception:
+        return default
+
+
+def set_config(supabase_url: str, supabase_key: str, key: str, value: str) -> None:
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        sb.table("bot_state").upsert({"key": key, "value": value}).execute()
+    except Exception:
+        pass
+
+
+def get_job_count(supabase_url: str, supabase_key: str) -> int:
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = sb.table("jobs").select("job_id", count="exact").limit(1).execute()
+        return result.count or 0
+    except Exception:
+        return 0
 
 
 def get_telegram_sent_urls(supabase_url: str, supabase_key: str) -> set[str]:

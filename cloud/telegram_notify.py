@@ -63,3 +63,34 @@ def send_summary(bot_token: str, chat_id: str, jobs: list[dict], label: str = ""
     for i, job in enumerate(jobs[:10], 1):
         lines.append(f"{i}. {job.get('Title','')} @ {job.get('Company','')}\n   {job.get('Url','')}")
     send_message(bot_token, chat_id, header + "\n".join(lines))
+
+
+def get_updates(bot_token: str, offset: int = 0, limit: int = 20) -> list[dict]:
+    url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+    try:
+        resp = requests.get(url, params={"offset": offset, "limit": limit, "timeout": 0}, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("ok"):
+                return data.get("result", [])
+        print(f"[Telegram] getUpdates HTTP {resp.status_code}")
+    except requests.RequestException as exc:
+        print(f"[Telegram] getUpdates failed: {exc}")
+    return []
+
+
+def extract_commands(updates: list[dict]) -> list[dict]:
+    cmds = []
+    for update in updates:
+        msg = update.get("message") or update.get("edited_message")
+        if not msg:
+            continue
+        text = (msg.get("text") or "").strip()
+        if text.startswith("/"):
+            cmd = text.split()[0].lower().split("@")[0]  # strip @botname suffix
+            cmds.append({
+                "update_id": update["update_id"],
+                "command": cmd,
+                "chat_id": str(msg["chat"]["id"]),
+            })
+    return cmds
