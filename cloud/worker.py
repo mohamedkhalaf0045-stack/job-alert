@@ -64,7 +64,8 @@ def main() -> None:
 
     keywords       = [k.strip() for k in keywords_raw.split(",") if k.strip()]
     location       = _env("LOCATION", "United Arab Emirates")
-    database_url   = _env("DATABASE_URL")
+    supabase_url   = _env("SUPABASE_URL")
+    supabase_key   = _env("SUPABASE_KEY")
     tg_token       = _env("TELEGRAM_BOT_TOKEN")
     tg_chat        = _env("TELEGRAM_CHAT_ID")
     max_hours      = int(_env("MAX_HOURS", "24"))
@@ -73,17 +74,17 @@ def main() -> None:
     search_li      = _env_bool("SEARCH_LINKEDIN", default=True)
     search_indeed  = _env_bool("SEARCH_INDEED", default=True)
 
-    if not database_url:
-        _log("ERROR: DATABASE_URL env var is not set. Exiting.")
+    if not supabase_url or not supabase_key:
+        _log("ERROR: SUPABASE_URL or SUPABASE_KEY env var is not set. Exiting.")
         sys.exit(1)
 
     _log(f"Starting scan: {len(keywords)} keyword(s), location={location}, max_hours={max_hours}")
 
-    # Ensure table exists
-    db.initialize_database(database_url)
+    # Verify jobs table exists
+    db.initialize_database(supabase_url, supabase_key)
 
     # Load already-sent URLs to avoid duplicate Telegram alerts
-    sent_urls = db.get_telegram_sent_urls(database_url)
+    sent_urls = db.get_telegram_sent_urls(supabase_url, supabase_key)
     _log(f"Loaded {len(sent_urls)} previously sent URLs from DB.")
 
     all_new_jobs: list[dict] = []
@@ -106,7 +107,7 @@ def main() -> None:
                     cookie_header=cookie_header,
                     hide_applied=hide_applied,
                 )
-                summary = db.sync_jobs(database_url, li_jobs, source="LinkedIn")
+                summary = db.sync_jobs(supabase_url, supabase_key, li_jobs, source="LinkedIn")
                 _log(
                     f"LinkedIn '{keyword}': "
                     f"inserted={summary['inserted']}, updated={summary['updated']}, "
@@ -124,7 +125,7 @@ def main() -> None:
                     location=location,
                     max_hours=max_hours,
                 )
-                summary = db.sync_jobs(database_url, indeed_jobs, source="Indeed")
+                summary = db.sync_jobs(supabase_url, supabase_key, indeed_jobs, source="Indeed")
                 _log(
                     f"Indeed '{keyword}': "
                     f"inserted={summary['inserted']}, updated={summary['updated']}, "
@@ -151,7 +152,7 @@ def main() -> None:
         for job in all_new_jobs:
             ok = tg.send_job_alert(tg_token, tg_chat, job)
             if ok:
-                db.mark_telegram_sent(database_url, job.get("Url", ""))
+                db.mark_telegram_sent(supabase_url, supabase_key, job.get("Url", ""))
                 sent_count += 1
                 time.sleep(0.3)  # avoid Telegram flood limits
             else:

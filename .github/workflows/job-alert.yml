@@ -33,7 +33,8 @@ jobs:
         env:
           KEYWORDS:            ${{ secrets.KEYWORDS }}
           LOCATION:            ${{ secrets.LOCATION }}
-          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           MAX_HOURS:           ${{ secrets.MAX_HOURS }}
