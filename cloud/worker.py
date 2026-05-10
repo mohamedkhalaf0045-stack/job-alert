@@ -83,6 +83,32 @@ def main() -> None:
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
 
+    # --- Override settings from Supabase (set via mobile app) ---
+    try:
+        setting_kw      = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
+        setting_loc     = db.get_config(supabase_url, supabase_key, "setting_location", "")
+        setting_hours   = db.get_config(supabase_url, supabase_key, "setting_max_hours", "")
+        setting_li      = db.get_config(supabase_url, supabase_key, "setting_search_linkedin", "")
+        setting_indeed  = db.get_config(supabase_url, supabase_key, "setting_search_indeed", "")
+        setting_cookie  = db.get_config(supabase_url, supabase_key, "setting_linkedin_cookie", "")
+        setting_exclude = db.get_config(supabase_url, supabase_key, "setting_exclude_keywords", "")
+
+        if setting_kw:
+            keywords = [k.strip() for k in setting_kw.split(",") if k.strip()]
+            _log(f"Settings override: {len(keywords)} keyword(s) from Supabase")
+        if setting_loc:
+            location = setting_loc
+        if setting_hours:
+            max_hours = int(setting_hours)
+        if setting_li:
+            search_li = setting_li.lower() not in ("false", "0", "no", "off")
+        if setting_indeed:
+            search_indeed = setting_indeed.lower() not in ("false", "0", "no", "off")
+        if setting_cookie:
+            cookie_header = setting_cookie
+    except Exception as exc:
+        _log(f"Could not read Supabase settings (using env vars): {exc}")
+
     # --- Handle pending Telegram commands (/status etc.) ---
     if tg_token and tg_chat:
         try:
