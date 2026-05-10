@@ -41,7 +41,7 @@ except ImportError:
 
 
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    return os.environ.get(name, default).strip().lstrip('﻿')
 
 
 def _env_bool(name: str, default: bool = True) -> bool:
