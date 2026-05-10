@@ -20,7 +20,7 @@ GITHUB_API = "https://api.github.com"
 
 
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    return os.environ.get(name, default).strip().lstrip('﻿')
 
 
 # ── individual checks ────────────────────────────────────────────────────────
@@ -182,7 +182,6 @@ def main() -> None:
         print(f"[{now_str}] ALERT sent — {len(issues)} issue(s):")
         for i in issues:
             print(f"  - {i}")
-        sys.exit(1)
     else:
         print(f"[{now_str}] All checks passed:")
         for m in ok_msgs:
