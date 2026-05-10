@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import socket
 from datetime import datetime, timezone
 from urllib.parse import urlparse, urlunparse
 
@@ -90,8 +91,22 @@ def _resolve_posted_date(job: dict) -> datetime | None:
     return None
 
 
+def _force_ipv4_dsn(dsn: str) -> str:
+    """Replace the hostname with its IPv4 address so psycopg2 doesn't pick IPv6 first."""
+    try:
+        p = urlparse(dsn)
+        infos = socket.getaddrinfo(p.hostname, p.port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+        if infos:
+            ipv4 = infos[0][4][0]
+            netloc = p.netloc.replace(p.hostname, ipv4)
+            return urlunparse((p.scheme, netloc, p.path, p.params, p.query, p.fragment))
+    except Exception:
+        pass
+    return dsn
+
+
 def get_connection(database_url: str):
-    return psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+    return psycopg2.connect(_force_ipv4_dsn(database_url), cursor_factory=psycopg2.extras.RealDictCursor)
 
 
 def initialize_database(database_url: str) -> None:
