@@ -56,34 +56,35 @@ def _log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def main() -> None:
-    keywords_raw = _env("KEYWORDS")
-    if not keywords_raw:
-        _log("ERROR: KEYWORDS env var is not set. Exiting.")
-        sys.exit(1)
+_DEFAULT_KEYWORDS = "IT Support,IT Helpdesk,System Administrator,IT Infrastructure"
+_DEFAULT_LOCATION = "United Arab Emirates"
 
-    keywords       = [k.strip() for k in keywords_raw.split(",") if k.strip()]
-    location       = _env("LOCATION", "United Arab Emirates")
+
+def main() -> None:
     supabase_url   = _env("SUPABASE_URL")
     supabase_key   = _env("SUPABASE_KEY")
     tg_token       = _env("TELEGRAM_BOT_TOKEN")
     tg_chat        = _env("TELEGRAM_CHAT_ID")
-    max_hours      = int(_env("MAX_HOURS", "24"))
-    cookie_header  = _env("LINKEDIN_COOKIE")
-    hide_applied   = _env_bool("HIDE_APPLIED", default=False)
-    search_li      = _env_bool("SEARCH_LINKEDIN", default=True)
-    search_indeed  = _env_bool("SEARCH_INDEED", default=True)
 
     if not supabase_url or not supabase_key:
         _log("ERROR: SUPABASE_URL or SUPABASE_KEY env var is not set. Exiting.")
         sys.exit(1)
 
-    _log(f"Starting scan: {len(keywords)} keyword(s), location={location}, max_hours={max_hours}")
+    # Seed defaults from env vars (may be empty — Supabase overrides below)
+    keywords      = [k.strip() for k in _env("KEYWORDS", _DEFAULT_KEYWORDS).split(",") if k.strip()]
+    location      = _env("LOCATION", _DEFAULT_LOCATION)
+    max_hours     = int(_env("MAX_HOURS", "24"))
+    cookie_header = _env("LINKEDIN_COOKIE")
+    hide_applied  = _env_bool("HIDE_APPLIED", default=False)
+    search_li     = _env_bool("SEARCH_LINKEDIN", default=True)
+    search_indeed = _env_bool("SEARCH_INDEED", default=True)
 
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
 
-    # --- Override settings from Supabase (set via mobile app) ---
+    # --- Load settings from Supabase (set via mobile app / Windows GUI) ---
+    # These override env vars so the laptop config is always respected even
+    # when the GitHub Secret is stale or missing.
     try:
         setting_kw      = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
         setting_loc     = db.get_config(supabase_url, supabase_key, "setting_location", "")
@@ -92,10 +93,12 @@ def main() -> None:
         setting_indeed  = db.get_config(supabase_url, supabase_key, "setting_search_indeed", "")
         setting_cookie  = db.get_config(supabase_url, supabase_key, "setting_linkedin_cookie", "")
         setting_exclude = db.get_config(supabase_url, supabase_key, "setting_exclude_keywords", "")
+        setting_tg_tok  = db.get_config(supabase_url, supabase_key, "setting_telegram_bot_token", "")
+        setting_tg_chat = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id", "")
 
         if setting_kw:
             keywords = [k.strip() for k in setting_kw.split(",") if k.strip()]
-            _log(f"Settings override: {len(keywords)} keyword(s) from Supabase")
+            _log(f"Settings: {len(keywords)} keyword(s) from Supabase")
         if setting_loc:
             location = setting_loc
         if setting_hours:
@@ -106,8 +109,14 @@ def main() -> None:
             search_indeed = setting_indeed.lower() not in ("false", "0", "no", "off")
         if setting_cookie:
             cookie_header = setting_cookie
+        if setting_tg_tok:
+            tg_token = setting_tg_tok
+        if setting_tg_chat:
+            tg_chat = setting_tg_chat
     except Exception as exc:
         _log(f"Could not read Supabase settings (using env vars): {exc}")
+
+    _log(f"Starting scan: {len(keywords)} keyword(s), location={location}, max_hours={max_hours}")
 
     # --- Handle pending Telegram commands (/status etc.) ---
     if tg_token and tg_chat:

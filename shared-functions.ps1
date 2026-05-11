@@ -40,16 +40,15 @@ function New-SearchUrl {
         [string]$Keyword,
         [string]$Location,
         [int]$Start,
-        [bool]$UseAuthenticatedSearch = $false
+        [bool]$UseAuthenticatedSearch = $false  # kept for signature compat; ignored
     )
 
     $encodedKeyword  = [System.Uri]::EscapeDataString($Keyword)
     $encodedLocation = [System.Uri]::EscapeDataString($Location)
 
-    if ($UseAuthenticatedSearch) {
-        return "https://www.linkedin.com/jobs/search/?keywords=$encodedKeyword&location=$encodedLocation&start=$Start"
-    }
-
+    # Always use the guest API endpoint — it returns HTML fragments that
+    # Parse-JobCards understands. The cookie (if present) is still sent by
+    # Invoke-GetStringWithRetry, which lets LinkedIn mark applied jobs.
     return "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=$encodedKeyword&location=$encodedLocation&start=$Start"
 }
 
@@ -166,7 +165,7 @@ function Get-PostedAgeHours {
         catch {}
     }
 
-    return [double]::PositiveInfinity
+    return 0  # timestamp unknown — include the job rather than silently drop it
 }
 
 function Get-LinkedInJobs {
