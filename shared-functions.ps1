@@ -198,7 +198,7 @@ function Get-LinkedInJobs {
         }
 
         $allJobs += $jobs
-        Start-Sleep -Milliseconds 1500  # pace requests to avoid LinkedIn 429 rate-limiting
+        Start-Sleep -Milliseconds 2500  # pace requests to avoid LinkedIn 429 rate-limiting
     }
 
     if ($useAuthenticatedSearch -and $sawPublicWrapper -and $script:LogFunction) {

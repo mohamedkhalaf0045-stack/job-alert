@@ -12,7 +12,7 @@ $script:StatePath    = Join-Path $script:AppRoot "seen-jobs.json"
 $script:SettingsPath = Join-Path $script:AppRoot "settings.json"
 $script:HttpClient   = [System.Net.Http.HttpClient]::new()
 $script:HttpClient.Timeout = [TimeSpan]::FromSeconds(25)
-$script:HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) LinkedInJobAlert/1.1")
+$script:HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 $script:SeenJobs            = @{}
 $script:HasPrimedState      = $false
@@ -1180,7 +1180,7 @@ function Invoke-JobScan {
             $script:HttpClient = [System.Net.Http.HttpClient]::new()
             $script:HttpClient.Timeout = [TimeSpan]::FromSeconds(25)
             $script:HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LinkedInJobAlertWorker/1.0")
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             $script:LogFunction = { param($m) $state.LogQueue.Enqueue($m) }
 
             . (Join-Path $appRoot "job-database.ps1")
@@ -1194,7 +1194,13 @@ function Invoke-JobScan {
             $allVisible = [System.Collections.Generic.List[object]]::new()
             $newIds     = [System.Collections.Generic.List[string]]::new()
 
+            $kwIndex = 0
             foreach ($keyword in $keywords) {
+                if ($kwIndex -gt 0) {
+                    $jitter = 3000 + ($kwIndex * 500)
+                    Start-Sleep -Milliseconds $jitter
+                }
+                $kwIndex++
                 $liJobs     = @()
                 $indeedJobs = @()
 
