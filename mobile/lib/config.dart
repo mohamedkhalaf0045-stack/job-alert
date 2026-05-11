@@ -1,5 +1,5 @@
 class Config {
-  static const githubToken = '';
+  static const githubToken = String.fromEnvironment('GITHUB_TOKEN', defaultValue: '');
   static const githubRepo  = 'mohamedkhalaf0045-stack/job-alert';
   static const supabaseUrl = 'https://xsuqhjmonzcguedekqjt.supabase.co';
   static const supabaseKey =
