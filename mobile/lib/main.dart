@@ -3,7 +3,10 @@ import 'screens/dashboard_screen.dart';
 import 'screens/jobs_screen.dart';
 import 'screens/settings_screen.dart';
 
-void main() => runApp(const JobAlertApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const JobAlertApp());
+}
 
 class JobAlertApp extends StatelessWidget {
   const JobAlertApp({super.key});

@@ -58,34 +58,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final results = await Future.wait([
-      SupabaseService.getSettings(),
-      PackageInfo.fromPlatform(),
-      SupabaseService.getConfigValue('update_apk_url', ''),
-      SupabaseService.getConfigValue('update_version_name', ''),
-      SupabaseService.getConfigValue('update_version_code', ''),
-    ]);
-    final s    = results[0] as AppSettings;
-    final info = results[1] as PackageInfo;
-    if (mounted) {
-      setState(() {
-        _keywordsCtrl.text   = s.keywords.join(', ');
-        _locationCtrl.text   = s.location;
-        _maxHoursCtrl.text   = s.maxHours.toString();
-        _excludeCtrl.text    = s.excludeKeywords;
-        _cookieCtrl.text     = s.linkedInCookie;
-        _profileCtrl.text    = s.userProfile;
-        _minScoreCtrl.text   = s.minAiScore.toString();
-        _ollamaCtrl.text     = s.ollamaUrl;
-        _timezoneCtrl.text   = s.timezone;
-        _searchLinkedIn      = s.searchLinkedIn;
-        _searchIndeed        = s.searchIndeed;
-        _updateUrlCtrl.text  = results[2] as String;
-        _updateVerCtrl.text  = results[3] as String;
-        _updateCodeCtrl.text = results[4] as String;
-        _currentVersion      = '${info.version}+${info.buildNumber}';
-        _loading             = false;
-      });
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final s    = await SupabaseService.getSettings();
+      final url  = await SupabaseService.getConfigValue('update_apk_url', '');
+      final ver  = await SupabaseService.getConfigValue('update_version_name', '');
+      final code = await SupabaseService.getConfigValue('update_version_code', '');
+      if (mounted) {
+        setState(() {
+          _keywordsCtrl.text   = s.keywords.join(', ');
+          _locationCtrl.text   = s.location;
+          _maxHoursCtrl.text   = s.maxHours.toString();
+          _excludeCtrl.text    = s.excludeKeywords;
+          _cookieCtrl.text     = s.linkedInCookie;
+          _profileCtrl.text    = s.userProfile;
+          _minScoreCtrl.text   = s.minAiScore.toString();
+          _ollamaCtrl.text     = s.ollamaUrl;
+          _timezoneCtrl.text   = s.timezone;
+          _searchLinkedIn      = s.searchLinkedIn;
+          _searchIndeed        = s.searchIndeed;
+          _updateUrlCtrl.text  = url;
+          _updateVerCtrl.text  = ver;
+          _updateCodeCtrl.text = code;
+          _currentVersion      = '${info.version}+${info.buildNumber}';
+          _loading             = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
