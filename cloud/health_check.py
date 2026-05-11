@@ -12,6 +12,7 @@ Checks:
 
 from __future__ import annotations
 import os
+import re
 import sys
 import requests
 from datetime import datetime, timezone, timedelta
@@ -84,6 +85,37 @@ def count_recent_jobs(url: str, key: str, hours: int = 25) -> int:
         return -1
 
 
+def get_supabase_config(url: str, key: str, config_key: str, default: str = "") -> str:
+    """Read a single key from the bot_state config table."""
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/bot_state?key=eq.{config_key}&select=value&limit=1",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            timeout=10,
+        )
+        rows = r.json() if r.status_code == 200 else []
+        return rows[0]["value"] if rows else default
+    except Exception:
+        return default
+
+
+def parse_tz_offset(tz_str: str) -> timedelta:
+    """Parse 'UTC+4', 'UTC-5:30', etc. into a timedelta. Returns UTC on failure."""
+    m = re.match(r"UTC([+-])(\d{1,2})(?::(\d{2}))?$", (tz_str or "").strip())
+    if not m:
+        return timedelta(0)
+    sign   = 1 if m.group(1) == "+" else -1
+    hours  = int(m.group(2))
+    mins   = int(m.group(3)) if m.group(3) else 0
+    return timedelta(hours=sign * hours, minutes=sign * mins)
+
+
+def fmt_local(dt: datetime, tz_offset: timedelta, label: str) -> str:
+    """Format a UTC datetime as local time with a ±HH:00 label, e.g. '2026-05-12 01:28 UTC+4'."""
+    local = dt.astimezone(timezone(tz_offset))
+    return local.strftime("%Y-%m-%d %H:%M") + f" {label}"
+
+
 def send_telegram(token: str, chat_id: str, text: str) -> None:
     try:
         requests.post(
@@ -106,7 +138,13 @@ def main() -> None:
     tg_chat       = _env("TELEGRAM_CHAT_ID")
     max_run_hours = int(_env("MAX_RUN_HOURS", "2"))
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    # Read display timezone from Supabase (set by mobile/Windows app)
+    tz_str    = get_supabase_config(supabase_url, supabase_key, "setting_timezone", "UTC")
+    tz_offset = parse_tz_offset(tz_str)
+    tz_label  = tz_str if tz_str else "UTC"
+
+    now_utc = datetime.now(timezone.utc)
+    now_str = fmt_local(now_utc, tz_offset, tz_label)
     issues:  list[str] = []
     ok_msgs: list[str] = []
 
@@ -150,8 +188,8 @@ def main() -> None:
                         f"(expected every {max_run_hours}h — schedule may be paused)"
                     )
                 else:
-                    ts = created_at[:16].replace("T", " ")
-                    ok_msgs.append(f"Last run: {ts} UTC ({age_h:.1f}h ago)")
+                    ts = fmt_local(run_dt, tz_offset, tz_label)
+                    ok_msgs.append(f"Last run: {ts} ({age_h:.1f}h ago)")
             except Exception:
                 pass
 
