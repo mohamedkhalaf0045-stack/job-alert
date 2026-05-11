@@ -2123,7 +2123,7 @@ $enrichAiButton.Add_Click({
     Add-LogLine "Starting AI enrichment - profile source: $cvLabel"
     $enrichAiButton.Enabled = $false
     $script:Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-    $job = Start-Job -ScriptBlock {
+    $script:EnrichJob = Start-Job -ScriptBlock {
         param($enricher, $sUrl, $sKey, $ollama, $min, $cv, $cookie)
         $env:SUPABASE_URL    = $sUrl
         $env:SUPABASE_KEY    = $sKey
@@ -2135,25 +2135,25 @@ $enrichAiButton.Add_Click({
         }
     } -ArgumentList $enricherPath, $supabaseUrl, $supabaseKey, $ollamaUrl, $minScore, $cvOrProfile, $linkedInCookie
 
-    $timer = New-Object System.Windows.Forms.Timer
-    $timer.Interval = 1500
-    $timer.Add_Tick({
-        $state = $job.State
-        $out   = Receive-Job -Job $job
+    $script:EnrichTimer = New-Object System.Windows.Forms.Timer
+    $script:EnrichTimer.Interval = 1500
+    $script:EnrichTimer.Add_Tick({
+        $state = $script:EnrichJob.State
+        $out   = Receive-Job -Job $script:EnrichJob
         foreach ($line in ($out -split "`n")) {
             if ($line.Trim()) { Add-LogLine $line.Trim() }
         }
         if ($state -in @("Completed","Failed","Stopped")) {
-            $timer.Stop()
-            $timer.Dispose()
-            Remove-Job -Job $job -Force
+            $script:EnrichTimer.Stop()
+            $script:EnrichTimer.Dispose()
+            Remove-Job -Job $script:EnrichJob -Force
             $enrichAiButton.Enabled = $true
             $script:Form.Cursor = [System.Windows.Forms.Cursors]::Default
             Add-LogLine "AI enrichment finished."
             Update-ScoresFromSupabase
         }
     })
-    $timer.Start()
+    $script:EnrichTimer.Start()
 })
 
 $telegramTestButton.Add_Click({ Send-TelegramTest })

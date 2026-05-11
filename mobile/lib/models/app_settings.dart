@@ -9,6 +9,7 @@ class AppSettings {
   final String userProfile;
   final int minAiScore;
   final String ollamaUrl;
+  final String timezone;
 
   const AppSettings({
     required this.keywords,
@@ -21,10 +22,11 @@ class AppSettings {
     required this.userProfile,
     required this.minAiScore,
     required this.ollamaUrl,
+    required this.timezone,
   });
 
-  factory AppSettings.defaults() => const AppSettings(
-        keywords: [],
+  factory AppSettings.defaults() => AppSettings(
+        keywords: const [],
         location: '',
         maxHours: 24,
         searchLinkedIn: true,
@@ -34,7 +36,16 @@ class AppSettings {
         userProfile: '',
         minAiScore: 4,
         ollamaUrl: 'http://localhost:11434',
+        timezone: deviceTimezone(),
       );
+
+  static String deviceTimezone() {
+    final offset = DateTime.now().timeZoneOffset;
+    final h = offset.inMinutes ~/ 60;
+    final m = offset.inMinutes.abs() % 60;
+    final sign = h >= 0 ? '+' : '-';
+    return m == 0 ? 'UTC$sign${h.abs()}' : 'UTC$sign${h.abs()}:${m.toString().padLeft(2, '0')}';
+  }
 
   factory AppSettings.fromMap(Map<String, String> map) => AppSettings(
         keywords: (map['keywords'] ?? '')
@@ -51,6 +62,7 @@ class AppSettings {
         userProfile: map['user_profile'] ?? '',
         minAiScore: int.tryParse(map['llm_min_score'] ?? '') ?? 4,
         ollamaUrl: map['ollama_url'] ?? 'http://localhost:11434',
+        timezone: map['timezone']?.isNotEmpty == true ? map['timezone']! : deviceTimezone(),
       );
 
   Map<String, String> toMap() => {
@@ -64,5 +76,14 @@ class AppSettings {
         'user_profile': userProfile,
         'llm_min_score': minAiScore.toString(),
         'ollama_url': ollamaUrl,
+        'timezone': timezone,
       };
+
+  /// Parses the stored timezone string and returns its UTC offset in hours.
+  /// e.g. "UTC+4 (UAE)" → 4, "UTC-5 (EST)" → -5, "UTC" → 0
+  int get timezoneOffsetHours {
+    final m = RegExp(r'UTC([+-]\d+)').firstMatch(timezone);
+    if (m == null) return 0;
+    return int.tryParse(m.group(1)!) ?? 0;
+  }
 }

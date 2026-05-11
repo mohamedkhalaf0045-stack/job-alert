@@ -20,6 +20,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _profileCtrl    = TextEditingController();
   final _minScoreCtrl   = TextEditingController();
   final _ollamaCtrl     = TextEditingController();
+  final _timezoneCtrl   = TextEditingController();
 
   bool _searchLinkedIn = true;
   bool _searchIndeed   = true;
@@ -43,6 +44,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _profileCtrl.dispose();
     _minScoreCtrl.dispose();
     _ollamaCtrl.dispose();
+    _timezoneCtrl.dispose();
     super.dispose();
   }
 
@@ -59,6 +61,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _profileCtrl.text    = s.userProfile;
         _minScoreCtrl.text   = s.minAiScore.toString();
         _ollamaCtrl.text     = s.ollamaUrl;
+        _timezoneCtrl.text   = s.timezone;
         _searchLinkedIn      = s.searchLinkedIn;
         _searchIndeed        = s.searchIndeed;
         _loading             = false;
@@ -87,6 +90,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       userProfile:     _profileCtrl.text.trim(),
       minAiScore:      int.tryParse(_minScoreCtrl.text.trim()) ?? 4,
       ollamaUrl:       _ollamaCtrl.text.trim(),
+      timezone:        _timezoneCtrl.text.trim().isEmpty
+                           ? AppSettings.deviceTimezone()
+                           : _timezoneCtrl.text.trim(),
     );
 
     final ok = await SupabaseService.saveSettings(settings);
@@ -150,6 +156,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
               hintText: 'senior, intern, agency',
               helperText: 'Comma-separated — jobs containing these are hidden',
             ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _timezoneCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Timezone',
+                    hintText: 'UTC+4',
+                    helperText: 'Used to display job times in your local time',
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return null;
+                    if (!RegExp(r'^UTC[+-]\d{1,2}(:\d{2})?$').hasMatch(v.trim())) {
+                      return 'Format: UTC+4 or UTC-5';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(
+                    () => _timezoneCtrl.text = AppSettings.deviceTimezone(),
+                  ),
+                  icon: const Icon(Icons.my_location, size: 18),
+                  label: const Text('Auto'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 24),
           _Section('Sources'),

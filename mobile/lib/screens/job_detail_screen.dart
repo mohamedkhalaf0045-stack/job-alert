@@ -107,8 +107,15 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _           => const Color(0xFFF0B400),
       };
 
-  String _formatDate(DateTime d) =>
-      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  String _formatDate(DateTime d) {
+    final local = d.isUtc ? d.toLocal() : d;
+    final offset = DateTime.now().timeZoneOffset;
+    final sign = offset.isNegative ? '-' : '+';
+    final h = offset.inMinutes.abs() ~/ 60;
+    final tzLabel = 'UTC$sign$h';
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')} '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} ($tzLabel)';
+  }
 }
 
 class _InfoRow extends StatelessWidget {
