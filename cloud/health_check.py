@@ -66,7 +66,7 @@ def get_last_run(token: str, repo: str) -> dict | None:
 def count_recent_jobs(url: str, key: str, hours: int = 25) -> int:
     """Returns count of jobs inserted in the last `hours` hours, or -1 on error."""
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
         r = requests.get(
             f"{url}/rest/v1/jobs?date_collected=gte.{cutoff}&select=job_id",
             headers={
