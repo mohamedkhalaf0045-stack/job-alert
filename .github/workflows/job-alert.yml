@@ -2,8 +2,8 @@ name: Job Alert Scan
 
 on:
   schedule:
-    # Every hour — safe within GitHub free tier (2000 min/month)
-    - cron: '0 * * * *'
+    # Every 5 minutes (GitHub Actions minimum interval)
+    - cron: '*/5 * * * *'
   workflow_dispatch:  # manual trigger from GitHub Actions tab
 
 env:
@@ -27,9 +27,6 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install -r cloud/requirements.txt
-
-      - name: Install Playwright browsers
-        run: playwright install chromium --with-deps
 
       - name: Run job alert worker
         run: python cloud/worker.py
