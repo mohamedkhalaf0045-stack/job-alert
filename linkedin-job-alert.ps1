@@ -2105,8 +2105,9 @@ $enrichAiButton.Add_Click({
         Add-LogLine "ERROR: SupabaseUrl / SupabaseKey not set in settings.json"
         return
     }
-    $ollamaUrl   = [string](Get-SettingValue -SettingsObject $settings -Name "OllamaUrl"  -DefaultValue "http://localhost:11434")
-    $minScore    = [string](Get-SettingValue -SettingsObject $settings -Name "MinAiScore" -DefaultValue "4")
+    $ollamaUrl      = [string](Get-SettingValue -SettingsObject $settings -Name "OllamaUrl"       -DefaultValue "http://localhost:11434")
+    $minScore       = [string](Get-SettingValue -SettingsObject $settings -Name "MinAiScore"      -DefaultValue "4")
+    $linkedInCookie = [string](Get-SettingValue -SettingsObject $settings -Name "LinkedInCookie"  -DefaultValue "")
     $cvOrProfile = [string](Get-SettingValue -SettingsObject $settings -Name "UserProfile" -DefaultValue "")
 
     $cvLabel = "default profile"
@@ -2123,15 +2124,16 @@ $enrichAiButton.Add_Click({
     $enrichAiButton.Enabled = $false
     $script:Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
     $job = Start-Job -ScriptBlock {
-        param($enricher, $sUrl, $sKey, $ollama, $min, $cv)
-        $env:SUPABASE_URL = $sUrl
-        $env:SUPABASE_KEY = $sKey
+        param($enricher, $sUrl, $sKey, $ollama, $min, $cv, $cookie)
+        $env:SUPABASE_URL    = $sUrl
+        $env:SUPABASE_KEY    = $sKey
+        $env:LINKEDIN_COOKIE = $cookie
         if ($cv) {
             & python $enricher --ollama $ollama --min-score $min --cv $cv 2>&1
         } else {
             & python $enricher --ollama $ollama --min-score $min 2>&1
         }
-    } -ArgumentList $enricherPath, $supabaseUrl, $supabaseKey, $ollamaUrl, $minScore, $cvOrProfile
+    } -ArgumentList $enricherPath, $supabaseUrl, $supabaseKey, $ollamaUrl, $minScore, $cvOrProfile, $linkedInCookie
 
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 1500
