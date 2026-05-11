@@ -830,6 +830,31 @@ function Clear-JobList {
     $script:DisplayedJobsByUrl = @{}
 }
 
+function Update-ScoresFromSupabase {
+    $settings    = Load-Settings
+    $sUrl = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseUrl" -DefaultValue "")
+    $sKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
+    if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) { return }
+    try {
+        $headers = @{ "apikey" = $sKey; "Authorization" = "Bearer $sKey" }
+        $uri     = "$sUrl/rest/v1/jobs?select=url,llm_score&llm_score=not.is.null&limit=500"
+        $rows    = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -ErrorAction Stop
+        $scoreMap = @{}
+        foreach ($row in $rows) { $scoreMap[$row.url] = [string]$row.llm_score }
+        $updated = 0
+        foreach ($item in $script:JobsList.Items) {
+            $url = [string]$item.Tag
+            if ($scoreMap.ContainsKey($url) -and $item.SubItems.Count -ge 8) {
+                $item.SubItems[7].Text = $scoreMap[$url]
+                $updated++
+            }
+        }
+        if ($updated -gt 0) { Add-LogLine "Scores refreshed: $updated job(s) updated from Supabase." }
+    } catch {
+        Add-LogLine "Score refresh error: $($_.Exception.Message)"
+    }
+}
+
 function Refresh-ResultsForCurrentFilter {
     if (-not (Validate-CustomHours)) {
         return
@@ -1253,6 +1278,7 @@ function Invoke-JobScan {
             Clear-JobList
             foreach ($job in $visibleJobs) { Add-RecentJobToList -Job $job }
             $script:LastScanJobs = $visibleJobs
+            try { Update-ScoresFromSupabase } catch {}
 
             if (-not $script:HasPrimedState) {
                 foreach ($job in $newJobs) {
@@ -2074,6 +2100,7 @@ $enrichAiButton.Add_Click({
             $enrichAiButton.Enabled = $true
             $script:Form.Cursor = [System.Windows.Forms.Cursors]::Default
             Add-LogLine "AI enrichment finished."
+            Update-ScoresFromSupabase
         }
     })
     $timer.Start()
