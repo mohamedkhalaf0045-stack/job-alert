@@ -198,6 +198,23 @@ def main() -> None:
 
     _log(f"Scan complete. {len(all_new_jobs)} new job(s) to alert.")
 
+    # Merge any pre-existing LLM scores (jobs enriched locally before this run)
+    if all_new_jobs:
+        try:
+            score_map = db.get_scores_for_urls(
+                supabase_url, supabase_key,
+                [j.get("Url", "") for j in all_new_jobs],
+            )
+            if score_map:
+                for job in all_new_jobs:
+                    canonical = db._canonical_url(job.get("Url", ""))
+                    if canonical in score_map:
+                        job["llm_score"]   = score_map[canonical].get("llm_score")
+                        job["llm_summary"] = score_map[canonical].get("llm_summary", "")
+                _log(f"Merged LLM scores for {len(score_map)} job(s).")
+        except Exception as exc:
+            _log(f"Score merge error (non-fatal): {exc}")
+
     # --- Send Telegram alerts ---
     if tg_token and tg_chat:
         sent_count = 0

@@ -24,6 +24,10 @@ $script:LogFunction         = $null
 $script:WorkerStartedPid    = 0
 $script:TgCmdReplyToken     = ""
 $script:TgCmdReplyChatId    = ""
+$script:CloudWorkflowId     = 0
+$script:CloudLastRunId      = 0
+$script:CloudLastRunUrl     = ""
+$script:CloudScheduleActive = $true
 
 . (Join-Path $script:AppRoot "job-database.ps1")
 . (Join-Path $script:AppRoot "shared-functions.ps1")
@@ -66,7 +70,9 @@ function Load-Settings {
 
 function Save-Settings {
     $existing     = Load-Settings
-    $joobleApiKey = [string](Get-SettingValue -SettingsObject $existing -Name "JoobleApiKey" -DefaultValue "")
+    $joobleApiKey = [string](Get-SettingValue -SettingsObject $existing -Name "JoobleApiKey"   -DefaultValue "")
+    $ghToken      = [string](Get-SettingValue -SettingsObject $existing -Name "GitHubToken"    -DefaultValue "")
+    $ghRepo       = [string](Get-SettingValue -SettingsObject $existing -Name "GitHubRepo"     -DefaultValue "")
 
     $settings = [ordered]@{
         Keywords         = $script:KeywordsBox.Lines
@@ -83,6 +89,11 @@ function Save-Settings {
         SearchLinkedIn   = $script:LinkedInCheckBox.Checked
         SearchIndeed     = $script:IndeedCheckBox.Checked
         ExcludeKeywords  = $script:ExcludeBox.Text.Trim()
+        GitHubToken      = $ghToken
+        GitHubRepo       = $ghRepo
+        UserProfile      = $script:UserProfileBox.Text.Trim()
+        MinAiScore       = [int]$script:MinAiScoreBox.Value
+        OllamaUrl        = $script:OllamaUrlBox.Text.Trim()
     }
 
     $settings | ConvertTo-Json | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
@@ -591,6 +602,133 @@ function Invoke-TelegramCommandPoll {
     Save-TelegramOffset -Path $script:TelegramOffsetPath -Offset $script:TelegramOffset
 }
 
+function Update-CloudLamp {
+    $settings = Load-Settings
+    $token = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubToken" -DefaultValue "")
+    $repo  = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubRepo"  -DefaultValue "")
+
+    if (-not $token -or -not $repo) {
+        $script:CloudLamp.Tag = "grey"
+        $script:CloudLamp.Invalidate()
+        $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud not configured (add GitHubToken/GitHubRepo to settings.json)")
+        return
+    }
+
+    try {
+        $url = "https://api.github.com/repos/$repo/actions/workflows/job-alert.yml/runs?per_page=1"
+        $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $url)
+        $req.Headers.Add("Authorization", "Bearer $token")
+        $req.Headers.Add("Accept", "application/vnd.github+json")
+        $resp = $script:HttpClient.SendAsync($req).GetAwaiter().GetResult()
+        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        $data = $body | ConvertFrom-Json
+        $run  = $data.workflow_runs | Select-Object -First 1
+
+        if ($run) {
+            $script:CloudLastRunId  = [long]$run.id
+            $script:CloudWorkflowId = [long]$run.workflow_id
+            $script:CloudLastRunUrl = [string]$run.html_url
+
+            # Fetch workflow enabled/disabled state
+            try {
+                $wfUrl  = "https://api.github.com/repos/$repo/actions/workflows/$($script:CloudWorkflowId)"
+                $wfReq  = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $wfUrl)
+                $wfReq.Headers.Add("Authorization", "Bearer $token")
+                $wfReq.Headers.Add("Accept", "application/vnd.github+json")
+                $wfResp = $script:HttpClient.SendAsync($wfReq).GetAwaiter().GetResult()
+                $wfData = ($wfResp.Content.ReadAsStringAsync().GetAwaiter().GetResult()) | ConvertFrom-Json
+                $script:CloudScheduleActive = ($wfData.state -eq "active")
+            } catch {}
+        }
+
+        if (-not $run) {
+            $script:CloudLamp.Tag = "grey"
+            $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud: no runs yet (right-click for controls)")
+        } elseif ($run.status -in @("in_progress","queued","waiting")) {
+            $script:CloudLamp.Tag = "yellow"
+            $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud: running now ($($run.created_at)) - right-click to cancel")
+        } elseif ($run.conclusion -eq "success") {
+            $script:CloudLamp.Tag = "green"
+            $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud: last run OK - $($run.created_at) - right-click for controls")
+        } else {
+            $script:CloudLamp.Tag = "red"
+            $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud: FAILED ($($run.conclusion)) - $($run.created_at) - right-click to retry")
+        }
+
+        # Update menu item states if menu already created
+        if ($script:CloudMenuCancel) {
+            $script:CloudMenuCancel.Enabled  = ($script:CloudLamp.Tag -eq "yellow")
+            $script:CloudMenuSchedule.Text   = if ($script:CloudScheduleActive) { "Pause Schedule" } else { "Resume Schedule" }
+        }
+    } catch {
+        $script:CloudLamp.Tag = "grey"
+        $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud: check error - $($_.Exception.Message.Split([char]10)[0])")
+    }
+    $script:CloudLamp.Invalidate()
+}
+
+function Invoke-GitHubApi {
+    param([string]$Method, [string]$Url, [string]$Body = "")
+    $settings = Load-Settings
+    $token    = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubToken" -DefaultValue "")
+    $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::new($Method), $Url)
+    $req.Headers.Add("Authorization", "Bearer $token")
+    $req.Headers.Add("Accept", "application/vnd.github+json")
+    if ($Body) {
+        $req.Content = [System.Net.Http.StringContent]::new($Body, [System.Text.Encoding]::UTF8, "application/json")
+    }
+    $resp = $script:HttpClient.SendAsync($req).GetAwaiter().GetResult()
+    return $resp.StatusCode
+}
+
+function Invoke-CloudRunNow {
+    $settings = Load-Settings
+    $repo = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubRepo" -DefaultValue "")
+    if (-not $repo -or $script:CloudWorkflowId -eq 0) { Add-LogLine "Cloud: not configured (no GitHubRepo or workflow ID)"; return }
+    $url    = "https://api.github.com/repos/$repo/actions/workflows/$($script:CloudWorkflowId)/dispatches"
+    $status = Invoke-GitHubApi -Method "POST" -Url $url -Body '{"ref":"main"}'
+    if ([int]$status -eq 204) {
+        Add-LogLine "Cloud: scan triggered - lamp will turn yellow within ~30 sec."
+        Start-Sleep -Milliseconds 4000
+        Update-CloudLamp
+    } else {
+        Add-LogLine "Cloud: trigger failed (HTTP $([int]$status)). Is the schedule paused?"
+    }
+}
+
+function Invoke-CloudCancel {
+    $settings = Load-Settings
+    $repo = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubRepo" -DefaultValue "")
+    if (-not $repo -or $script:CloudLastRunId -eq 0) { Add-LogLine "Cloud: no run ID to cancel"; return }
+    $url    = "https://api.github.com/repos/$repo/actions/runs/$($script:CloudLastRunId)/cancel"
+    $status = Invoke-GitHubApi -Method "POST" -Url $url
+    Add-LogLine "Cloud: cancel sent (HTTP $([int]$status))."
+    Start-Sleep -Milliseconds 2000
+    Update-CloudLamp
+}
+
+function Open-CloudLogs {
+    if ($script:CloudLastRunUrl) {
+        Start-Process $script:CloudLastRunUrl
+    } else {
+        $settings = Load-Settings
+        $repo = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubRepo" -DefaultValue "")
+        if ($repo) { Start-Process "https://github.com/$repo/actions" }
+    }
+}
+
+function Toggle-CloudSchedule {
+    $settings = Load-Settings
+    $repo = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubRepo" -DefaultValue "")
+    if (-not $repo -or $script:CloudWorkflowId -eq 0) { Add-LogLine "Cloud: not configured"; return }
+    $action = if ($script:CloudScheduleActive) { "disable" } else { "enable" }
+    $url    = "https://api.github.com/repos/$repo/actions/workflows/$($script:CloudWorkflowId)/$action"
+    $status = Invoke-GitHubApi -Method "PUT" -Url $url
+    Add-LogLine "Cloud: schedule ${action}d (HTTP $([int]$status))."
+    Start-Sleep -Milliseconds 1000
+    Update-CloudLamp
+}
+
 function Update-WorkerLamp {
     $pidPath  = Join-Path $script:AppRoot "worker.pid"
     $running  = $false
@@ -746,6 +884,8 @@ function Add-RecentJobToList {
     [void]$item.SubItems.Add($Job.Location)
     [void]$item.SubItems.Add($(if ([string]::IsNullOrWhiteSpace($Job.PostedText)) { "-" } else { $Job.PostedText }))
     [void]$item.SubItems.Add($(if ($Job.IsApplied) { "Yes" } else { "No" }))
+    $score = if ($Job.PSObject.Properties["llm_score"] -and $null -ne $Job.llm_score) { [string]$Job.llm_score } else { "" }
+    [void]$item.SubItems.Add($score)
     $item.Tag = $Job.Url
     $script:DisplayedJobsByUrl[$Job.Url] = $Job
     Apply-JobRowStyle -Item $item -Job $Job
@@ -913,6 +1053,7 @@ function Invoke-JobScan {
     $appRoot          = $script:AppRoot
     $searchLinkedIn   = $script:LinkedInCheckBox.Checked
     $searchIndeed     = $script:IndeedCheckBox.Checked
+    $excludeKeywords  = [string](Get-SettingValue -SettingsObject (Load-Settings) -Name "ExcludeKeywords" -DefaultValue "")
 
     if ($keywords.Count -eq 0) {
         Add-LogLine "Add at least one job keyword before starting."
@@ -957,7 +1098,8 @@ function Invoke-JobScan {
             [int]      $maxHours,
             [string[]] $seenJobIds,
             [bool]     $searchLinkedIn,
-            [bool]     $searchIndeed
+            [bool]     $searchIndeed,
+            [string]   $excludeKeywords
         )
         try {
             Add-Type -AssemblyName System.Web
@@ -1013,8 +1155,16 @@ function Invoke-JobScan {
                     $state.LogQueue.Enqueue("Indeed '$keyword': +$($dbSyncI.inserted) new, $($dbSyncI.seen) known.")
                 }
 
+                $excludeTerms = @($excludeKeywords -split '[,\r\n]+' |
+                    ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
                 foreach ($job in (@($liJobs) + @($indeedJobs))) {
-                    if ((Get-PostedAgeHours -Job $job) -le $maxHours -and -not (Test-JobExcluded -Job $job)) {
+                    $haystack = "$($job.Title) $($job.Company)".ToLowerInvariant()
+                    $excluded = $false
+                    foreach ($term in $excludeTerms) {
+                        if ($haystack.Contains($term.ToLowerInvariant())) { $excluded = $true; break }
+                    }
+                    if ((Get-PostedAgeHours -Job $job) -le $maxHours -and -not $excluded) {
                         $allVisible.Add($job)
                         if (-not $seenSet.Contains($job.Id)) { $newIds.Add($job.Id) }
                     }
@@ -1057,6 +1207,7 @@ function Invoke-JobScan {
     [void]$ps.AddArgument([string[]]$seenJobIds)
     [void]$ps.AddArgument([bool]$searchLinkedIn)
     [void]$ps.AddArgument([bool]$searchIndeed)
+    [void]$ps.AddArgument([string]$excludeKeywords)
 
     $script:ScanPS              = $ps
     $script:ScanHandle          = $ps.BeginInvoke()
@@ -1442,7 +1593,6 @@ IT HelpDesk
 [void]$searchCard.Controls.Add((New-Lbl "Exclude keywords (comma-separated)" 12 167))
 $script:ExcludeBox             = New-Tb -X 12 -Y 183 -W 238 -H 26
 $script:ExcludeBox.Text        = [string](Get-SettingValue -SettingsObject $savedSettings -Name "ExcludeKeywords" -DefaultValue "")
-$script:ExcludeBox.PlaceholderText = "e.g. senior, intern, agency"
 [void]$searchCard.Controls.Add($script:ExcludeBox)
 
 [void]$searchCard.Controls.Add((New-Lbl "Country / location" 260 31))
@@ -1498,13 +1648,15 @@ $script:IndeedCheckBox.Checked    = [bool](Get-SettingValue -SettingsObject $sav
 # ── Automation card ───────────────────────────────────────────────────────────
 $autoCard = New-Card -X 573 -Y 60 -W 577 -H 220 -Title "AUTOMATION"
 
-$startButton   = New-Btn "Start"    12  34  104 34 "green"
-$stopButton    = New-Btn "Stop"    122  34  104 34 "red"
-$scanNowButton = New-Btn "Scan Now" 232  34  116 34 "accent"
-$openJobButton = New-Btn "Open Job" 354  34  155 34 "outline"
+$startButton    = New-Btn "Start"       12  34  100 34 "green"
+$stopButton     = New-Btn "Stop"       118  34  100 34 "red"
+$scanNowButton  = New-Btn "Scan Now"   224  34  110 34 "accent"
+$enrichAiButton = New-Btn "Enrich AI"  340  34  110 34 "outline"
+$openJobButton  = New-Btn "Open Job"   456  34  110 34 "outline"
 [void]$autoCard.Controls.Add($startButton)
 [void]$autoCard.Controls.Add($stopButton)
 [void]$autoCard.Controls.Add($scanNowButton)
+[void]$autoCard.Controls.Add($enrichAiButton)
 [void]$autoCard.Controls.Add($openJobButton)
 
 [void]$autoCard.Controls.Add((New-Lbl "Interval (min)" 12 84))
@@ -1539,6 +1691,27 @@ $script:HideAppliedCheckBox.Size     = New-Object System.Drawing.Size(295, 24)
 $script:HideAppliedCheckBox.Font     = $fntUi
 $script:HideAppliedCheckBox.Checked  = [bool](Get-SettingValue -SettingsObject $savedSettings -Name "HideAppliedJobs" -DefaultValue $true)
 [void]$autoCard.Controls.Add($script:HideAppliedCheckBox)
+
+[void]$autoCard.Controls.Add((New-Lbl "Ollama URL" 12 136))
+$script:OllamaUrlBox      = New-Tb -X 12 -Y 152 -W 200 -H 26
+$script:OllamaUrlBox.Text = [string](Get-SettingValue -SettingsObject $savedSettings -Name "OllamaUrl" -DefaultValue "http://localhost:11434")
+[void]$autoCard.Controls.Add($script:OllamaUrlBox)
+
+[void]$autoCard.Controls.Add((New-Lbl "Min AI Score (0-10)" 222 136))
+$script:MinAiScoreBox          = New-Object System.Windows.Forms.NumericUpDown
+$script:MinAiScoreBox.Location = New-Object System.Drawing.Point(222, 152)
+$script:MinAiScoreBox.Size     = New-Object System.Drawing.Size(60, 26)
+$script:MinAiScoreBox.Minimum  = 0
+$script:MinAiScoreBox.Maximum  = 10
+$script:MinAiScoreBox.Font     = $fntUi
+$script:MinAiScoreBox.Value    = [decimal](Get-SettingValue -SettingsObject $savedSettings -Name "MinAiScore" -DefaultValue 4)
+[void]$autoCard.Controls.Add($script:MinAiScoreBox)
+
+[void]$autoCard.Controls.Add((New-Lbl "User Profile (for AI scoring)" 12 186))
+$script:UserProfileBox           = New-Tb -X 12 -Y 200 -W 553 -H 16
+$script:UserProfileBox.Text      = [string](Get-SettingValue -SettingsObject $savedSettings -Name "UserProfile" -DefaultValue "")
+$script:UserProfileBox.PlaceholderText = "e.g. IT Support Engineer, 4 years UAE, Windows Server, Active Directory, networking"
+[void]$autoCard.Controls.Add($script:UserProfileBox)
 
 # ── LinkedIn Session card ─────────────────────────────────────────────────────
 $cookieCard = New-Card -X 10 -Y 288 -W 555 -H 116 -Title "LINKEDIN SESSION"
@@ -1628,6 +1801,72 @@ $script:WorkerLampTooltip = New-Object System.Windows.Forms.ToolTip
 $script:WorkerLampTooltip.SetToolTip($script:WorkerLamp, "Worker status unknown")
 [void]$statusPanel.Controls.Add($script:WorkerLamp)
 
+$cloudLampLabel           = New-Object System.Windows.Forms.Label
+$cloudLampLabel.Text      = "Cloud:"
+$cloudLampLabel.Location  = New-Object System.Drawing.Point(994, 7)
+$cloudLampLabel.Font      = $fntUi
+$cloudLampLabel.ForeColor = $clrMuted
+$cloudLampLabel.AutoSize  = $true
+[void]$statusPanel.Controls.Add($cloudLampLabel)
+
+$script:CloudLamp           = New-Object System.Windows.Forms.Panel
+$script:CloudLamp.Location  = New-Object System.Drawing.Point(1046, 4)
+$script:CloudLamp.Size      = New-Object System.Drawing.Size(22, 22)
+$script:CloudLamp.BackColor = [System.Drawing.Color]::Transparent
+$script:CloudLamp.Tag       = "grey"
+$script:CloudLamp.Add_Paint({
+    param($sender, $e)
+    $g   = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $rgb = switch ($sender.Tag) {
+        "green"  { @(50, 205, 50) }
+        "red"    { @(220, 50, 50) }
+        "yellow" { @(240, 180, 0) }
+        default  { @(160, 160, 160) }
+    }
+    $mainColor = [System.Drawing.Color]::FromArgb($rgb[0], $rgb[1], $rgb[2])
+    $w = $sender.Width - 1
+    $h = $sender.Height - 1
+    $glowBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(70, $mainColor.R, $mainColor.G, $mainColor.B))
+    $g.FillEllipse($glowBrush, 0, 0, $w, $h)
+    $glowBrush.Dispose()
+    $mainBrush = New-Object System.Drawing.SolidBrush($mainColor)
+    $g.FillEllipse($mainBrush, 2, 2, $w - 4, $h - 4)
+    $mainBrush.Dispose()
+    $hlBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(110, 255, 255, 255))
+    $g.FillEllipse($hlBrush, 5, 5, [int](($w - 4) / 2.5), [int](($h - 4) / 2.5))
+    $hlBrush.Dispose()
+})
+$script:CloudLampTooltip = New-Object System.Windows.Forms.ToolTip
+$script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Left-click: refresh  |  Right-click: controls")
+[void]$statusPanel.Controls.Add($script:CloudLamp)
+
+# Cloud lamp context menu
+$script:CloudMenuCancel   = $null
+$script:CloudMenuSchedule = $null
+$script:CloudMenu         = New-Object System.Windows.Forms.ContextMenuStrip
+
+$cloudMenuRun = New-Object System.Windows.Forms.ToolStripMenuItem("Run Cloud Now")
+$cloudMenuRun.Add_Click({ try { Invoke-CloudRunNow } catch { Add-LogLine "Cloud run error: $_" } })
+
+$script:CloudMenuCancel         = New-Object System.Windows.Forms.ToolStripMenuItem("Cancel Running Scan")
+$script:CloudMenuCancel.Enabled = $false
+$script:CloudMenuCancel.Add_Click({ try { Invoke-CloudCancel } catch { Add-LogLine "Cloud cancel error: $_" } })
+
+$cloudMenuLogs = New-Object System.Windows.Forms.ToolStripMenuItem("Open GitHub Logs")
+$cloudMenuLogs.Add_Click({ Open-CloudLogs })
+
+[void]$script:CloudMenu.Items.Add($cloudMenuRun)
+[void]$script:CloudMenu.Items.Add($script:CloudMenuCancel)
+[void]$script:CloudMenu.Items.Add($cloudMenuLogs)
+[void]$script:CloudMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+$script:CloudMenuSchedule = New-Object System.Windows.Forms.ToolStripMenuItem("Pause Schedule")
+$script:CloudMenuSchedule.Add_Click({ try { Toggle-CloudSchedule } catch { Add-LogLine "Schedule toggle error: $_" } })
+[void]$script:CloudMenu.Items.Add($script:CloudMenuSchedule)
+
+$script:CloudLamp.ContextMenuStrip = $script:CloudMenu
+
 # ── Job Listings card ─────────────────────────────────────────────────────────
 $jobsCard = New-Card -X 10 -Y 450 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
 
@@ -1645,11 +1884,12 @@ $script:JobsList.HideSelection = $false
 $script:JobsList.Font         = $fntUi
 [void]$script:JobsList.Columns.Add("Source",   80)
 [void]$script:JobsList.Columns.Add("Keyword", 130)
-[void]$script:JobsList.Columns.Add("Title",   285)
-[void]$script:JobsList.Columns.Add("Company", 200)
-[void]$script:JobsList.Columns.Add("Location",175)
-[void]$script:JobsList.Columns.Add("Posted",  100)
-[void]$script:JobsList.Columns.Add("Applied",  70)
+[void]$script:JobsList.Columns.Add("Title",   265)
+[void]$script:JobsList.Columns.Add("Company", 185)
+[void]$script:JobsList.Columns.Add("Location",165)
+[void]$script:JobsList.Columns.Add("Posted",   95)
+[void]$script:JobsList.Columns.Add("Applied",  65)
+[void]$script:JobsList.Columns.Add("Score",    55)
 
 $jobContextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $menuOpen        = $jobContextMenu.Items.Add("Open in browser")
@@ -1693,6 +1933,10 @@ $script:WorkerCheckTimer          = New-Object System.Windows.Forms.Timer
 $script:WorkerCheckTimer.Interval = 10000
 $script:WorkerCheckTimer.Add_Tick({ Update-WorkerLamp })
 
+$script:CloudCheckTimer          = New-Object System.Windows.Forms.Timer
+$script:CloudCheckTimer.Interval = 300000   # every 5 minutes
+$script:CloudCheckTimer.Add_Tick({ try { Update-CloudLamp } catch {} })
+
 $script:TelegramPollTimer          = New-Object System.Windows.Forms.Timer
 $script:TelegramPollTimer.Interval = 5000
 $script:TelegramPollTimer.Add_Tick({
@@ -1718,6 +1962,7 @@ $script:NotifyIcon.Add_BalloonTipClicked({
 })
 
 $script:JobsList.Add_DoubleClick({ Open-SelectedJob })
+$script:CloudLamp.Add_Click({ try { Update-CloudLamp } catch {} })
 
 $menuOpen.Add_Click({
     $sel = $script:JobsList.SelectedItems | Select-Object -First 1
@@ -1758,6 +2003,53 @@ $scanNowButton.Add_Click({
     }
 })
 $openJobButton.Add_Click({ Open-SelectedJob })
+
+$enrichAiButton.Add_Click({
+    Save-Settings
+    $enricherPath = Join-Path $script:AppRoot "cloud\enricher.py"
+    if (-not (Test-Path -LiteralPath $enricherPath)) {
+        Add-LogLine "ERROR: cloud\enricher.py not found at $enricherPath"
+        return
+    }
+    $settings = Load-Settings
+    $supabaseUrl = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseUrl" -DefaultValue "")
+    $supabaseKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
+    if ([string]::IsNullOrWhiteSpace($supabaseUrl) -or [string]::IsNullOrWhiteSpace($supabaseKey)) {
+        Add-LogLine "ERROR: SupabaseUrl / SupabaseKey not set in settings.json"
+        return
+    }
+    $ollamaUrl  = [string](Get-SettingValue -SettingsObject $settings -Name "OllamaUrl"  -DefaultValue "http://localhost:11434")
+    $minScore   = [string](Get-SettingValue -SettingsObject $settings -Name "MinAiScore" -DefaultValue "4")
+    Add-LogLine "Starting AI enrichment (Ollama)..."
+    $enrichAiButton.Enabled = $false
+    $script:Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    $job = Start-Job -ScriptBlock {
+        param($enricher, $sUrl, $sKey, $ollama, $min)
+        $env:SUPABASE_URL = $sUrl
+        $env:SUPABASE_KEY = $sKey
+        & python $enricher --ollama $ollama --min-score $min 2>&1
+    } -ArgumentList $enricherPath, $supabaseUrl, $supabaseKey, $ollamaUrl, $minScore
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 1500
+    $timer.Add_Tick({
+        $state = $job.State
+        $out   = Receive-Job -Job $job
+        foreach ($line in ($out -split "`n")) {
+            if ($line.Trim()) { Add-LogLine $line.Trim() }
+        }
+        if ($state -in @("Completed","Failed","Stopped")) {
+            $timer.Stop()
+            $timer.Dispose()
+            Remove-Job -Job $job -Force
+            $enrichAiButton.Enabled = $true
+            $script:Form.Cursor = [System.Windows.Forms.Cursors]::Default
+            Add-LogLine "AI enrichment finished."
+        }
+    })
+    $timer.Start()
+})
+
 $telegramTestButton.Add_Click({ Send-TelegramTest })
 $sendVisibleButton.Add_Click({ Send-VisibleJobsToTelegram })
 $importCookiesButton.Add_Click({ Import-CookiesToForm })
@@ -1767,6 +2059,7 @@ $script:Form.Add_FormClosing({
     $script:Timer.Stop()
     $script:WorkerCheckTimer.Stop()
     $script:TelegramPollTimer.Stop()
+    $script:CloudCheckTimer.Stop()
     $script:NotifyIcon.Visible = $false
     $script:NotifyIcon.Dispose()
     $script:HttpClient.Dispose()
@@ -1775,7 +2068,9 @@ $script:Form.Add_FormClosing({
 $script:Form.Add_Shown({
     $script:WorkerCheckTimer.Start()
     $script:TelegramPollTimer.Start()
+    $script:CloudCheckTimer.Start()
     Update-WorkerLamp
+    try { Update-CloudLamp } catch {}
 })
 
 Update-TimeFilterUI

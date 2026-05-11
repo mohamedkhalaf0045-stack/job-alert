@@ -137,6 +137,66 @@ def mark_telegram_sent(supabase_url: str, supabase_key: str, url: str) -> None:
     sb.table("jobs").update({"telegram_sent_at": datetime.now(timezone.utc).isoformat()}).eq("url", canonical).execute()
 
 
+def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> list[dict]:
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("jobs")
+            .select("job_id,title,company,location,url,source")
+            .is_("llm_score", "null")
+            .eq("status", "new")
+            .order("date_collected", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        print(f"[DB] get_unscored_jobs error: {exc}")
+        return []
+
+
+def update_job_enrichment(
+    supabase_url: str,
+    supabase_key: str,
+    job_id: str,
+    description: str,
+    score: int,
+    summary: str,
+    min_score: int = 4,
+) -> None:
+    sb = _get_client(supabase_url, supabase_key)
+    update: dict = {
+        "description": description[:4000] if description else None,
+        "llm_score":   score,
+        "llm_summary": summary,
+    }
+    if score < min_score:
+        update["status"] = "dismissed"
+    try:
+        sb.table("jobs").update(update).eq("job_id", job_id).execute()
+    except Exception as exc:
+        print(f"[DB] update_job_enrichment error for {job_id}: {exc}")
+
+
+def get_scores_for_urls(supabase_url: str, supabase_key: str, urls: list[str]) -> dict[str, dict]:
+    """Return {url: {llm_score, llm_summary}} for already-enriched jobs."""
+    if not urls:
+        return {}
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        canonical_urls = [_canonical_url(u) for u in urls]
+        result = (
+            sb.table("jobs")
+            .select("url,llm_score,llm_summary")
+            .in_("url", canonical_urls)
+            .not_.is_("llm_score", "null")
+            .execute()
+        )
+        return {row["url"]: row for row in (result.data or [])}
+    except Exception:
+        return {}
+
+
 def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: str = "LinkedIn") -> dict:
     summary = {"inserted": 0, "updated": 0, "seen": 0, "invalid": 0}
     if not jobs:

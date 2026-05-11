@@ -107,6 +107,50 @@ def _parse_cards(html_text: str, keyword: str) -> list[dict]:
     return jobs
 
 
+def fetch_job_description(job_url: str, cookie_header: str = "") -> str:
+    """Fetch the full description text for a single job URL.
+
+    LinkedIn: uses the guest jobPosting API (no login required).
+    Indeed:   fetches the job page directly.
+    Returns plain text, max 3000 chars. Empty string on failure.
+    """
+    try:
+        url_lower = job_url.lower()
+        if "linkedin.com" in url_lower:
+            # Extract numeric job ID from URL path, e.g. /jobs/view/1234567890
+            m = re.search(r"/(?:view|jobs/view)/(\d+)", job_url)
+            if not m:
+                return ""
+            job_id = m.group(1)
+            api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+            html_text = _fetch(api_url, cookie_header)
+            if not html_text:
+                return ""
+            # Extract description block
+            desc_m = re.search(
+                r'class="show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>',
+                html_text, re.DOTALL
+            )
+            raw = desc_m.group(1) if desc_m else html_text
+        elif "indeed.com" in url_lower:
+            html_text = _fetch(job_url, cookie_header)
+            if not html_text:
+                return ""
+            desc_m = re.search(
+                r'id="jobDescriptionText"[^>]*>(.*?)</div>',
+                html_text, re.DOTALL
+            )
+            raw = desc_m.group(1) if desc_m else html_text
+        else:
+            html_text = _fetch(job_url, cookie_header)
+            raw = html_text or ""
+
+        return _plain_text(raw)[:3000]
+    except Exception as exc:
+        print(f"[Description] fetch failed for {job_url}: {exc}")
+        return ""
+
+
 def get_posted_age_hours(job: dict) -> float:
     text = job.get("PostedText", "")
     date = job.get("PostedDate", "")

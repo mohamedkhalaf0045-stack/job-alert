@@ -21,6 +21,13 @@ def format_message(job: dict) -> str:
     posted = job.get("PostedText") or job.get("PostedDate") or ""
     if posted:
         parts.append(f"Posted: {posted}")
+    score = job.get("llm_score")
+    if score is not None:
+        summary = job.get("llm_summary", "")
+        score_line = f"AI Score: {score}/10"
+        if summary:
+            score_line += f" — {summary}"
+        parts.append(score_line)
     parts.append(job.get("Url", ""))
     return "\n".join(p for p in parts if p)
 
