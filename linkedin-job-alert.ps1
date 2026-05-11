@@ -69,10 +69,12 @@ function Load-Settings {
 }
 
 function Save-Settings {
-    $existing     = Load-Settings
-    $joobleApiKey = [string](Get-SettingValue -SettingsObject $existing -Name "JoobleApiKey"   -DefaultValue "")
-    $ghToken      = [string](Get-SettingValue -SettingsObject $existing -Name "GitHubToken"    -DefaultValue "")
-    $ghRepo       = [string](Get-SettingValue -SettingsObject $existing -Name "GitHubRepo"     -DefaultValue "")
+    $existing      = Load-Settings
+    $joobleApiKey  = [string](Get-SettingValue -SettingsObject $existing -Name "JoobleApiKey"   -DefaultValue "")
+    $ghToken       = [string](Get-SettingValue -SettingsObject $existing -Name "GitHubToken"    -DefaultValue "")
+    $ghRepo        = [string](Get-SettingValue -SettingsObject $existing -Name "GitHubRepo"     -DefaultValue "")
+    $supabaseUrl   = [string](Get-SettingValue -SettingsObject $existing -Name "SupabaseUrl"    -DefaultValue "")
+    $supabaseKey   = [string](Get-SettingValue -SettingsObject $existing -Name "SupabaseKey"    -DefaultValue "")
 
     $settings = [ordered]@{
         Keywords         = $script:KeywordsBox.Lines
@@ -91,6 +93,8 @@ function Save-Settings {
         ExcludeKeywords  = $script:ExcludeBox.Text.Trim()
         GitHubToken      = $ghToken
         GitHubRepo       = $ghRepo
+        SupabaseUrl      = $supabaseUrl
+        SupabaseKey      = $supabaseKey
         UserProfile      = $script:UserProfileBox.Text.Trim()
         MinAiScore       = [int]$script:MinAiScoreBox.Value
         OllamaUrl        = $script:OllamaUrlBox.Text.Trim()
