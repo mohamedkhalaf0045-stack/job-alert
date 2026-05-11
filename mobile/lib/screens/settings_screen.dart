@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../models/app_settings.dart';
 import '../services/supabase_service.dart';
 
@@ -12,15 +13,19 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  final _keywordsCtrl   = TextEditingController();
-  final _locationCtrl   = TextEditingController();
-  final _maxHoursCtrl   = TextEditingController();
-  final _excludeCtrl    = TextEditingController();
-  final _cookieCtrl     = TextEditingController();
-  final _profileCtrl    = TextEditingController();
-  final _minScoreCtrl   = TextEditingController();
-  final _ollamaCtrl     = TextEditingController();
-  final _timezoneCtrl   = TextEditingController();
+  final _keywordsCtrl    = TextEditingController();
+  final _locationCtrl    = TextEditingController();
+  final _maxHoursCtrl    = TextEditingController();
+  final _excludeCtrl     = TextEditingController();
+  final _cookieCtrl      = TextEditingController();
+  final _profileCtrl     = TextEditingController();
+  final _minScoreCtrl    = TextEditingController();
+  final _ollamaCtrl      = TextEditingController();
+  final _timezoneCtrl    = TextEditingController();
+  final _updateUrlCtrl   = TextEditingController();
+  final _updateVerCtrl   = TextEditingController();
+  final _updateCodeCtrl  = TextEditingController();
+  String _currentVersion = '';
 
   bool _searchLinkedIn = true;
   bool _searchIndeed   = true;
@@ -45,12 +50,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _minScoreCtrl.dispose();
     _ollamaCtrl.dispose();
     _timezoneCtrl.dispose();
+    _updateUrlCtrl.dispose();
+    _updateVerCtrl.dispose();
+    _updateCodeCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final s = await SupabaseService.getSettings();
+    final results = await Future.wait([
+      SupabaseService.getSettings(),
+      PackageInfo.fromPlatform(),
+      SupabaseService.getConfigValue('update_apk_url', ''),
+      SupabaseService.getConfigValue('update_version_name', ''),
+      SupabaseService.getConfigValue('update_version_code', ''),
+    ]);
+    final s    = results[0] as AppSettings;
+    final info = results[1] as PackageInfo;
     if (mounted) {
       setState(() {
         _keywordsCtrl.text   = s.keywords.join(', ');
@@ -64,6 +80,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _timezoneCtrl.text   = s.timezone;
         _searchLinkedIn      = s.searchLinkedIn;
         _searchIndeed        = s.searchIndeed;
+        _updateUrlCtrl.text  = results[2] as String;
+        _updateVerCtrl.text  = results[3] as String;
+        _updateCodeCtrl.text = results[4] as String;
+        _currentVersion      = '${info.version}+${info.buildNumber}';
         _loading             = false;
       });
     }
@@ -95,11 +115,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                            : _timezoneCtrl.text.trim(),
     );
 
-    final ok = await SupabaseService.saveSettings(settings);
+    final results = await Future.wait([
+      SupabaseService.saveSettings(settings),
+      SupabaseService.setConfigValue('update_apk_url',      _updateUrlCtrl.text.trim()),
+      SupabaseService.setConfigValue('update_version_name', _updateVerCtrl.text.trim()),
+      SupabaseService.setConfigValue('update_version_code', _updateCodeCtrl.text.trim()),
+    ]);
+    final ok = results.every((r) => r == true);
     if (mounted) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ok ? 'Settings saved. Will apply on next cloud run.' : 'Save failed — check connection.'),
+        content: Text(ok ? 'Settings saved.' : 'Save failed — check connection.'),
         backgroundColor: ok ? Colors.green : Colors.red,
       ));
     }
@@ -257,6 +283,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
               helperText: 'Change if enricher runs on another PC on your network',
             ),
           ),
+          const SizedBox(height: 24),
+          _Section('App Updates'),
+          if (_currentVersion.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Installed: $_currentVersion',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey),
+              ),
+            ),
+          TextFormField(
+            controller: _updateUrlCtrl,
+            decoration: const InputDecoration(
+              labelText: 'APK download URL',
+              hintText: 'https://drive.google.com/uc?export=download&id=...',
+              helperText: 'Google Drive direct-download link to the latest APK',
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: TextFormField(
+                controller: _updateVerCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Latest version name',
+                  hintText: '1.0.1',
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextFormField(
+                controller: _updateCodeCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Version code',
+                  hintText: '2',
+                  helperText: 'Must be > installed code',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ),
+          ]),
           const SizedBox(height: 32),
           _saving
               ? const Center(child: CircularProgressIndicator())

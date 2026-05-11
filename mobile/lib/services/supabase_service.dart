@@ -79,6 +79,35 @@ class SupabaseService {
     }
   }
 
+  // ── Generic bot_state key/value ─────────────────────────────────────────
+
+  static Future<String> getConfigValue(String key, String defaultValue) async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_base/bot_state?key=eq.$key&select=value&limit=1'),
+        headers: _headers,
+      );
+      if (res.statusCode != 200) return defaultValue;
+      final rows = jsonDecode(res.body) as List<dynamic>;
+      return rows.isEmpty ? defaultValue : (rows[0]['value'] as String? ?? defaultValue);
+    } catch (_) {
+      return defaultValue;
+    }
+  }
+
+  static Future<bool> setConfigValue(String key, String value) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$_base/bot_state'),
+        headers: {..._headers, 'Prefer': 'resolution=merge-duplicates,return=minimal'},
+        body: jsonEncode([{'key': key, 'value': value}]),
+      );
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<bool> saveSettings(AppSettings s) async {
     try {
       final entries = s.toMap().entries.toList();

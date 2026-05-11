@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/cloud_status.dart';
 import '../services/github_service.dart';
 import '../services/supabase_service.dart';
+import '../services/update_service.dart';
 import '../widgets/status_lamp.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -17,16 +18,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
   late Future<Map<String, int>> _countsFuture;
   bool _actionLoading = false;
 
+  UpdateInfo? _updateInfo;
+  bool _downloading   = false;
+  double _dlProgress  = 0;
+
   @override
   void initState() {
     super.initState();
     _refresh();
+    _checkUpdate();
   }
 
   void _refresh() => setState(() {
         _statusFuture = GitHubService.getCloudStatus();
         _countsFuture = SupabaseService.getJobCounts();
       });
+
+  Future<void> _checkUpdate() async {
+    final info = await UpdateService.checkForUpdate();
+    if (mounted) setState(() => _updateInfo = info);
+  }
+
+  Future<void> _doUpdate() async {
+    if (_updateInfo == null) return;
+    setState(() { _downloading = true; _dlProgress = 0; });
+
+    final error = await UpdateService.downloadAndInstall(
+      _updateInfo!.apkUrl,
+      (p) { if (mounted) setState(() => _dlProgress = p); },
+    );
+
+    if (mounted) {
+      setState(() => _downloading = false);
+      if (error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Update failed: $error'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
 
   Future<void> _runAction(Future<bool> Function() action) async {
     setState(() => _actionLoading = true);
@@ -44,7 +74,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: () async => _refresh(),
+      onRefresh: () async { _refresh(); await _checkUpdate(); },
       child: FutureBuilder<CloudStatus>(
         future: _statusFuture,
         builder: (context, snap) {
@@ -55,12 +85,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
             return Center(child: Text('Error: ${snap.error}'));
           }
 
-          final s = snap.data!;
+          final s         = snap.data!;
           final isRunning = s.lampColor == 'yellow';
 
           return ListView(
             padding: const EdgeInsets.all(24),
             children: [
+              // ── Update banner ──────────────────────────────────────────────
+              if (_updateInfo != null) _UpdateBanner(
+                info:        _updateInfo!,
+                downloading: _downloading,
+                progress:    _dlProgress,
+                onUpdate:    _doUpdate,
+              ),
+              if (_updateInfo != null) const SizedBox(height: 16),
+
               const SizedBox(height: 8),
               Center(child: StatusLamp(color: s.lampColor)),
               const SizedBox(height: 12),
@@ -115,6 +154,71 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'red'    => 'Last run failed',
         _        => 'Status unknown',
       };
+}
+
+// ── Update banner ────────────────────────────────────────────────────────────
+
+class _UpdateBanner extends StatelessWidget {
+  final UpdateInfo info;
+  final bool downloading;
+  final double progress;
+  final VoidCallback onUpdate;
+
+  const _UpdateBanner({
+    required this.info,
+    required this.downloading,
+    required this.progress,
+    required this.onUpdate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.system_update, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Update available — ${info.versionName}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (!downloading)
+                  FilledButton.icon(
+                    onPressed: onUpdate,
+                    icon: const Icon(Icons.download, size: 18),
+                    label: const Text('Update'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      textStyle: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+              ],
+            ),
+            if (downloading) ...[
+              const SizedBox(height: 10),
+              LinearProgressIndicator(value: progress == 0 ? null : progress),
+              const SizedBox(height: 4),
+              Text(
+                progress == 0
+                    ? 'Downloading...'
+                    : 'Downloading… ${(progress * 100).toStringAsFixed(0)}%',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ── Cloud stats card ────────────────────────────────────────────────────────
