@@ -34,7 +34,7 @@ DEFAULT_PROFILE = (
     "Looking for roles in UAE with competitive salary."
 )
 
-DEFAULT_MODEL    = "llama3.1"
+DEFAULT_MODEL    = "llama3.1:latest"
 DEFAULT_OLLAMA   = "http://localhost:11434"
 DEFAULT_MIN_SCORE = 4
 
