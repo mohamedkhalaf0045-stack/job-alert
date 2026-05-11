@@ -1546,9 +1546,9 @@ function New-Tb {
 # ── Form ──────────────────────────────────────────────────────────────────────
 $script:Form               = New-Object System.Windows.Forms.Form
 $script:Form.Text          = "LinkedIn UAE Job Alert"
-$script:Form.ClientSize    = New-Object System.Drawing.Size(1160, 820)
+$script:Form.ClientSize    = New-Object System.Drawing.Size(1160, 848)
 $script:Form.StartPosition = "CenterScreen"
-$script:Form.MinimumSize   = New-Object System.Drawing.Size(1160, 860)
+$script:Form.MinimumSize   = New-Object System.Drawing.Size(1160, 888)
 $script:Form.BackColor     = $clrBg
 $script:Form.Font          = $fntUi
 
@@ -1646,7 +1646,7 @@ $script:IndeedCheckBox.Checked    = [bool](Get-SettingValue -SettingsObject $sav
 [void]$searchCard.Controls.Add($script:IndeedCheckBox)
 
 # ── Automation card ───────────────────────────────────────────────────────────
-$autoCard = New-Card -X 573 -Y 60 -W 577 -H 220 -Title "AUTOMATION"
+$autoCard = New-Card -X 573 -Y 60 -W 577 -H 248 -Title "AUTOMATION"
 
 $startButton    = New-Btn "Start"       12  34  100 34 "green"
 $stopButton     = New-Btn "Stop"       118  34  100 34 "red"
@@ -1707,14 +1707,16 @@ $script:MinAiScoreBox.Font     = $fntUi
 $script:MinAiScoreBox.Value    = [decimal](Get-SettingValue -SettingsObject $savedSettings -Name "MinAiScore" -DefaultValue 4)
 [void]$autoCard.Controls.Add($script:MinAiScoreBox)
 
-[void]$autoCard.Controls.Add((New-Lbl "User Profile (for AI scoring)" 12 186))
-$script:UserProfileBox           = New-Tb -X 12 -Y 200 -W 553 -H 16
+[void]$autoCard.Controls.Add((New-Lbl "CV / Profile  (paste CV path, LinkedIn URL, or type a description)" 12 186))
+$script:UserProfileBox           = New-Tb -X 12 -Y 202 -W 400 -H 24
 $script:UserProfileBox.Text      = [string](Get-SettingValue -SettingsObject $savedSettings -Name "UserProfile" -DefaultValue "")
-$script:UserProfileBox.PlaceholderText = "e.g. IT Support Engineer, 4 years UAE, Windows Server, Active Directory, networking"
 [void]$autoCard.Controls.Add($script:UserProfileBox)
 
+$browseCvButton = New-Btn "Browse CV PDF..." 420 201 148 26 "outline"
+[void]$autoCard.Controls.Add($browseCvButton)
+
 # ── LinkedIn Session card ─────────────────────────────────────────────────────
-$cookieCard = New-Card -X 10 -Y 288 -W 555 -H 116 -Title "LINKEDIN SESSION"
+$cookieCard = New-Card -X 10 -Y 316 -W 555 -H 116 -Title "LINKEDIN SESSION"
 
 $script:CookieBox      = New-Tb -X 12 -Y 32 -W 395 -H 26
 $script:CookieBox.Text = [string](Get-SettingValue -SettingsObject $savedSettings -Name "LinkedInCookie" -DefaultValue "")
@@ -1729,7 +1731,7 @@ $cookieHintLbl.Size     = New-Object System.Drawing.Size(530, 18)
 [void]$cookieCard.Controls.Add($cookieHintLbl)
 
 # ── Telegram Alerts card ──────────────────────────────────────────────────────
-$telegramCard = New-Card -X 573 -Y 288 -W 577 -H 116 -Title "TELEGRAM ALERTS"
+$telegramCard = New-Card -X 573 -Y 316 -W 577 -H 116 -Title "TELEGRAM ALERTS"
 
 [void]$telegramCard.Controls.Add((New-Lbl "Bot token" 12 31))
 $script:TelegramTokenBox      = New-Tb -X 12 -Y 49 -W 262 -H 26
@@ -1753,7 +1755,7 @@ $tgHintLbl.Size     = New-Object System.Drawing.Size(550, 18)
 
 # ── Status bar ────────────────────────────────────────────────────────────────
 $statusPanel           = New-Object System.Windows.Forms.Panel
-$statusPanel.Location  = New-Object System.Drawing.Point(10, 412)
+$statusPanel.Location  = New-Object System.Drawing.Point(10, 440)
 $statusPanel.Size      = New-Object System.Drawing.Size(1140, 30)
 $statusPanel.BackColor = $clrBg
 
@@ -1868,7 +1870,7 @@ $script:CloudMenuSchedule.Add_Click({ try { Toggle-CloudSchedule } catch { Add-L
 $script:CloudLamp.ContextMenuStrip = $script:CloudMenu
 
 # ── Job Listings card ─────────────────────────────────────────────────────────
-$jobsCard = New-Card -X 10 -Y 450 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
+$jobsCard = New-Card -X 10 -Y 478 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
 
 $exportCsvButton = New-Btn "Export CSV" 990 4 120 22 "outline"
 $exportCsvButton.Font = [System.Drawing.Font]::new("Segoe UI", 8)
@@ -1900,7 +1902,7 @@ $script:JobsList.ContextMenuStrip = $jobContextMenu
 [void]$jobsCard.Controls.Add($script:JobsList)
 
 # ── Activity Log card ─────────────────────────────────────────────────────────
-$logCard = New-Card -X 10 -Y 702 -W 1140 -H 110 -Title "ACTIVITY LOG"
+$logCard = New-Card -X 10 -Y 730 -W 1140 -H 110 -Title "ACTIVITY LOG"
 
 $script:LogBox              = New-Object System.Windows.Forms.TextBox
 $script:LogBox.Location     = New-Object System.Drawing.Point(12, 30)
@@ -2004,6 +2006,17 @@ $scanNowButton.Add_Click({
 })
 $openJobButton.Add_Click({ Open-SelectedJob })
 
+$browseCvButton.Add_Click({
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title  = "Select your CV (PDF)"
+    $dlg.Filter = "PDF files (*.pdf)|*.pdf|All files (*.*)|*.*"
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $script:UserProfileBox.Text = $dlg.FileName
+        Save-Settings
+        Add-LogLine "CV set: $($dlg.FileName)"
+    }
+})
+
 $enrichAiButton.Add_Click({
     Save-Settings
     $enricherPath = Join-Path $script:AppRoot "cloud\enricher.py"
@@ -2018,17 +2031,33 @@ $enrichAiButton.Add_Click({
         Add-LogLine "ERROR: SupabaseUrl / SupabaseKey not set in settings.json"
         return
     }
-    $ollamaUrl  = [string](Get-SettingValue -SettingsObject $settings -Name "OllamaUrl"  -DefaultValue "http://localhost:11434")
-    $minScore   = [string](Get-SettingValue -SettingsObject $settings -Name "MinAiScore" -DefaultValue "4")
-    Add-LogLine "Starting AI enrichment (Ollama)..."
+    $ollamaUrl   = [string](Get-SettingValue -SettingsObject $settings -Name "OllamaUrl"  -DefaultValue "http://localhost:11434")
+    $minScore    = [string](Get-SettingValue -SettingsObject $settings -Name "MinAiScore" -DefaultValue "4")
+    $cvOrProfile = [string](Get-SettingValue -SettingsObject $settings -Name "UserProfile" -DefaultValue "")
+
+    $cvLabel = "default profile"
+    if (-not [string]::IsNullOrWhiteSpace($cvOrProfile)) {
+        if ($cvOrProfile.ToLower().EndsWith(".pdf")) {
+            $cvLabel = "CV: $(Split-Path $cvOrProfile -Leaf)"
+        } elseif ($cvOrProfile.ToLower().Contains("linkedin.com/in/")) {
+            $cvLabel = "LinkedIn profile"
+        } else {
+            $cvLabel = "text profile"
+        }
+    }
+    Add-LogLine "Starting AI enrichment - profile source: $cvLabel"
     $enrichAiButton.Enabled = $false
     $script:Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
     $job = Start-Job -ScriptBlock {
-        param($enricher, $sUrl, $sKey, $ollama, $min)
+        param($enricher, $sUrl, $sKey, $ollama, $min, $cv)
         $env:SUPABASE_URL = $sUrl
         $env:SUPABASE_KEY = $sKey
-        & python $enricher --ollama $ollama --min-score $min 2>&1
-    } -ArgumentList $enricherPath, $supabaseUrl, $supabaseKey, $ollamaUrl, $minScore
+        if ($cv) {
+            & python $enricher --ollama $ollama --min-score $min --cv $cv 2>&1
+        } else {
+            & python $enricher --ollama $ollama --min-score $min 2>&1
+        }
+    } -ArgumentList $enricherPath, $supabaseUrl, $supabaseKey, $ollamaUrl, $minScore, $cvOrProfile
 
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 1500
