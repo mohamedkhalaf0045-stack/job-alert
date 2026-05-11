@@ -99,6 +99,35 @@ function Save-Settings {
     $settings | ConvertTo-Json | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
 }
 
+$script:SettingsSaveTimer = $null
+
+function Save-Settings-WithFeedback {
+    try {
+        Save-Settings
+        Add-LogLine "Settings saved."
+        $script:StatusLabel.Text      = "Settings saved [OK]"
+        $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 140, 0)
+        if ($null -ne $script:SettingsSaveTimer) {
+            $script:SettingsSaveTimer.Stop()
+            $script:SettingsSaveTimer.Dispose()
+        }
+        $script:SettingsSaveTimer          = New-Object System.Windows.Forms.Timer
+        $script:SettingsSaveTimer.Interval = 3000
+        $script:SettingsSaveTimer.Add_Tick({
+            if ($script:ScanRunning) {
+                $script:StatusLabel.Text = "Status: monitoring"
+            } else {
+                $script:StatusLabel.Text = "Status: ready"
+            }
+            $script:StatusLabel.ForeColor = [System.Drawing.Color]::Black
+            $script:SettingsSaveTimer.Stop()
+        })
+        $script:SettingsSaveTimer.Start()
+    } catch {
+        Add-LogLine "Settings save failed: $($_.Exception.Message)"
+    }
+}
+
 function Initialize-Sqlite {
     if ($script:SqliteLoaded) {
         return
@@ -2008,18 +2037,33 @@ $menuSave.Add_Click({
 
 $exportCsvButton.Add_Click({ Export-JobsToCSV })
 
-$script:ExcludeBox.Add_Leave({ Save-Settings })
+$script:ExcludeBox.Add_Leave({ Save-Settings-WithFeedback })
 
 $script:TimeFilterBox.Add_SelectedIndexChanged({
     Update-TimeFilterUI
-    Save-Settings
+    Save-Settings-WithFeedback
     Refresh-ResultsForCurrentFilter
 })
 
 $script:CustomHoursBox.Add_ValueChanged({
-    Save-Settings
+    Save-Settings-WithFeedback
     Refresh-ResultsForCurrentFilter
 })
+
+# ── Auto-save all remaining settings fields ───────────────────────────────────
+$script:KeywordsBox.Add_Leave(             { Save-Settings-WithFeedback })
+$script:CountryBox.Add_Leave(              { Save-Settings-WithFeedback })
+$script:LinkedInCheckBox.Add_CheckedChanged({ Save-Settings-WithFeedback })
+$script:IndeedCheckBox.Add_CheckedChanged(  { Save-Settings-WithFeedback })
+$script:HideAppliedCheckBox.Add_CheckedChanged({ Save-Settings-WithFeedback })
+$script:IntervalBox.Add_ValueChanged(      { Save-Settings-WithFeedback })
+$script:BrowserBox.Add_SelectedIndexChanged({ Save-Settings-WithFeedback })
+$script:CookieBox.Add_Leave(               { Save-Settings-WithFeedback })
+$script:TelegramTokenBox.Add_Leave(        { Save-Settings-WithFeedback })
+$script:TelegramChatIdBox.Add_Leave(       { Save-Settings-WithFeedback })
+$script:OllamaUrlBox.Add_Leave(            { Save-Settings-WithFeedback })
+$script:MinAiScoreBox.Add_ValueChanged(    { Save-Settings-WithFeedback })
+$script:UserProfileBox.Add_Leave(          { Save-Settings-WithFeedback })
 
 $startButton.Add_Click({ Start-Monitoring })
 $stopButton.Add_Click({ Stop-Monitoring })
