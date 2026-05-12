@@ -121,8 +121,6 @@ def main() -> None:
             tg_chat = setting_tg_chat
         if setting_adzuna:
             search_adzuna = setting_adzuna.lower() not in ("false", "0", "no", "off")
-        if setting_jooble_key:
-            jooble_key = setting_jooble_key
         if setting_adzuna_id:
             adzuna_app_id = setting_adzuna_id
         if setting_adzuna_key:
@@ -178,10 +176,6 @@ def main() -> None:
         except Exception as exc:
             _log(f"Telegram command poll error: {exc}")
 
-    # Load already-sent URLs to avoid duplicate Telegram alerts
-    sent_urls = db.get_telegram_sent_urls(supabase_url, supabase_key)
-    _log(f"Loaded {len(sent_urls)} previously sent URLs from DB.")
-
     all_new_jobs: list[dict] = []
 
     for idx, keyword in enumerate(keywords):
@@ -193,7 +187,6 @@ def main() -> None:
         _log(f"Scanning keyword: '{keyword}'")
 
         # --- LinkedIn ---
-        li_jobs: list[dict] = []
         if search_li:
             try:
                 li_jobs = li_scraper.scrape_linkedin(
@@ -208,11 +201,11 @@ def main() -> None:
                     f"inserted={summary['inserted']}, updated={summary['updated']}, "
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
+                all_new_jobs.extend(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"LinkedIn error for '{keyword}': {exc}")
 
         # --- Indeed ---
-        indeed_jobs: list[dict] = []
         if search_indeed:
             try:
                 indeed_jobs = indeed_scraper.scrape_indeed(
@@ -226,11 +219,11 @@ def main() -> None:
                     f"inserted={summary['inserted']}, updated={summary['updated']}, "
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
+                all_new_jobs.extend(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"Indeed error for '{keyword}': {exc}")
 
         # --- Adzuna ---
-        adzuna_jobs: list[dict] = []
         if search_adzuna and adzuna_app_id and adzuna_app_key:
             try:
                 adzuna_jobs = adzuna_scraper.scrape_adzuna(
@@ -245,13 +238,13 @@ def main() -> None:
                     f"inserted={summary['inserted']}, updated={summary['updated']}, "
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
+                all_new_jobs.extend(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"Adzuna error for '{keyword}': {exc}")
         elif search_adzuna and not (adzuna_app_id and adzuna_app_key):
             _log("Adzuna skipped — ADZUNA_APP_ID or ADZUNA_APP_KEY not set")
 
         # --- Web search (Tavily → Brave → Google → Bing cascade) ---
-        web_jobs: list[dict] = []
         if search_web:
             try:
                 web_jobs = websearch.search_jobs(
@@ -270,16 +263,9 @@ def main() -> None:
                         f"inserted={summary['inserted']}, updated={summary['updated']}, "
                         f"seen={summary['seen']}, invalid={summary['invalid']}"
                     )
+                    all_new_jobs.extend(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"WebSearch error for '{keyword}': {exc}")
-
-        # Collect jobs fresh enough to alert on
-        for job in li_jobs + indeed_jobs + adzuna_jobs + web_jobs:
-            age = li_scraper.get_posted_age_hours(job)
-            canonical = db._canonical_url(job.get("Url", ""))
-            if age <= max_hours and canonical and canonical not in sent_urls:
-                all_new_jobs.append(job)
-                sent_urls.add(canonical)  # prevent duplicate within this run
 
     _log(f"Scan complete. {len(all_new_jobs)} new job(s) to alert.")
 
@@ -306,7 +292,6 @@ def main() -> None:
         for job in all_new_jobs:
             ok = tg.send_job_alert(tg_token, tg_chat, job)
             if ok:
-                db.mark_telegram_sent(supabase_url, supabase_key, job.get("Url", ""))
                 sent_count += 1
                 time.sleep(0.3)  # avoid Telegram flood limits
             else:

@@ -198,7 +198,7 @@ def get_scores_for_urls(supabase_url: str, supabase_key: str, urls: list[str]) -
 
 
 def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: str = "LinkedIn") -> dict:
-    summary = {"inserted": 0, "updated": 0, "seen": 0, "invalid": 0}
+    summary: dict = {"inserted": 0, "updated": 0, "seen": 0, "invalid": 0, "new_jobs": []}
     if not jobs:
         return summary
 
@@ -239,6 +239,7 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
             try:
                 sb.table("jobs").insert(record).execute()
                 summary["inserted"] += 1
+                summary["new_jobs"].append(job)
             except Exception:
                 # May fail if job_id conflict — treat as seen
                 summary["seen"] += 1
