@@ -252,6 +252,10 @@ def main() -> None:
         profile = DEFAULT_PROFILE
         profile_label = "default"
 
+    # Load Telegram config for post-score alerts
+    tg_token = db.get_config(supabase_url, supabase_key, "setting_telegram_bot_token", "") or _env("TELEGRAM_BOT_TOKEN")
+    tg_chat  = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id",   "") or _env("TELEGRAM_CHAT_ID")
+
     _log(f"Enricher starting — model={model}, min_score={min_score}, limit={args.limit}, profile={profile_label}")
 
     jobs = db.get_unscored_jobs(supabase_url, supabase_key, limit=args.limit)
@@ -288,6 +292,23 @@ def main() -> None:
             job["job_id"], description, score, summary,
             min_score=min_score,
         )
+
+        # Send Telegram score notification for kept jobs
+        if score >= min_score and tg_token and tg_chat:
+            try:
+                import telegram_notify as tg
+                msg = (
+                    f"AI Score: {score}/10\n"
+                    f"{title}\n"
+                    f"{company}\n"
+                    f"{job.get('location', '')}\n"
+                    f"{summary}\n"
+                    f"{job.get('url', '')}"
+                )
+                tg.send_message(tg_token, tg_chat, msg)
+                time.sleep(0.3)
+            except Exception as exc:
+                _log(f"          Telegram score alert error: {exc}")
 
         if score < min_score:
             dismissed += 1
