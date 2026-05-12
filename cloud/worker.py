@@ -29,7 +29,6 @@ from datetime import datetime, timezone
 import db
 import linkedin as li_scraper
 import indeed as indeed_scraper
-import jooble as jooble_scraper
 import adzuna as adzuna_scraper
 import telegram_notify as tg
 
@@ -72,9 +71,7 @@ def main() -> None:
     hide_applied   = _env_bool("HIDE_APPLIED", default=False)
     search_li      = _env_bool("SEARCH_LINKEDIN", default=True)
     search_indeed  = _env_bool("SEARCH_INDEED", default=False)
-    search_jooble  = _env_bool("SEARCH_JOOBLE",  default=False)
     search_adzuna  = _env_bool("SEARCH_ADZUNA",  default=False)
-    jooble_key     = _env("JOOBLE_API_KEY")
     adzuna_app_id  = _env("ADZUNA_APP_ID")
     adzuna_app_key = _env("ADZUNA_APP_KEY")
 
@@ -94,9 +91,7 @@ def main() -> None:
         setting_exclude = db.get_config(supabase_url, supabase_key, "setting_exclude_keywords", "")
         setting_tg_tok      = db.get_config(supabase_url, supabase_key, "setting_telegram_bot_token", "")
         setting_tg_chat     = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id", "")
-        setting_jooble      = db.get_config(supabase_url, supabase_key, "setting_search_jooble", "")
         setting_adzuna      = db.get_config(supabase_url, supabase_key, "setting_search_adzuna", "")
-        setting_jooble_key  = db.get_config(supabase_url, supabase_key, "setting_jooble_api_key", "")
         setting_adzuna_id   = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_id", "")
         setting_adzuna_key  = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_key", "")
 
@@ -117,8 +112,6 @@ def main() -> None:
             tg_token = setting_tg_tok
         if setting_tg_chat:
             tg_chat = setting_tg_chat
-        if setting_jooble:
-            search_jooble = setting_jooble.lower() not in ("false", "0", "no", "off")
         if setting_adzuna:
             search_adzuna = setting_adzuna.lower() not in ("false", "0", "no", "off")
         if setting_jooble_key:
@@ -209,26 +202,6 @@ def main() -> None:
             except Exception as exc:
                 _log(f"Indeed error for '{keyword}': {exc}")
 
-        # --- Jooble ---
-        jooble_jobs: list[dict] = []
-        if search_jooble and jooble_key:
-            try:
-                jooble_jobs = jooble_scraper.scrape_jooble(
-                    keyword=keyword,
-                    location=location,
-                    api_key=jooble_key,
-                )
-                summary = db.sync_jobs(supabase_url, supabase_key, jooble_jobs, source="Jooble")
-                _log(
-                    f"Jooble '{keyword}': "
-                    f"inserted={summary['inserted']}, updated={summary['updated']}, "
-                    f"seen={summary['seen']}, invalid={summary['invalid']}"
-                )
-            except Exception as exc:
-                _log(f"Jooble error for '{keyword}': {exc}")
-        elif search_jooble and not jooble_key:
-            _log("Jooble skipped — JOOBLE_API_KEY not set")
-
         # --- Adzuna ---
         adzuna_jobs: list[dict] = []
         if search_adzuna and adzuna_app_id and adzuna_app_key:
@@ -251,7 +224,7 @@ def main() -> None:
             _log("Adzuna skipped — ADZUNA_APP_ID or ADZUNA_APP_KEY not set")
 
         # Collect jobs fresh enough to alert on
-        for job in li_jobs + indeed_jobs + jooble_jobs + adzuna_jobs:
+        for job in li_jobs + indeed_jobs + adzuna_jobs:
             age = li_scraper.get_posted_age_hours(job)
             canonical = db._canonical_url(job.get("Url", ""))
             if age <= max_hours and canonical and canonical not in sent_urls:

@@ -46,8 +46,6 @@ jobs:
           HIDE_APPLIED:        ${{ secrets.HIDE_APPLIED }}
           SEARCH_LINKEDIN:     ${{ secrets.SEARCH_LINKEDIN }}
           SEARCH_INDEED:       ${{ secrets.SEARCH_INDEED }}
-          SEARCH_JOOBLE:       ${{ secrets.SEARCH_JOOBLE }}
           SEARCH_ADZUNA:       ${{ secrets.SEARCH_ADZUNA }}
-          JOOBLE_API_KEY:      ${{ secrets.JOOBLE_API_KEY }}
           ADZUNA_APP_ID:       ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY:      ${{ secrets.ADZUNA_APP_KEY }}
