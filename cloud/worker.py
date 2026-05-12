@@ -4,16 +4,18 @@ Reads config from environment variables, scans LinkedIn + Indeed,
 stores results in Supabase (PostgreSQL), sends new jobs to Telegram.
 
 Required environment variables:
+    SUPABASE_URL      Supabase project URL
+    SUPABASE_KEY      Supabase anon key
+Optional (overridden by Supabase bot_state settings):
     KEYWORDS          comma-separated, e.g. "IT support,IT HelpDesk"
     LOCATION          e.g. "United Arab Emirates"
-    DATABASE_URL      PostgreSQL connection string from Supabase
     TELEGRAM_BOT_TOKEN
     TELEGRAM_CHAT_ID
     MAX_HOURS         how old a job can be and still be alerted (default: 24)
-    LINKEDIN_COOKIE   optional; li_at=...; JSESSIONID=... from browser
+    LINKEDIN_COOKIE   optional; li_at=...
     HIDE_APPLIED      optional; "true" to skip applied jobs (default: false)
     SEARCH_LINKEDIN   optional; "false" to disable (default: true)
-    SEARCH_INDEED     optional; "false" to disable (default: true)
+    SEARCH_INDEED     optional; "false" to disable (default: false)
 """
 
 from __future__ import annotations
@@ -26,18 +28,8 @@ from datetime import datetime, timezone
 # --- local modules (same cloud/ folder) ---
 import db
 import linkedin as li_scraper
+import indeed as indeed_scraper
 import telegram_notify as tg
-
-# indeed_scraper.py lives one level up (shared with Windows app)
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_ROOT_DIR   = os.path.dirname(_SCRIPT_DIR)
-sys.path.insert(0, _ROOT_DIR)
-
-try:
-    from indeed_scraper import scrape_indeed
-    _HAS_INDEED = True
-except ImportError:
-    _HAS_INDEED = False
 
 
 def _env(name: str, default: str = "") -> str:
@@ -179,9 +171,9 @@ def main() -> None:
 
         # --- Indeed ---
         indeed_jobs: list[dict] = []
-        if search_indeed and _HAS_INDEED:
+        if search_indeed:
             try:
-                indeed_jobs = scrape_indeed(
+                indeed_jobs = indeed_scraper.scrape_indeed(
                     keyword=keyword,
                     location=location,
                     max_hours=max_hours,
@@ -194,8 +186,6 @@ def main() -> None:
                 )
             except Exception as exc:
                 _log(f"Indeed error for '{keyword}': {exc}")
-        elif search_indeed and not _HAS_INDEED:
-            _log("Indeed scraper not available (playwright not installed). Skipping Indeed.")
 
         # Collect jobs fresh enough to alert on
         for job in li_jobs + indeed_jobs:
