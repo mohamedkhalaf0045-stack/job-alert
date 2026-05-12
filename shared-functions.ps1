@@ -180,7 +180,12 @@ function Get-LinkedInJobs {
     $useAuthenticatedSearch = -not [string]::IsNullOrWhiteSpace($CookieHeader)
     $sawPublicWrapper = $false
 
+    $pageNum = 0
     foreach ($offset in @(0, 25)) {
+        $pageNum++
+        if ($script:LogFunction) {
+            & $script:LogFunction "  LinkedIn '$Keyword' page $pageNum - fetching..."
+        }
         $url  = New-SearchUrl -Keyword $Keyword -Location $Location -Start $offset -UseAuthenticatedSearch:$useAuthenticatedSearch
         $html = Invoke-GetStringWithRetry -Url $url -CookieHeader $CookieHeader
 
@@ -189,6 +194,9 @@ function Get-LinkedInJobs {
         }
 
         $jobs = @(Parse-JobCards -Html $html -Keyword $Keyword)
+        if ($script:LogFunction) {
+            & $script:LogFunction "  LinkedIn '$Keyword' page $pageNum - $(@($jobs).Count) listing(s) found."
+        }
         if (@($jobs).Count -eq 0) {
             break
         }
@@ -198,7 +206,12 @@ function Get-LinkedInJobs {
         }
 
         $allJobs += $jobs
-        Start-Sleep -Milliseconds 2500  # pace requests to avoid LinkedIn 429 rate-limiting
+        if ($pageNum -lt 2 -and @($jobs).Count -gt 0) {
+            if ($script:LogFunction) {
+                & $script:LogFunction "  LinkedIn '$Keyword' page $pageNum - waiting 2.5s before next page..."
+            }
+            Start-Sleep -Milliseconds 2500  # pace requests to avoid LinkedIn 429 rate-limiting
+        }
     }
 
     if ($useAuthenticatedSearch -and $sawPublicWrapper -and $script:LogFunction) {
