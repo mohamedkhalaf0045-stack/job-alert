@@ -55,3 +55,6 @@ jobs:
           GOOGLE_API_KEY:      ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_CX:           ${{ secrets.GOOGLE_CX }}
           BING_API_KEY:        ${{ secrets.BING_API_KEY }}
+          SEARCH_GMAIL:        ${{ secrets.SEARCH_GMAIL }}
+          GMAIL_EMAIL:         ${{ secrets.GMAIL_EMAIL }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}

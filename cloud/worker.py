@@ -31,6 +31,7 @@ import linkedin as li_scraper
 import indeed as indeed_scraper
 import adzuna as adzuna_scraper
 import websearch
+import gmail_scan
 import telegram_notify as tg
 
 
@@ -81,6 +82,9 @@ def main() -> None:
     google_key     = _env("GOOGLE_API_KEY")
     google_cx      = _env("GOOGLE_CX")
     bing_key       = _env("BING_API_KEY")
+    search_gmail   = _env_bool("SEARCH_GMAIL",   default=False)
+    gmail_email    = _env("GMAIL_EMAIL")
+    gmail_password = _env("GMAIL_APP_PASSWORD")
 
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
@@ -266,6 +270,26 @@ def main() -> None:
                     all_new_jobs.extend(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"WebSearch error for '{keyword}': {exc}")
+
+    # --- Gmail job alert emails ---
+    if search_gmail:
+        try:
+            gm_jobs = gmail_scan.scan_gmail(gmail_email, gmail_password)
+            if gm_jobs:
+                by_source: dict[str, list] = {}
+                for job in gm_jobs:
+                    by_source.setdefault(job.get("Source", "Gmail"), []).append(job)
+                for src, src_jobs in by_source.items():
+                    summary = db.sync_jobs(supabase_url, supabase_key, src_jobs, source=src)
+                    _log(
+                        f"{src}: inserted={summary['inserted']}, "
+                        f"seen={summary['seen']}, invalid={summary['invalid']}"
+                    )
+                    all_new_jobs.extend(summary.get("new_jobs", []))
+        except Exception as exc:
+            _log(f"Gmail scan error: {exc}")
+    elif not gmail_email:
+        _log("Gmail skipped — GMAIL_EMAIL / GMAIL_APP_PASSWORD not set")
 
     _log(f"Scan complete. {len(all_new_jobs)} new job(s) to alert.")
 
