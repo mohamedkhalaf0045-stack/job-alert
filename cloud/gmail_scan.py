@@ -25,8 +25,9 @@ IMAP_PORT = 993
 # Senders → parser function (matched via substring in From header)
 _JOB_ALERT_SENDERS = [
     "jobalert.indeed.com",
+    "match.indeed.com",
     "jobalerts-noreply@linkedin.com",
-    "naukrigulf.com",
+    "naukrigulf.com",       # covers both info@ and similarjobs@
     "glassdoor.com",
 ]
 
@@ -117,12 +118,13 @@ def _parse_linkedin_email(body: str) -> list[dict]:
 
 # ── Indeed parser ─────────────────────────────────────────────────────────────
 
-_INDEED_JK = re.compile(r"jk[=\{]([a-f0-9]+)", re.I)
+_INDEED_JK = re.compile(r"jk.([a-f0-9]{10,})", re.I)  # handles =, {, control chars
 _SKIP_INDEED = re.compile(
     r"^(easily apply|https?://|jobs \d|see matching|indeed job|do not share|"
-    r"salaries estimated|©|\d+ day|just posted|\*)",
+    r"salaries estimated|©|\d+ day|\d+ hour|just posted|\*|aed|usd|sar|\$|£|€|salary)",
     re.I,
 )
+_SALARY_LINE = re.compile(r"(aed|usd|sar|\$|£|€)\s*[\d,]", re.I)
 
 
 def _parse_indeed_email(body: str) -> list[dict]:
@@ -163,7 +165,8 @@ def _parse_indeed_email(body: str) -> list[dict]:
             if not prev or _SKIP_INDEED.match(prev):
                 continue
             # Indeed puts "Company - Location" on one line with " - " separator
-            if " - " in prev and not company:
+            # Skip salary lines like "AED5,000 - AED8,000 a month"
+            if " - " in prev and not company and not _SALARY_LINE.search(prev):
                 parts = prev.split(" - ", 1)
                 company = parts[0].strip()
                 location = parts[1].strip()
