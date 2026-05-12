@@ -30,6 +30,7 @@ import db
 import linkedin as li_scraper
 import indeed as indeed_scraper
 import adzuna as adzuna_scraper
+import websearch
 import telegram_notify as tg
 
 
@@ -74,6 +75,12 @@ def main() -> None:
     search_adzuna  = _env_bool("SEARCH_ADZUNA",  default=False)
     adzuna_app_id  = _env("ADZUNA_APP_ID")
     adzuna_app_key = _env("ADZUNA_APP_KEY")
+    search_web     = _env_bool("SEARCH_WEB",     default=False)
+    tavily_key     = _env("TAVILY_API_KEY")
+    brave_key      = _env("BRAVE_API_KEY")
+    google_key     = _env("GOOGLE_API_KEY")
+    google_cx      = _env("GOOGLE_CX")
+    bing_key       = _env("BING_API_KEY")
 
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
@@ -120,6 +127,26 @@ def main() -> None:
             adzuna_app_id = setting_adzuna_id
         if setting_adzuna_key:
             adzuna_app_key = setting_adzuna_key
+
+        setting_web        = db.get_config(supabase_url, supabase_key, "setting_search_web", "")
+        setting_tavily     = db.get_config(supabase_url, supabase_key, "setting_tavily_api_key", "")
+        setting_brave      = db.get_config(supabase_url, supabase_key, "setting_brave_api_key", "")
+        setting_google_key = db.get_config(supabase_url, supabase_key, "setting_google_api_key", "")
+        setting_google_cx  = db.get_config(supabase_url, supabase_key, "setting_google_cx", "")
+        setting_bing       = db.get_config(supabase_url, supabase_key, "setting_bing_api_key", "")
+
+        if setting_web:
+            search_web = setting_web.lower() not in ("false", "0", "no", "off")
+        if setting_tavily:
+            tavily_key = setting_tavily
+        if setting_brave:
+            brave_key = setting_brave
+        if setting_google_key:
+            google_key = setting_google_key
+        if setting_google_cx:
+            google_cx = setting_google_cx
+        if setting_bing:
+            bing_key = setting_bing
     except Exception as exc:
         _log(f"Could not read Supabase settings (using env vars): {exc}")
 
@@ -223,8 +250,31 @@ def main() -> None:
         elif search_adzuna and not (adzuna_app_id and adzuna_app_key):
             _log("Adzuna skipped — ADZUNA_APP_ID or ADZUNA_APP_KEY not set")
 
+        # --- Web search (Tavily → Brave → Google → Bing cascade) ---
+        web_jobs: list[dict] = []
+        if search_web:
+            try:
+                web_jobs = websearch.search_jobs(
+                    keyword=keyword,
+                    location=location,
+                    tavily_key=tavily_key,
+                    brave_key=brave_key,
+                    google_key=google_key,
+                    google_cx=google_cx,
+                    bing_key=bing_key,
+                )
+                if web_jobs:
+                    summary = db.sync_jobs(supabase_url, supabase_key, web_jobs, source="Web")
+                    _log(
+                        f"WebSearch '{keyword}': "
+                        f"inserted={summary['inserted']}, updated={summary['updated']}, "
+                        f"seen={summary['seen']}, invalid={summary['invalid']}"
+                    )
+            except Exception as exc:
+                _log(f"WebSearch error for '{keyword}': {exc}")
+
         # Collect jobs fresh enough to alert on
-        for job in li_jobs + indeed_jobs + adzuna_jobs:
+        for job in li_jobs + indeed_jobs + adzuna_jobs + web_jobs:
             age = li_scraper.get_posted_age_hours(job)
             canonical = db._canonical_url(job.get("Url", ""))
             if age <= max_hours and canonical and canonical not in sent_urls:

@@ -49,3 +49,9 @@ jobs:
           SEARCH_ADZUNA:       ${{ secrets.SEARCH_ADZUNA }}
           ADZUNA_APP_ID:       ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY:      ${{ secrets.ADZUNA_APP_KEY }}
+          SEARCH_WEB:          ${{ secrets.SEARCH_WEB }}
+          TAVILY_API_KEY:      ${{ secrets.TAVILY_API_KEY }}
+          BRAVE_API_KEY:       ${{ secrets.BRAVE_API_KEY }}
+          GOOGLE_API_KEY:      ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CX:           ${{ secrets.GOOGLE_CX }}
+          BING_API_KEY:        ${{ secrets.BING_API_KEY }}
