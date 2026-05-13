@@ -195,7 +195,8 @@ function Get-LinkedInJobs {
 
         $jobs = @(Parse-JobCards -Html $html -Keyword $Keyword)
         if ($script:LogFunction) {
-            & $script:LogFunction "  LinkedIn '$Keyword' page $pageNum - $(@($jobs).Count) listing(s) found."
+            $liCount = ([regex]::Matches($html, '<li\b', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)).Count
+            & $script:LogFunction "  LinkedIn '$Keyword' page $pageNum - $(@($jobs).Count) listing(s) parsed (HTML: $($html.Length) chars, $liCount <li> elements)."
         }
         if (@($jobs).Count -eq 0) {
             break
