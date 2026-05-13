@@ -18,7 +18,8 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 import requests
 
@@ -38,14 +39,53 @@ DEFAULT_MODEL    = "llama3.1:latest"
 DEFAULT_OLLAMA   = "http://localhost:11434"
 DEFAULT_MIN_SCORE = 4
 
+# Per-user cache + log directory: %LOCALAPPDATA%\JobAlert on Windows, ~/.job-alert elsewhere
+_LOCALAPPDATA = os.environ.get("LOCALAPPDATA")
+if _LOCALAPPDATA:
+    _STATE_DIR = Path(_LOCALAPPDATA) / "JobAlert"
+else:
+    _STATE_DIR = Path.home() / ".job-alert"
+_STATE_DIR.mkdir(parents=True, exist_ok=True)
+_PROFILE_CACHE_PATH = _STATE_DIR / "profile-cache.json"
+_ENRICHER_LOG_PATH  = _STATE_DIR / "enricher.log"
+_PROFILE_CACHE_TTL_HOURS = 24
+
+# Verbosity flags set by main() — affect _log() behaviour
+_VERBOSE      = False
+_DEBUG_PROMPT = False
+_LOG_TO_FILE  = True
+
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip().lstrip("﻿")
 
 
 def _log(msg: str) -> None:
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {msg}"
+    print(line, flush=True)
+    if _LOG_TO_FILE:
+        try:
+            with open(_ENRICHER_LOG_PATH, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception:
+            pass
+
+
+def _vlog(msg: str) -> None:
+    """Verbose-only log (silent unless --verbose)."""
+    if _VERBOSE:
+        _log(msg)
+
+
+def _load_settings_json() -> dict:
+    """Read settings.json from the project root (one level above cloud/). Tolerant to missing file / BOM."""
+    settings_path = os.path.join(_DIR, "..", "settings.json")
+    try:
+        with open(settings_path, encoding="utf-8-sig") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
 
 
 # ── Profile resolution ────────────────────────────────────────────────────────
@@ -67,8 +107,58 @@ def _extract_pdf(path: str) -> str:
         return ""
 
 
+def _load_cached_profile(source_key: str) -> str:
+    """Return cached profile text for the given source key if <24h old, else ''."""
+    try:
+        if not _PROFILE_CACHE_PATH.exists():
+            return ""
+        with open(_PROFILE_CACHE_PATH, encoding="utf-8") as f:
+            cache = json.load(f) or {}
+        entry = cache.get(source_key)
+        if not entry:
+            return ""
+        cached_at = datetime.fromisoformat(entry.get("cached_at", ""))
+        if datetime.now(timezone.utc) - cached_at > timedelta(hours=_PROFILE_CACHE_TTL_HOURS):
+            return ""
+        text = entry.get("text", "") or ""
+        if text:
+            _vlog(f"Profile cache HIT for {source_key[:60]} ({len(text)} chars, cached {cached_at.isoformat()})")
+        return text
+    except Exception:
+        return ""
+
+
+def _save_cached_profile(source_key: str, text: str) -> None:
+    """Persist profile text in the local cache with current UTC timestamp."""
+    if not text:
+        return
+    try:
+        cache: dict = {}
+        if _PROFILE_CACHE_PATH.exists():
+            with open(_PROFILE_CACHE_PATH, encoding="utf-8") as f:
+                cache = json.load(f) or {}
+        cache[source_key] = {
+            "cached_at": datetime.now(timezone.utc).isoformat(),
+            "text": text,
+        }
+        with open(_PROFILE_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except Exception as exc:
+        _vlog(f"Profile cache write failed: {exc}")
+
+
 def _fetch_linkedin_profile(url: str, cookie: str = "") -> str:
-    """Scrape a LinkedIn profile page and return a structured text summary."""
+    """Scrape a LinkedIn profile page and return a structured text summary.
+
+    Uses a local 24h cache keyed on the URL to avoid re-fetching on every
+    enricher run. Honors the LINKEDIN_COOKIE env var (passed in as `cookie`)
+    so the public-page wall doesn't strip everything.
+    """
+    cache_key = f"linkedin::{url}"
+    cached = _load_cached_profile(cache_key)
+    if cached:
+        return cached
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -79,6 +169,8 @@ def _fetch_linkedin_profile(url: str, cookie: str = "") -> str:
     }
     if cookie:
         headers["Cookie"] = cookie
+    else:
+        _vlog("LinkedIn profile: no cookie provided (LINKEDIN_COOKIE env var empty) — expect login-wall page")
     try:
         r = requests.get(url, headers=headers, timeout=25)
         r.raise_for_status()
@@ -123,6 +215,8 @@ def _fetch_linkedin_profile(url: str, cookie: str = "") -> str:
     result = "\n".join(p for p in parts if p)
     if not result:
         _log("LinkedIn profile: could not extract structured data (may need cookie for full access)")
+    else:
+        _save_cached_profile(cache_key, result[:4000])
     return result[:4000]
 
 
@@ -154,9 +248,48 @@ def resolve_profile(source: str, cookie: str = "") -> tuple[str, str]:
         _log("WARNING: LinkedIn profile fetch returned empty — falling back to default profile")
         return "", "default"
 
-    # Plain text
+    # Plain text (anything not a .pdf path or LinkedIn URL)
     _log(f"Profile source: text ({len(s)} chars)")
     return s, "text"
+
+
+def resolve_profile_with_fallback(args_cv: str, supabase_url: str, supabase_key: str, cookie: str) -> tuple[str, str]:
+    """
+    Walk the full profile-source fallback chain and return (profile_text, label).
+
+    Priority (first non-empty wins):
+      1. --cv command-line arg
+      2. settings.json `ProfileText` key (plain text resume — new in Phase 1)
+      3. settings.json `UserProfile` key (PDF path / LinkedIn URL / text)
+      4. Supabase bot_state `setting_user_profile`
+      5. Hardcoded DEFAULT_PROFILE
+    """
+    settings = _load_settings_json()
+
+    chain: list[tuple[str, str]] = []
+    if args_cv:
+        chain.append(("--cv arg", args_cv.strip()))
+    profile_text_setting = str(settings.get("ProfileText") or "").strip()
+    if profile_text_setting:
+        chain.append(("settings.json:ProfileText", profile_text_setting))
+    user_profile_setting = str(settings.get("UserProfile") or "").strip()
+    if user_profile_setting:
+        chain.append(("settings.json:UserProfile", user_profile_setting))
+    try:
+        sb_setting = (db.get_config(supabase_url, supabase_key, "setting_user_profile", "") or "").strip()
+    except Exception:
+        sb_setting = ""
+    if sb_setting:
+        chain.append(("supabase:setting_user_profile", sb_setting))
+
+    for origin, source in chain:
+        _vlog(f"Profile fallback: trying {origin} ({len(source)} chars)")
+        text, label = resolve_profile(source, cookie)
+        if text:
+            return text, f"{label} (from {origin})"
+
+    _log("Profile fallback: all sources empty — using DEFAULT_PROFILE")
+    return DEFAULT_PROFILE, "default"
 
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
@@ -182,6 +315,11 @@ def ollama_score(
         f"Description:\n{desc_excerpt}"
     )
 
+    if _DEBUG_PROMPT:
+        _log("--- PROMPT (debug) ---")
+        _log(prompt[:2000] + (" ...[truncated]" if len(prompt) > 2000 else ""))
+        _log("--- END PROMPT ---")
+
     try:
         r = requests.post(
             f"{ollama_url}/api/generate",
@@ -190,6 +328,8 @@ def ollama_score(
         )
         r.raise_for_status()
         raw = r.json().get("response", "{}")
+        if _DEBUG_PROMPT:
+            _log(f"Ollama raw response: {raw[:500]}")
         # Extract JSON even if there's surrounding text
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         data = json.loads(m.group(0)) if m else {}
@@ -197,7 +337,7 @@ def ollama_score(
         summary = str(data.get("summary", "")).strip()[:300]
         return score, summary
     except requests.exceptions.ConnectionError:
-        _log("ERROR: Cannot reach Ollama at {ollama_url} — is 'ollama serve' running?")
+        _log(f"ERROR: Cannot reach Ollama at {ollama_url} — is 'ollama serve' running?")
         return -1, ""
     except Exception as exc:
         _log(f"Ollama error: {exc}")
@@ -207,31 +347,48 @@ def ollama_score(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Windows: force UTF-8 stdout/stderr so non-ASCII chars in job titles or
+    # log output don't crash with 'charmap codec can't encode' under cp1252.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="Enrich jobs with local LLM scoring")
     parser.add_argument("--limit",     type=int, default=20,              help="Max jobs to enrich per run")
     parser.add_argument("--model",     default=DEFAULT_MODEL,             help="Ollama model name")
     parser.add_argument("--ollama",    default=DEFAULT_OLLAMA,            help="Ollama base URL")
     parser.add_argument("--min-score", type=int, default=DEFAULT_MIN_SCORE, help="Auto-dismiss below this score")
     parser.add_argument("--cv",        default="",                        help="CV PDF path, LinkedIn profile URL, or plain text profile")
+    parser.add_argument("--verbose",      action="store_true", help="Verbose logging (profile chain, cache, prompt sizes)")
+    parser.add_argument("--debug-prompt", action="store_true", help="Log the full LLM prompt + raw response (implies --verbose)")
+    parser.add_argument("--health-check", action="store_true", help="Run a single end-to-end test, then exit with summary")
     args = parser.parse_args()
+
+    global _VERBOSE, _DEBUG_PROMPT
+    _VERBOSE      = args.verbose or args.debug_prompt or args.health_check
+    _DEBUG_PROMPT = args.debug_prompt or args.health_check
+
+    _log(f"Enricher invoked: limit={args.limit} health-check={args.health_check} verbose={_VERBOSE} debug-prompt={_DEBUG_PROMPT}")
+    _log(f"State dir: {_STATE_DIR}  (log: {_ENRICHER_LOG_PATH.name}, cache: {_PROFILE_CACHE_PATH.name})")
 
     supabase_url = _env("SUPABASE_URL")
     supabase_key = _env("SUPABASE_KEY")
 
-    if not supabase_url or not supabase_key:
-        # Try loading from settings.json next to this script's parent
-        settings_path = os.path.join(_DIR, "..", "settings.json")
-        try:
-            with open(settings_path, encoding="utf-8-sig") as f:
-                cfg = json.load(f)
-            supabase_url = cfg.get("SupabaseUrl", "")
-            supabase_key = cfg.get("SupabaseKey", "")
-        except Exception:
-            pass
+    # Cookie: env var first, then settings.json so script works when called standalone
+    cookie = _env("LINKEDIN_COOKIE")
+    if not (supabase_url and supabase_key) or not cookie:
+        cfg = _load_settings_json()
+        if not supabase_url: supabase_url = (cfg.get("SupabaseUrl", "") or "").strip()
+        if not supabase_key: supabase_key = (cfg.get("SupabaseKey", "") or "").strip()
+        if not cookie:       cookie       = (cfg.get("LinkedInCookie", "") or "").strip()
 
     if not supabase_url or not supabase_key:
-        _log("ERROR: Set SUPABASE_URL and SUPABASE_KEY environment variables.")
+        _log("ERROR: Set SUPABASE_URL and SUPABASE_KEY env vars or fill them in settings.json.")
         sys.exit(1)
+
+    _vlog(f"LinkedIn cookie: {'present (' + str(len(cookie)) + ' chars)' if cookie else 'EMPTY — LinkedIn profile fetches will hit login wall'}")
 
     # Read config overrides from Supabase bot_state
     model     = db.get_config(supabase_url, supabase_key, "setting_ollama_model", "") or args.model
@@ -241,26 +398,25 @@ def main() -> None:
     except ValueError:
         min_score = args.min_score
 
-    cookie = _env("LINKEDIN_COOKIE")
-
-    # Resolve profile: --cv arg > Supabase setting > default
-    cv_source = args.cv.strip() if args.cv else ""
-    if not cv_source:
-        cv_source = db.get_config(supabase_url, supabase_key, "setting_user_profile", "")
-    profile, profile_label = resolve_profile(cv_source, cookie)
-    if not profile:
-        profile = DEFAULT_PROFILE
-        profile_label = "default"
+    # Profile resolution with full fallback chain (--cv > ProfileText > UserProfile > Supabase > default)
+    profile, profile_label = resolve_profile_with_fallback(args.cv, supabase_url, supabase_key, cookie)
 
     # Load Telegram config for post-score alerts
     tg_token = db.get_config(supabase_url, supabase_key, "setting_telegram_bot_token", "") or _env("TELEGRAM_BOT_TOKEN")
     tg_chat  = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id",   "") or _env("TELEGRAM_CHAT_ID")
 
-    _log(f"Enricher starting — model={model}, min_score={min_score}, limit={args.limit}, profile={profile_label}")
+    effective_limit = 1 if args.health_check else args.limit
+    _log(f"Enricher starting — model={model}, min_score={min_score}, limit={effective_limit}, profile={profile_label}")
 
-    jobs = db.get_unscored_jobs(supabase_url, supabase_key, limit=args.limit)
+    # Health check: don't send Telegram alerts during a diagnostic run
+    if args.health_check:
+        tg_token = tg_chat = ""
+
+    jobs = db.get_unscored_jobs(supabase_url, supabase_key, limit=effective_limit)
     if not jobs:
         _log("No unscored jobs found. All done.")
+        if args.health_check:
+            _log("HEALTH-CHECK: PASS (Ollama reachable assumed; no unscored jobs to score — try after a fresh scan)")
         return
 
     _log(f"Found {len(jobs)} unscored job(s). Scoring...")
@@ -319,6 +475,14 @@ def main() -> None:
             time.sleep(0.5)  # small pause between Ollama calls
 
     _log(f"Done. Scored={scored}, Auto-dismissed={dismissed}, Failed={failed}")
+
+    if args.health_check:
+        if scored + dismissed > 0:
+            _log("HEALTH-CHECK: PASS — Ollama reached, profile resolved, at least one job scored end-to-end.")
+            sys.exit(0)
+        else:
+            _log("HEALTH-CHECK: FAIL — no job was scored. Check the messages above for the cause.")
+            sys.exit(2)
 
 
 if __name__ == "__main__":
