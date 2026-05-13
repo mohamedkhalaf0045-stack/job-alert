@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, urlunparse
 
 from supabase import create_client, Client
@@ -153,6 +153,101 @@ def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> 
     except Exception as exc:
         print(f"[DB] get_unscored_jobs error: {exc}")
         return []
+
+
+# ─── Phase 3: dedup helpers ────────────────────────────────────────────────
+
+def get_recent_with_embeddings(supabase_url: str, supabase_key: str,
+                                company: str = "", window_days: int = 7,
+                                exclude_url: str = "") -> list[dict]:
+    """Recent jobs with embeddings (for cosine-similarity dedup).
+
+    Filters by company (case-insensitive ILIKE) when provided, since
+    duplicates almost always share the same company name.
+    """
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+        q = (
+            sb.table("jobs")
+            .select("url,title,company,embedding,date_collected")
+            .not_.is_("embedding", "null")
+            .gte("date_collected", cutoff)
+        )
+        if company.strip():
+            q = q.ilike("company", company.strip())
+        result = q.limit(200).execute()
+        rows = result.data or []
+        if exclude_url:
+            rows = [r for r in rows if r.get("url") != exclude_url]
+        return rows
+    except Exception as exc:
+        print(f"[DB] get_recent_with_embeddings error: {exc}")
+        return []
+
+
+def get_jobs_without_embedding(supabase_url: str, supabase_key: str,
+                                 limit: int = 500) -> list[dict]:
+    """Jobs that haven't had a dedup pass yet (embedding IS NULL)."""
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("jobs")
+            .select("job_id,title,company,location,url,description,date_collected")
+            .is_("embedding", "null")
+            .order("date_collected", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        print(f"[DB] get_jobs_without_embedding error: {exc}")
+        return []
+
+
+def get_all_jobs_for_dedup(supabase_url: str, supabase_key: str,
+                            limit: int = 500) -> list[dict]:
+    """Every job, oldest first - for full --reprocess-all backfill so that
+    canonical (oldest) jobs are processed before their duplicates."""
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("jobs")
+            .select("job_id,title,company,location,url,description,date_collected")
+            .order("date_collected", desc=False)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        print(f"[DB] get_all_jobs_for_dedup error: {exc}")
+        return []
+
+
+def mark_embedding(supabase_url: str, supabase_key: str, url: str,
+                   embedding: list[float],
+                   duplicate_of_url: str | None = None) -> None:
+    """Persist embedding + (optional) duplicate link for a job.
+
+    Always updates dedup_checked_at to now so we can tell processed-but-canonical
+    rows from never-processed rows.
+    """
+    if not url:
+        return
+    sb = _get_client(supabase_url, supabase_key)
+    update = {
+        "embedding": embedding,
+        "duplicate_of_url": duplicate_of_url,
+        "dedup_checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        sb.table("jobs").update(update).eq("url", url).execute()
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "could not find" in msg or "does not exist" in msg or "pgrst204" in msg:
+            print("[DB] dedup columns missing - run cloud/migrations/2026-05-14-dedup.sql")
+        else:
+            print(f"[DB] mark_embedding error for {url}: {exc}")
 
 
 def update_job_enrichment(
