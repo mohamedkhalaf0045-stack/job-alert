@@ -61,6 +61,63 @@ def send_job_alert(bot_token: str, chat_id: str, job: dict) -> bool:
     return send_message(bot_token, chat_id, format_message(job))
 
 
+def format_score_alert(job: dict, breakdown: dict) -> str:
+    """Phase 2: richer Telegram message that shows the multi-criteria breakdown.
+
+    Example:
+        AI Score: 8/10
+        Site Reliability Engineer - L2 Support
+        Open Innovation AI - Dubai
+        Skills:9 Exp:8 Loc:9 Sr:8
+        Matched: Linux, AD, M365
+        Missing: AWS, Kubernetes
+        Strong match due to overlap in IT experience and UAE location.
+        https://...
+    """
+    score   = breakdown.get("overall_score", "?")
+    title   = job.get("title")   or job.get("Title")   or ""
+    company = job.get("company") or job.get("Company") or ""
+    loc     = job.get("location")or job.get("Location")or ""
+
+    parts = [f"AI Score: {score}/10"]
+    parts.append(title)
+    if company and loc:
+        parts.append(f"{company} - {loc}")
+    elif company:
+        parts.append(company)
+    elif loc:
+        parts.append(loc)
+
+    parts.append(
+        f"Skills:{breakdown.get('skills_match','?')} "
+        f"Exp:{breakdown.get('experience_match','?')} "
+        f"Loc:{breakdown.get('location_match','?')} "
+        f"Sr:{breakdown.get('seniority_match','?')}"
+    )
+
+    matched = breakdown.get("matched_skills") or []
+    missing = breakdown.get("missing_skills") or []
+    flags   = breakdown.get("red_flags")      or []
+    if matched: parts.append("Matched: "  + ", ".join(matched[:5]))
+    if missing: parts.append("Missing: "  + ", ".join(missing[:5]))
+    if flags:   parts.append("Flags: "    + " | ".join(flags[:3]))
+
+    reasoning = (breakdown.get("reasoning") or "").strip()
+    if reasoning:
+        parts.append(reasoning)
+
+    url = job.get("url") or job.get("Url") or ""
+    if url:
+        parts.append(url)
+
+    return "\n".join(p for p in parts if p)
+
+
+def send_score_alert(bot_token: str, chat_id: str, job: dict, breakdown: dict) -> bool:
+    """Phase 2: send a multi-criteria score alert to Telegram."""
+    return send_message(bot_token, chat_id, format_score_alert(job, breakdown))
+
+
 def send_summary(bot_token: str, chat_id: str, jobs: list[dict], label: str = "") -> None:
     if not jobs:
         send_message(bot_token, chat_id, f"{label}No new jobs found.")
