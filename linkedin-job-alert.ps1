@@ -2143,6 +2143,8 @@ $menuOpen        = $jobContextMenu.Items.Add("Open in browser")
 $menuApplied     = $jobContextMenu.Items.Add("Mark as Applied")
 $menuDismiss     = $jobContextMenu.Items.Add("Dismiss")
 $menuSave        = $jobContextMenu.Items.Add("Save / Star")
+$menuShowAi      = $jobContextMenu.Items.Add("Show AI breakdown")
+$menuCopyCover   = $jobContextMenu.Items.Add("Copy cover letter")
 $script:JobsList.ContextMenuStrip = $jobContextMenu
 [void]$jobsCard.Controls.Add($script:JobsList)
 
@@ -2223,6 +2225,75 @@ $menuDismiss.Add_Click({
 })
 $menuSave.Add_Click({
     foreach ($sel in @($script:JobsList.SelectedItems)) { Set-JobStatusInList -Item $sel -Status "saved" }
+})
+
+function Get-JobEnrichment {
+    <#
+    Fetches the full Phase 2-5 enrichment for the selected job by URL.
+    Returns $null if Supabase creds are missing, fetch fails, or no row found.
+    #>
+    param([string]$JobUrl)
+    if ([string]::IsNullOrWhiteSpace($JobUrl)) { return $null }
+    try {
+        $settings = Load-Settings
+        $sUrl = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseUrl" -DefaultValue "")
+        $sKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
+        if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) { return $null }
+        $headers = @{ "apikey" = $sKey; "Authorization" = "Bearer $sKey" }
+        $cols = "title,company,llm_score,llm_summary,skills_match,experience_match,location_match,seniority_match,matched_skills,missing_skills,red_flags,cover_letter_draft"
+        $uri  = "$sUrl/rest/v1/jobs?select=$cols&url=eq.$([System.Web.HttpUtility]::UrlEncode($JobUrl))&limit=1"
+        $rows = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -ErrorAction Stop -TimeoutSec 10
+        if ($rows -and $rows.Count -gt 0) { return $rows[0] }
+    } catch {
+        Add-LogLine "AI fetch error: $($_.Exception.Message)"
+    }
+    return $null
+}
+
+$menuShowAi.Add_Click({
+    $sel = $script:JobsList.SelectedItems | Select-Object -First 1
+    if (-not $sel) { return }
+    $row = Get-JobEnrichment -JobUrl ([string]$sel.Tag)
+    if ($null -eq $row) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "No AI enrichment found for this job (Supabase missing or not yet scored).",
+            "AI breakdown", "OK", "Information") | Out-Null
+        return
+    }
+    $matched = if ($row.matched_skills) { ($row.matched_skills | ForEach-Object { [string]$_ }) -join ", " } else { "(none)" }
+    $missing = if ($row.missing_skills) { ($row.missing_skills | ForEach-Object { [string]$_ }) -join ", " } else { "(none)" }
+    $flags   = if ($row.red_flags)      { ($row.red_flags      | ForEach-Object { [string]$_ }) -join " | " } else { "(none)" }
+    $msg = @(
+        "$($row.title)  @  $($row.company)",
+        "",
+        "Overall:    $($row.llm_score)/10",
+        "Skills:     $($row.skills_match)/10",
+        "Experience: $($row.experience_match)/10",
+        "Location:   $($row.location_match)/10",
+        "Seniority:  $($row.seniority_match)/10",
+        "",
+        "Matched: $matched",
+        "Missing: $missing",
+        "Flags  : $flags",
+        "",
+        "Reasoning: $($row.llm_summary)"
+    ) -join "`r`n"
+    [System.Windows.Forms.MessageBox]::Show($msg, "AI breakdown", "OK", "Information") | Out-Null
+})
+
+$menuCopyCover.Add_Click({
+    $sel = $script:JobsList.SelectedItems | Select-Object -First 1
+    if (-not $sel) { return }
+    $row = Get-JobEnrichment -JobUrl ([string]$sel.Tag)
+    if ($null -eq $row -or [string]::IsNullOrWhiteSpace([string]$row.cover_letter_draft)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "No cover letter draft yet for this job. Drafts are auto-generated for jobs scoring >= 7.",
+            "Copy cover letter", "OK", "Information") | Out-Null
+        return
+    }
+    [System.Windows.Forms.Clipboard]::SetText([string]$row.cover_letter_draft)
+    Add-LogLine "Cover letter copied to clipboard for: $($row.title)"
+    $script:StatusLabel.Text = "Cover letter copied to clipboard."
 })
 
 $exportCsvButton.Add_Click({ Export-JobsToCSV })
