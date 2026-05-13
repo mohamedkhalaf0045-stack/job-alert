@@ -1,3 +1,2 @@
 @echo off
-set SCRIPT_DIR=%~dp0
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%linkedin-job-alert.ps1"
+wscript.exe "%~dp0Run-LinkedInJobAlert.vbs"
