@@ -27,6 +27,7 @@ import requests
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
 import db
+import dedup
 import linkedin as li
 
 DEFAULT_PROFILE = (
@@ -513,7 +514,30 @@ def main() -> None:
         if description:
             _log(f"          Description: {len(description)} chars")
         else:
-            _log("          No description fetched — scoring on title/company/location only")
+            _log("          No description fetched - scoring on title/company/location only")
+
+        # Phase 3: dedup BEFORE scoring. If this job duplicates an existing one,
+        # link it and skip the expensive LLM scoring + Telegram alert entirely.
+        job_for_dedup = dict(job)
+        if description:
+            job_for_dedup["description"] = description
+        dup_result = dedup.process_one_job(
+            supabase_url, supabase_key, job_for_dedup,
+            ollama_url=ollama,
+        )
+        if dup_result["action"] == "duplicate":
+            _log(f"          DUPLICATE of {dup_result['duplicate_of_url'][:70]}  "
+                 f"(sim={dup_result['similarity']:.3f}) - skipping score + alert")
+            # Mark dismissed-as-duplicate so it doesn't reappear in unscored queries
+            db.update_job_enrichment(
+                supabase_url, supabase_key,
+                job["job_id"], description, score=0,
+                summary=f"Duplicate of {dup_result['duplicate_of_url']}",
+                min_score=min_score,
+            )
+            continue
+        elif dup_result["action"] == "no_embedding":
+            _vlog("          Embedding failed - proceeding to score anyway")
 
         score, summary, breakdown = ollama_score(job, description, profile, model, ollama)
 
