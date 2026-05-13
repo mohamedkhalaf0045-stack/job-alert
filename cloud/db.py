@@ -155,6 +155,29 @@ def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> 
         return []
 
 
+def get_jobs_by_status(supabase_url: str, supabase_key: str, status: str,
+                        limit: int = 5) -> list[dict]:
+    """Recent jobs for a given status (applied/dismissed/saved/new).
+
+    Used by Phase 4 active learning to build dynamic few-shot examples
+    from the user's most recent feedback. Returns most-recent first.
+    """
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("jobs")
+            .select("title,company,location,url,llm_score,llm_summary,status,date_collected")
+            .eq("status", status)
+            .order("date_collected", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        print(f"[DB] get_jobs_by_status({status}) error: {exc}")
+        return []
+
+
 # ─── Phase 3: dedup helpers ────────────────────────────────────────────────
 
 def get_recent_with_embeddings(supabase_url: str, supabase_key: str,

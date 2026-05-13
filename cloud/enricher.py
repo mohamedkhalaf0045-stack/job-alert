@@ -29,6 +29,7 @@ sys.path.insert(0, _DIR)
 import db
 import dedup
 import linkedin as li
+import preferences
 
 DEFAULT_PROFILE = (
     "IT Support Engineer / System Administrator with 3-5 years experience in UAE. "
@@ -330,6 +331,7 @@ def ollama_score(
     profile: str,
     model: str,
     ollama_url: str,
+    dynamic_few_shot: str = "",
 ) -> tuple[int, str, dict]:
     """Call Ollama to score a job on 4 axes + overall.
 
@@ -356,6 +358,7 @@ def ollama_score(
         '  "reasoning":        "<one sentence why this overall_score>"\n'
         "}\n\n"
         f"{_FEW_SHOT_EXAMPLES}"
+        f"{dynamic_few_shot}"
         "NOW SCORE THIS JOB:\n"
         f"Candidate: {profile}\n\n"
         f"Job Title: {job.get('title', '')}\n"
@@ -366,7 +369,7 @@ def ollama_score(
 
     if _DEBUG_PROMPT:
         _log("--- PROMPT (debug) ---")
-        _log(prompt[:2500] + (" ...[truncated]" if len(prompt) > 2500 else ""))
+        _log(prompt[:6000] + (" ...[truncated]" if len(prompt) > 6000 else ""))
         _log("--- END PROMPT ---")
 
     def _clamp_int(v, lo=0, hi=10, default=5):
@@ -488,7 +491,22 @@ def main() -> None:
     tg_chat  = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id",   "") or _env("TELEGRAM_CHAT_ID")
 
     effective_limit = 1 if args.health_check else args.limit
-    _log(f"Enricher starting — model={model}, min_score={min_score}, limit={effective_limit}, profile={profile_label}")
+    _log(f"Enricher starting - model={model}, min_score={min_score}, limit={effective_limit}, profile={profile_label}")
+
+    # Phase 4: pull the user's recent applied/dismissed history once per run
+    # and inject it as a dynamic few-shot block in every score's prompt.
+    # Cached in bot_state with a 6h TTL; rebuilds automatically when stale.
+    try:
+        dynamic_few_shot = preferences.get_cached_or_refresh(supabase_url, supabase_key)
+        if dynamic_few_shot:
+            applied_n   = dynamic_few_shot.count("USER APPLIED:")
+            dismissed_n = dynamic_few_shot.count("USER DISMISSED:")
+            _log(f"Active learning: {applied_n} applied + {dismissed_n} dismissed examples loaded into prompt")
+        else:
+            _vlog("Active learning: no history yet - prompt uses static examples only")
+    except Exception as exc:
+        _log(f"Active learning failed (non-fatal, using static only): {exc}")
+        dynamic_few_shot = ""
 
     # Health check: don't send Telegram alerts during a diagnostic run
     if args.health_check:
@@ -539,7 +557,8 @@ def main() -> None:
         elif dup_result["action"] == "no_embedding":
             _vlog("          Embedding failed - proceeding to score anyway")
 
-        score, summary, breakdown = ollama_score(job, description, profile, model, ollama)
+        score, summary, breakdown = ollama_score(job, description, profile, model, ollama,
+                                                  dynamic_few_shot=dynamic_few_shot)
 
         if score == -1:
             _log("          Ollama unreachable - stopping enrichment")
