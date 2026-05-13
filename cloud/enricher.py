@@ -560,6 +560,9 @@ def main() -> None:
     # Load Telegram config for post-score alerts
     tg_token = db.get_config(supabase_url, supabase_key, "setting_telegram_bot_token", "") or _env("TELEGRAM_BOT_TOKEN")
     tg_chat  = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id",   "") or _env("TELEGRAM_CHAT_ID")
+    # Phase 6: optional compact alerts (score + title + URL only)
+    tg_compact = (db.get_config(supabase_url, supabase_key, "setting_telegram_compact", "")
+                  .strip().lower() in ("true", "1", "yes", "on"))
 
     effective_limit = 1 if args.health_check else args.limit
     _log(f"Enricher starting - model={model}, min_score={min_score}, limit={effective_limit}, profile={profile_label}")
@@ -670,7 +673,7 @@ def main() -> None:
         if score >= min_score and tg_token and tg_chat:
             try:
                 import telegram_notify as tg
-                tg.send_score_alert(tg_token, tg_chat, job, breakdown)
+                tg.send_score_alert(tg_token, tg_chat, job, breakdown, compact=tg_compact)
                 time.sleep(0.3)
             except Exception as exc:
                 _log(f"          Telegram score alert error: {exc}")

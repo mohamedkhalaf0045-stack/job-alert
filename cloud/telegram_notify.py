@@ -61,10 +61,13 @@ def send_job_alert(bot_token: str, chat_id: str, job: dict) -> bool:
     return send_message(bot_token, chat_id, format_message(job))
 
 
-def format_score_alert(job: dict, breakdown: dict) -> str:
+def format_score_alert(job: dict, breakdown: dict, compact: bool = False) -> str:
     """Phase 2: richer Telegram message that shows the multi-criteria breakdown.
+    Phase 6: when compact=True, emit only the headline lines (score, title,
+    company, URL) - useful when the user just wants a fire-hose of new matches
+    without per-message breakdown noise.
 
-    Example:
+    Example (full):
         AI Score: 8/10
         Site Reliability Engineer - L2 Support
         Open Innovation AI - Dubai
@@ -73,11 +76,25 @@ def format_score_alert(job: dict, breakdown: dict) -> str:
         Missing: AWS, Kubernetes
         Strong match due to overlap in IT experience and UAE location.
         https://...
+
+    Example (compact):
+        AI 8/10  Site Reliability Engineer - L2 Support  @  Open Innovation AI
+        https://...
     """
     score   = breakdown.get("overall_score", "?")
     title   = job.get("title")   or job.get("Title")   or ""
     company = job.get("company") or job.get("Company") or ""
     loc     = job.get("location")or job.get("Location")or ""
+    url     = job.get("url") or job.get("Url") or ""
+
+    if compact:
+        head = f"AI {score}/10  {title}"
+        if company:
+            head += f"  @  {company}"
+        lines = [head]
+        if url:
+            lines.append(url)
+        return "\n".join(lines)
 
     parts = [f"AI Score: {score}/10"]
     parts.append(title)
@@ -106,16 +123,17 @@ def format_score_alert(job: dict, breakdown: dict) -> str:
     if reasoning:
         parts.append(reasoning)
 
-    url = job.get("url") or job.get("Url") or ""
     if url:
         parts.append(url)
 
     return "\n".join(p for p in parts if p)
 
 
-def send_score_alert(bot_token: str, chat_id: str, job: dict, breakdown: dict) -> bool:
-    """Phase 2: send a multi-criteria score alert to Telegram."""
-    return send_message(bot_token, chat_id, format_score_alert(job, breakdown))
+def send_score_alert(bot_token: str, chat_id: str, job: dict, breakdown: dict,
+                      compact: bool = False) -> bool:
+    """Phase 2: send a multi-criteria score alert to Telegram.
+    Phase 6: pass compact=True to emit the slim 2-line format."""
+    return send_message(bot_token, chat_id, format_score_alert(job, breakdown, compact=compact))
 
 
 def send_summary(bot_token: str, chat_id: str, jobs: list[dict], label: str = "") -> None:
