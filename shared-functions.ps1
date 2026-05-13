@@ -55,15 +55,29 @@ function New-SearchUrl {
 function Invoke-GetStringWithRetry {
     param(
         [string]$Url,
-        [string]$CookieHeader = ""
+        [string]$CookieHeader = "",
+        [string]$Referer = ""
     )
 
     $lastError = $null
     foreach ($attempt in 1..3) {
         try {
             $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Url)
-            $request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8") | Out-Null
             $request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Accept-Encoding", "gzip, deflate, br") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Connection", "keep-alive") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "document") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "navigate") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "none") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Sec-Fetch-User", "?1") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Sec-Ch-Ua", '"Chromium";v="128", "Google Chrome";v="128", "Not-A.Brand";v="99"') | Out-Null
+            $request.Headers.TryAddWithoutValidation("Sec-Ch-Ua-Mobile", "?0") | Out-Null
+            $request.Headers.TryAddWithoutValidation("Sec-Ch-Ua-Platform", '"Windows"') | Out-Null
+            if (-not [string]::IsNullOrWhiteSpace($Referer)) {
+                $request.Headers.TryAddWithoutValidation("Referer", $Referer) | Out-Null
+            }
             if (-not [string]::IsNullOrWhiteSpace($CookieHeader)) {
                 $request.Headers.TryAddWithoutValidation("Cookie", $CookieHeader) | Out-Null
             }
@@ -107,16 +121,30 @@ function Parse-JobCards {
     foreach ($card in $cards) {
         $chunk = $card.Value
 
-        $idMatch       = [regex]::Match($chunk, "jobPosting:(\d+)")
-        $urlMatch      = [regex]::Match($chunk, 'base-card__full-link[^>]+href="([^"]+)"')
-        $titleMatch    = [regex]::Match($chunk, 'base-search-card__title">\s*(.*?)\s*</h3>',     [System.Text.RegularExpressions.RegexOptions]::Singleline)
-        $companyMatch  = [regex]::Match($chunk, 'base-search-card__subtitle">\s*(.*?)\s*</h4>',  [System.Text.RegularExpressions.RegexOptions]::Singleline)
-        $locationMatch = [regex]::Match($chunk, 'job-search-card__location">\s*(.*?)\s*</span>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
-        $timeMatch     = [regex]::Match($chunk, '<time[^>]*datetime="([^"]+)"[^>]*>(.*?)</time>',[System.Text.RegularExpressions.RegexOptions]::Singleline)
+        # URL — try old class name first, then newer variant, then any LI job URL
+        $urlMatch = [regex]::Match($chunk, 'base-card__full-link[^>]+href="([^"]+)"')
+        if (-not $urlMatch.Success) { $urlMatch = [regex]::Match($chunk, 'job-card-container__link[^>]+href="([^"]+)"') }
+        if (-not $urlMatch.Success) { $urlMatch = [regex]::Match($chunk, 'href="(https://[^"]*linkedin\.com/jobs/view/[^"]+)"') }
+        if (-not $urlMatch.Success) { continue }
+        $rawUrl = [System.Web.HttpUtility]::HtmlDecode($urlMatch.Groups[1].Value)
 
-        if (-not $idMatch.Success -or -not $urlMatch.Success -or -not $titleMatch.Success) {
-            continue
-        }
+        # Job ID — URN attribute, data attribute, or last number in the job URL path
+        $idMatch = [regex]::Match($chunk, "jobPosting:(\d+)")
+        if (-not $idMatch.Success) { $idMatch = [regex]::Match($chunk, 'data-job-id="(\d+)"') }
+        if (-not $idMatch.Success) { $idMatch = [regex]::Match($rawUrl, '/jobs/view/[^/?#]*?-(\d+)(?:[/?#]|$)') }
+        if (-not $idMatch.Success) { continue }
+
+        # Title — try old class, then newer variant, then any <h3>
+        $titleMatch = [regex]::Match($chunk, 'base-search-card__title">\s*(.*?)\s*</h3>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if (-not $titleMatch.Success) { $titleMatch = [regex]::Match($chunk, 'job-card-list__title[^"]*"[^>]*>\s*(.*?)\s*</a>', [System.Text.RegularExpressions.RegexOptions]::Singleline) }
+        if (-not $titleMatch.Success) { $titleMatch = [regex]::Match($chunk, '<h3[^>]*>\s*(.*?)\s*</h3>', [System.Text.RegularExpressions.RegexOptions]::Singleline) }
+        if (-not $titleMatch.Success) { continue }
+
+        $companyMatch  = [regex]::Match($chunk, 'base-search-card__subtitle">\s*(.*?)\s*</h4>',  [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if (-not $companyMatch.Success) { $companyMatch = [regex]::Match($chunk, 'job-card-container__company-name[^"]*"[^>]*>\s*(.*?)\s*</', [System.Text.RegularExpressions.RegexOptions]::Singleline) }
+        $locationMatch = [regex]::Match($chunk, 'job-search-card__location">\s*(.*?)\s*</span>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if (-not $locationMatch.Success) { $locationMatch = [regex]::Match($chunk, 'job-card-container__metadata-item[^"]*"[^>]*>\s*(.*?)\s*</', [System.Text.RegularExpressions.RegexOptions]::Singleline) }
+        $timeMatch     = [regex]::Match($chunk, '<time[^>]*datetime="([^"]+)"[^>]*>(.*?)</time>',[System.Text.RegularExpressions.RegexOptions]::Singleline)
 
         $normalizedChunk = Convert-ToPlainText $chunk
         $applied = $normalizedChunk -match '(?i)\b(applied|application submitted|submitted|already applied)\b'
@@ -125,9 +153,9 @@ function Parse-JobCards {
             Id         = $idMatch.Groups[1].Value
             Keyword    = $Keyword
             Title      = Convert-ToPlainText $titleMatch.Groups[1].Value
-            Company    = Convert-ToPlainText $companyMatch.Groups[1].Value
-            Location   = Convert-ToPlainText $locationMatch.Groups[1].Value
-            Url        = [System.Web.HttpUtility]::HtmlDecode($urlMatch.Groups[1].Value)
+            Company    = if ($companyMatch.Success) { Convert-ToPlainText $companyMatch.Groups[1].Value } else { "" }
+            Location   = if ($locationMatch.Success) { Convert-ToPlainText $locationMatch.Groups[1].Value } else { "" }
+            Url        = $rawUrl
             PostedDate = if ($timeMatch.Success) { Convert-ToPlainText $timeMatch.Groups[1].Value } else { "" }
             PostedText = if ($timeMatch.Success) { Convert-ToPlainText $timeMatch.Groups[2].Value } else { "" }
             IsApplied  = $applied
@@ -187,7 +215,7 @@ function Get-LinkedInJobs {
             & $script:LogFunction "  LinkedIn '$Keyword' page $pageNum - fetching..."
         }
         $url  = New-SearchUrl -Keyword $Keyword -Location $Location -Start $offset -UseAuthenticatedSearch:$useAuthenticatedSearch
-        $html = Invoke-GetStringWithRetry -Url $url -CookieHeader $CookieHeader
+        $html = Invoke-GetStringWithRetry -Url $url -CookieHeader $CookieHeader -Referer "https://www.linkedin.com/jobs/"
 
         if ($useAuthenticatedSearch -and $html -match 'sign-in-modal' -and $html -match 'public_jobs') {
             $sawPublicWrapper = $true

@@ -20,7 +20,7 @@ $script:StatePath    = Join-Path $script:AppRoot "seen-jobs.json"
 $script:SettingsPath = Join-Path $script:AppRoot "settings.json"
 $script:HttpClient   = [System.Net.Http.HttpClient]::new()
 $script:HttpClient.Timeout = [TimeSpan]::FromSeconds(25)
-$script:HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+$script:HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
 
 $script:SeenJobs            = @{}
 $script:HasPrimedState      = $false

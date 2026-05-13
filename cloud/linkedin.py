@@ -17,10 +17,20 @@ _SESSION.headers.update({
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+        "Chrome/128.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Sec-Ch-Ua": '"Chromium";v="128", "Google Chrome";v="128", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
 })
 
 
@@ -56,38 +66,74 @@ def _canonical_url(raw: str) -> str:
         return raw
 
 
-def _fetch(url: str, cookie_header: str, attempt: int = 1) -> str | None:
+def _fetch(url: str, cookie_header: str, attempt: int = 1, referer: str = "") -> str | None:
     headers = {}
     if cookie_header:
         headers["Cookie"] = cookie_header
+    if referer:
+        headers["Referer"] = referer
     try:
         resp = _SESSION.get(url, headers=headers, timeout=25)
         if resp.status_code == 429:
+            print(f"[LinkedIn] HTTP 429 rate-limited: {url}")
             return None  # rate-limited — caller will skip
+        if resp.status_code != 200:
+            print(f"[LinkedIn] HTTP {resp.status_code} for: {url}")
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as exc:
         if attempt < 3:
             time.sleep(attempt)
-            return _fetch(url, cookie_header, attempt + 1)
+            return _fetch(url, cookie_header, attempt + 1, referer)
         print(f"[LinkedIn] fetch failed after 3 attempts: {exc}")
         return None
 
 
 def _parse_cards(html_text: str, keyword: str) -> list[dict]:
+    li_count = len(re.findall(r"<li\b", html_text, re.I))
+    print(f"[LinkedIn] '{keyword}': HTML {len(html_text)} chars, {li_count} <li> elements")
+
     jobs = []
     for card in re.finditer(r"<li\b.*?</li>", html_text, re.DOTALL):
         chunk = card.group(0)
 
-        id_m       = re.search(r"jobPosting:(\d+)", chunk)
-        url_m      = re.search(r'base-card__full-link[^>]+href="([^"]+)"', chunk)
-        title_m    = re.search(r'base-search-card__title">\s*(.*?)\s*</h3>', chunk, re.DOTALL)
-        company_m  = re.search(r'base-search-card__subtitle">\s*(.*?)\s*</h4>', chunk, re.DOTALL)
-        location_m = re.search(r'job-search-card__location">\s*(.*?)\s*</span>', chunk, re.DOTALL)
-        time_m     = re.search(r'<time[^>]*datetime="([^"]+)"[^>]*>(.*?)</time>', chunk, re.DOTALL)
-
-        if not (id_m and url_m and title_m):
+        # URL — try old class name first, then newer variant, then any LI job URL
+        url_m = (
+            re.search(r'base-card__full-link[^>]+href="([^"]+)"', chunk) or
+            re.search(r'job-card-container__link[^>]+href="([^"]+)"', chunk) or
+            re.search(r'href="(https://[^"]*linkedin\.com/jobs/view/[^"]+)"', chunk)
+        )
+        if not url_m:
             continue
+        raw_url = html.unescape(url_m.group(1))
+
+        # Job ID — URN attribute, data attribute, or last number in the job URL path
+        id_m = (
+            re.search(r"jobPosting:(\d+)", chunk) or
+            re.search(r'data-job-id="(\d+)"', chunk) or
+            re.search(r'/jobs/view/[^/?#]*?-(\d+)(?:[/?#]|$)', raw_url)
+        )
+        if not id_m:
+            continue
+
+        # Title
+        title_m = (
+            re.search(r'base-search-card__title">\s*(.*?)\s*</h3>', chunk, re.DOTALL) or
+            re.search(r'job-card-list__title[^"]*"[^>]*>\s*(.*?)\s*</a>', chunk, re.DOTALL) or
+            re.search(r'<h3[^>]*>\s*(.*?)\s*</h3>', chunk, re.DOTALL)
+        )
+        if not title_m:
+            continue
+
+        company_m = (
+            re.search(r'base-search-card__subtitle">\s*(.*?)\s*</h4>', chunk, re.DOTALL) or
+            re.search(r'job-card-container__company-name[^"]*"[^>]*>\s*(.*?)\s*</', chunk, re.DOTALL)
+        )
+        location_m = (
+            re.search(r'job-search-card__location">\s*(.*?)\s*</span>', chunk, re.DOTALL) or
+            re.search(r'job-card-container__metadata-item[^"]*"[^>]*>\s*(.*?)\s*</', chunk, re.DOTALL)
+        )
+        time_m = re.search(r'<time[^>]*datetime="([^"]+)"[^>]*>(.*?)</time>', chunk, re.DOTALL)
 
         plain = _plain_text(chunk).lower()
         is_applied = bool(re.search(r'\b(applied|application submitted|submitted|already applied)\b', plain))
@@ -98,7 +144,7 @@ def _parse_cards(html_text: str, keyword: str) -> list[dict]:
             "Title":      _plain_text(title_m.group(1)),
             "Company":    _plain_text(company_m.group(1)) if company_m else "",
             "Location":   _plain_text(location_m.group(1)) if location_m else "",
-            "Url":        _canonical_url(html.unescape(url_m.group(1))),
+            "Url":        _canonical_url(raw_url),
             "PostedDate": _plain_text(time_m.group(1)) if time_m else "",
             "PostedText": _plain_text(time_m.group(2)) if time_m else "",
             "IsApplied":  is_applied,
@@ -194,12 +240,13 @@ def scrape_linkedin(
     for page_idx in range(max_pages):
         start = page_idx * 25
         url = _guest_url(keyword, location, start)
-        html_text = _fetch(url, cookie_header)
+        html_text = _fetch(url, cookie_header, referer="https://www.linkedin.com/jobs/")
         if html_text is None:
-            print(f"[LinkedIn] HTTP 429 on '{keyword}' page {page_idx + 1} — skipping")
+            print(f"[LinkedIn] rate-limited on '{keyword}' page {page_idx + 1} — skipping")
             break
 
         jobs = _parse_cards(html_text, keyword)
+        print(f"[LinkedIn] '{keyword}' page {page_idx + 1}: {len(jobs)} job(s) parsed")
         if not jobs:
             break
 
