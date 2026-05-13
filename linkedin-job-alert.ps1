@@ -870,16 +870,28 @@ function Update-ScoresFromSupabase {
     if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) { return }
     try {
         $headers = @{ "apikey" = $sKey; "Authorization" = "Bearer $sKey" }
-        $uri     = "$sUrl/rest/v1/jobs?select=url,llm_score&llm_score=not.is.null&limit=500"
-        $rows    = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -ErrorAction Stop
+        # Fetch scores
+        $uri      = "$sUrl/rest/v1/jobs?select=url,llm_score&llm_score=not.is.null&limit=500"
+        $rows     = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -ErrorAction Stop
         $scoreMap = @{}
         foreach ($row in $rows) { $scoreMap[$row.url] = [string]$row.llm_score }
+        # Fetch Telegram sent (cloud worker)
+        $tgUri  = "$sUrl/rest/v1/jobs?select=url,telegram_sent_at&telegram_sent_at=not.is.null&limit=500"
+        $tgRows = Invoke-RestMethod -Uri $tgUri -Headers $headers -Method Get -ErrorAction Stop
+        $tgMap  = @{}
+        foreach ($row in $tgRows) { $tgMap[$row.url] = $true }
         $updated = 0
         foreach ($item in $script:JobsList.Items) {
             $url = [string]$item.Tag
-            if ($scoreMap.ContainsKey($url) -and $item.SubItems.Count -ge 8) {
-                $item.SubItems[7].Text = $scoreMap[$url]
-                $updated++
+            if ($item.SubItems.Count -ge 9) {
+                if ($scoreMap.ContainsKey($url)) {
+                    $item.SubItems[8].Text = $scoreMap[$url]
+                    $updated++
+                }
+                if ($tgMap.ContainsKey($url)) {
+                    $cur = $item.SubItems[7].Text
+                    $item.SubItems[7].Text = if ($cur -eq "GUI") { "Both" } else { "Cloud" }
+                }
             }
         }
         if ($updated -gt 0) { Add-LogLine "Scores refreshed: $updated job(s) updated from Supabase." }
@@ -942,6 +954,7 @@ function Add-RecentJobToList {
     [void]$item.SubItems.Add($Job.Location)
     [void]$item.SubItems.Add($(if ([string]::IsNullOrWhiteSpace($Job.PostedText)) { "-" } else { $Job.PostedText }))
     [void]$item.SubItems.Add($(if ($Job.IsApplied) { "Yes" } else { "No" }))
+    [void]$item.SubItems.Add("")   # Tg — filled in by Update-ScoresFromSupabase or after GUI send
     $score = if ($Job.PSObject.Properties["llm_score"] -and $null -ne $Job.llm_score) { [string]$Job.llm_score } else { "" }
     [void]$item.SubItems.Add($score)
     $item.Tag = $Job.Url
@@ -1372,6 +1385,11 @@ function Invoke-JobScan {
                             Add-LogLine "Telegram alert sent for '$($job.Title)'."
                             try { Set-JobTelegramSent -Url $job.Url } catch {}
                             [void]$guiSentUrls.Add($cu)
+                            # Mark Tg column in the list
+                            $listItem = $script:JobsList.Items | Where-Object { $_.Tag -eq $job.Url } | Select-Object -First 1
+                            if ($listItem -and $listItem.SubItems.Count -ge 9) {
+                                $listItem.SubItems[7].Text = if ($listItem.SubItems[7].Text -eq "Cloud") { "Both" } else { "GUI" }
+                            }
                         }
                     }
                 }
@@ -1956,6 +1974,7 @@ $script:JobsList.Font         = $fntUi
 [void]$script:JobsList.Columns.Add("Location",165)
 [void]$script:JobsList.Columns.Add("Posted",   95)
 [void]$script:JobsList.Columns.Add("Applied",  65)
+[void]$script:JobsList.Columns.Add("Tg",       40)
 [void]$script:JobsList.Columns.Add("Score",    55)
 
 $jobContextMenu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -2183,6 +2202,8 @@ $script:Form.Add_Shown({
     $script:CloudCheckTimer.Start()
     Update-WorkerLamp
     try { Update-CloudLamp } catch {}
+    # Auto-scan on startup so jobs appear without pressing Scan Now
+    try { Invoke-JobScan } catch {}
 })
 
 Update-TimeFilterUI
