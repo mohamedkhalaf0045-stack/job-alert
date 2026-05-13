@@ -163,19 +163,61 @@ def update_job_enrichment(
     score: int,
     summary: str,
     min_score: int = 4,
+    breakdown: dict | None = None,
 ) -> None:
+    """Persist LLM enrichment for a job.
+
+    If `breakdown` is provided (multi-criteria scoring, Phase 2+) the extra
+    columns are included in the update. If those columns don't exist in the
+    Supabase schema yet, the update is retried once without them so legacy
+    deployments keep working. Run the SQL in `cloud/migrations/2026-05-13-multi-criteria.sql`
+    once in Supabase to enable the full breakdown.
+    """
+    # Postgres text/jsonb columns cannot store the NUL byte ().
+    # LinkedIn/Indeed scraped HTML sometimes contains stray NULs. Strip them.
+    def _strip_nul(s):
+        return s.replace("\x00", "") if isinstance(s, str) else s
+    def _strip_nul_list(lst):
+        return [_strip_nul(x) for x in lst] if isinstance(lst, list) else lst
+
     sb = _get_client(supabase_url, supabase_key)
     update: dict = {
-        "description": description[:4000] if description else None,
+        "description": (_strip_nul(description)[:4000] if description else None),
         "llm_score":   score,
-        "llm_summary": summary,
+        "llm_summary": _strip_nul(summary),
     }
     if score < min_score:
         update["status"] = "dismissed"
+
+    if breakdown:
+        update.update({
+            "skills_match":     int(breakdown.get("skills_match", 0)),
+            "experience_match": int(breakdown.get("experience_match", 0)),
+            "location_match":   int(breakdown.get("location_match", 0)),
+            "seniority_match":  int(breakdown.get("seniority_match", 0)),
+            "matched_skills":   _strip_nul_list(breakdown.get("matched_skills") or []),
+            "missing_skills":   _strip_nul_list(breakdown.get("missing_skills") or []),
+            "red_flags":        _strip_nul_list(breakdown.get("red_flags")      or []),
+        })
+
     try:
         sb.table("jobs").update(update).eq("job_id", job_id).execute()
+        return
     except Exception as exc:
-        print(f"[DB] update_job_enrichment error for {job_id}: {exc}")
+        msg = str(exc).lower()
+        # PostgREST returns PGRST204 / "column ... does not exist" when the schema is older
+        if breakdown and ("could not find" in msg or "does not exist" in msg or "schema cache" in msg or "pgrst204" in msg):
+            print(f"[DB] Phase-2 columns missing in Supabase - falling back to llm_score/llm_summary only. "
+                  f"Run cloud/migrations/2026-05-13-multi-criteria.sql to enable the breakdown.")
+            legacy_update = {k: v for k, v in update.items()
+                             if k in ("description", "llm_score", "llm_summary", "status")}
+            try:
+                sb.table("jobs").update(legacy_update).eq("job_id", job_id).execute()
+                return
+            except Exception as exc2:
+                print(f"[DB] update_job_enrichment (legacy retry) error for {job_id}: {exc2}")
+        else:
+            print(f"[DB] update_job_enrichment error for {job_id}: {exc}")
 
 
 def get_scores_for_urls(supabase_url: str, supabase_key: str, urls: list[str]) -> dict[str, dict]:

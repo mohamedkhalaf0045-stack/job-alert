@@ -294,20 +294,68 @@ def resolve_profile_with_fallback(args_cv: str, supabase_url: str, supabase_key:
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
 
+_FEW_SHOT_EXAMPLES = """\
+EXAMPLE 1 (obvious match):
+  Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking / O365.
+  Job: "Senior IT Support, Dubai" at TechCorp. Manages Windows servers + AD + helpdesk.
+  Output: {"skills_match": 9, "experience_match": 9, "location_match": 10, "seniority_match": 9, "overall_score": 9,
+           "matched_skills": ["Windows Server","Active Directory","Helpdesk"],
+           "missing_skills": [], "red_flags": [],
+           "reasoning": "Strong overlap on every axis: skills, seniority, and UAE location all align."}
+
+EXAMPLE 2 (obvious mismatch):
+  Candidate: IT Support Engineer, 4 years UAE, no sales experience.
+  Job: "Senior Sales Manager, Real Estate, Dubai".
+  Output: {"skills_match": 1, "experience_match": 1, "location_match": 10, "seniority_match": 3, "overall_score": 2,
+           "matched_skills": [], "missing_skills": ["Sales","Real Estate"],
+           "red_flags": ["Completely different field (sales vs IT)"],
+           "reasoning": "Location aligns but role is in a different domain entirely."}
+
+EXAMPLE 3 (borderline):
+  Candidate: IT Support Engineer, 4 years UAE, no cloud cert yet.
+  Job: "Cloud Infrastructure Engineer (AWS), Abu Dhabi". Requires AWS cert, Linux, scripting.
+  Output: {"skills_match": 5, "experience_match": 6, "location_match": 9, "seniority_match": 7, "overall_score": 6,
+           "matched_skills": ["Linux","Scripting"],
+           "missing_skills": ["AWS certification","Cloud infrastructure"],
+           "red_flags": ["AWS cert is a hard requirement"],
+           "reasoning": "Partial fit; foundational IT skills transfer but the cloud-specific requirements are gaps."}
+
+"""
+
+
 def ollama_score(
     job: dict,
     description: str,
     profile: str,
     model: str,
     ollama_url: str,
-) -> tuple[int, str]:
-    """Call Ollama to score a job 0-10. Returns (score, summary)."""
+) -> tuple[int, str, dict]:
+    """Call Ollama to score a job on 4 axes + overall.
+
+    Returns (overall_score, reasoning_summary, full_breakdown_dict).
+    Breakdown keys: skills_match, experience_match, location_match, seniority_match,
+                    overall_score, matched_skills, missing_skills, red_flags, reasoning.
+    """
     desc_excerpt = description[:2000] if description else "(no description available)"
 
     prompt = (
-        f"You are a job relevance scorer. Rate how relevant this job is for the candidate.\n"
-        f"Reply with valid JSON only, no markdown, no extra text.\n"
-        f"Format: {{\"score\": <integer 0-10>, \"summary\": \"<one sentence why>\"}}\n\n"
+        "You are a job-fit scorer. Rate how well this job matches the candidate on FOUR axes,\n"
+        "then give an overall score that weighs them holistically (skills + experience matter most).\n"
+        "Output STRICT JSON only - no markdown, no prose outside the JSON.\n\n"
+        "Schema:\n"
+        "{\n"
+        '  "skills_match":     <int 0-10>,  // overlap of required skills with candidate skills\n'
+        '  "experience_match": <int 0-10>,  // years/level vs candidate background\n'
+        '  "location_match":   <int 0-10>,  // job location vs candidate location\n'
+        '  "seniority_match":  <int 0-10>,  // role level (junior/mid/senior) vs candidate level\n'
+        '  "overall_score":    <int 0-10>,  // weighted overall fit\n'
+        '  "matched_skills":   [<short strings>],  // up to 5 skills present in both job and candidate\n'
+        '  "missing_skills":   [<short strings>],  // up to 5 important skills required but candidate lacks\n'
+        '  "red_flags":        [<short strings>],  // up to 3 hard mismatches (e.g., language requirement, on-site only)\n'
+        '  "reasoning":        "<one sentence why this overall_score>"\n'
+        "}\n\n"
+        f"{_FEW_SHOT_EXAMPLES}"
+        "NOW SCORE THIS JOB:\n"
         f"Candidate: {profile}\n\n"
         f"Job Title: {job.get('title', '')}\n"
         f"Company: {job.get('company', '')}\n"
@@ -317,31 +365,64 @@ def ollama_score(
 
     if _DEBUG_PROMPT:
         _log("--- PROMPT (debug) ---")
-        _log(prompt[:2000] + (" ...[truncated]" if len(prompt) > 2000 else ""))
+        _log(prompt[:2500] + (" ...[truncated]" if len(prompt) > 2500 else ""))
         _log("--- END PROMPT ---")
+
+    def _clamp_int(v, lo=0, hi=10, default=5):
+        try:    return max(lo, min(hi, int(v)))
+        except: return default
+
+    def _clean_list(v, max_items=5, max_len=60):
+        if not isinstance(v, list):
+            return []
+        out = []
+        for item in v[:max_items]:
+            s = str(item).strip()[:max_len]
+            if s:
+                out.append(s)
+        return out
 
     try:
         r = requests.post(
             f"{ollama_url}/api/generate",
             json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
-            timeout=90,
+            timeout=120,
         )
         r.raise_for_status()
         raw = r.json().get("response", "{}")
         if _DEBUG_PROMPT:
-            _log(f"Ollama raw response: {raw[:500]}")
-        # Extract JSON even if there's surrounding text
+            _log(f"Ollama raw response: {raw[:800]}")
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         data = json.loads(m.group(0)) if m else {}
-        score   = max(0, min(10, int(data.get("score", 5))))
-        summary = str(data.get("summary", "")).strip()[:300]
-        return score, summary
+
+        breakdown = {
+            "skills_match":     _clamp_int(data.get("skills_match")),
+            "experience_match": _clamp_int(data.get("experience_match")),
+            "location_match":   _clamp_int(data.get("location_match")),
+            "seniority_match":  _clamp_int(data.get("seniority_match")),
+            "overall_score":    _clamp_int(data.get("overall_score")),
+            "matched_skills":   _clean_list(data.get("matched_skills")),
+            "missing_skills":   _clean_list(data.get("missing_skills")),
+            "red_flags":        _clean_list(data.get("red_flags"), max_items=3, max_len=80),
+            "reasoning":        str(data.get("reasoning", "")).strip()[:300],
+        }
+        # If overall_score wasn't returned, derive it from the 4 axes (weighted average)
+        if data.get("overall_score") is None:
+            axes = [
+                (breakdown["skills_match"],     0.40),
+                (breakdown["experience_match"], 0.30),
+                (breakdown["seniority_match"],  0.15),
+                (breakdown["location_match"],   0.15),
+            ]
+            weighted = sum(v * w for v, w in axes)
+            breakdown["overall_score"] = _clamp_int(round(weighted))
+        return breakdown["overall_score"], breakdown["reasoning"], breakdown
     except requests.exceptions.ConnectionError:
-        _log(f"ERROR: Cannot reach Ollama at {ollama_url} — is 'ollama serve' running?")
-        return -1, ""
+        _log(f"ERROR: Cannot reach Ollama at {ollama_url} - is 'ollama serve' running?")
+        return -1, "", {}
     except Exception as exc:
         _log(f"Ollama error: {exc}")
-        return -1, ""
+        return -1, "", {}
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -434,34 +515,33 @@ def main() -> None:
         else:
             _log("          No description fetched — scoring on title/company/location only")
 
-        score, summary = ollama_score(job, description, profile, model, ollama)
+        score, summary, breakdown = ollama_score(job, description, profile, model, ollama)
 
         if score == -1:
-            _log("          Ollama unreachable — stopping enrichment")
+            _log("          Ollama unreachable - stopping enrichment")
             break
 
         verdict = "KEEP" if score >= min_score else "DISMISS"
-        _log(f"          Score: {score}/10  [{verdict}]  {summary[:80]}")
+        _log(f"          Score: {score}/10  [{verdict}]  S={breakdown.get('skills_match','?')} E={breakdown.get('experience_match','?')} L={breakdown.get('location_match','?')} Sr={breakdown.get('seniority_match','?')}")
+        if breakdown.get("matched_skills"):
+            _log(f"          Matched: {', '.join(breakdown['matched_skills'])}")
+        if breakdown.get("missing_skills"):
+            _log(f"          Missing: {', '.join(breakdown['missing_skills'])}")
+        if breakdown.get("red_flags"):
+            _log(f"          Red flags: {' | '.join(breakdown['red_flags'])}")
 
         db.update_job_enrichment(
             supabase_url, supabase_key,
             job["job_id"], description, score, summary,
             min_score=min_score,
+            breakdown=breakdown,
         )
 
-        # Send Telegram score notification for kept jobs
+        # Send Telegram score notification for kept jobs (richer format with breakdown)
         if score >= min_score and tg_token and tg_chat:
             try:
                 import telegram_notify as tg
-                msg = (
-                    f"AI Score: {score}/10\n"
-                    f"{title}\n"
-                    f"{company}\n"
-                    f"{job.get('location', '')}\n"
-                    f"{summary}\n"
-                    f"{job.get('url', '')}"
-                )
-                tg.send_message(tg_token, tg_chat, msg)
+                tg.send_score_alert(tg_token, tg_chat, job, breakdown)
                 time.sleep(0.3)
             except Exception as exc:
                 _log(f"          Telegram score alert error: {exc}")
