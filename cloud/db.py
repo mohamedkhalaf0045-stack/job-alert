@@ -155,6 +155,32 @@ def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> 
         return []
 
 
+def update_cover_letter(supabase_url: str, supabase_key: str,
+                          job_id: str, draft: str) -> None:
+    """Phase 5: persist a generated cover-letter draft. Strips NUL bytes.
+
+    Silently falls through if the cover_letter_draft column doesn't exist
+    (i.e. the user hasn't run the Phase 5 migration yet) - the rest of the
+    enrichment flow still works.
+    """
+    if not job_id or not draft:
+        return
+    sb = _get_client(supabase_url, supabase_key)
+    clean = draft.replace("\x00", "")
+    update = {
+        "cover_letter_draft":        clean[:6000],   # hard cap
+        "cover_letter_generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        sb.table("jobs").update(update).eq("job_id", job_id).execute()
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "could not find" in msg or "does not exist" in msg or "pgrst204" in msg:
+            print("[DB] cover_letter_draft column missing - run cloud/migrations/2026-05-15-cover-letter.sql")
+        else:
+            print(f"[DB] update_cover_letter error for {job_id}: {exc}")
+
+
 def get_jobs_by_status(supabase_url: str, supabase_key: str, status: str,
                         limit: int = 5) -> list[dict]:
     """Recent jobs for a given status (applied/dismissed/saved/new).

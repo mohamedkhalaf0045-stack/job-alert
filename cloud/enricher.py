@@ -429,6 +429,73 @@ def ollama_score(
         return -1, "", {}
 
 
+# ── Cover-letter generation (Phase 5) ─────────────────────────────────────────
+
+DEFAULT_COVER_LETTER_THRESHOLD = 7   # only generate for jobs scoring this or higher
+DEFAULT_COVER_LETTER_PER_RUN   = 3   # cap so a 60-job backfill doesn't take 1h
+
+
+def generate_cover_letter(job: dict, description: str, profile: str,
+                           model: str, ollama_url: str,
+                           breakdown: dict | None = None) -> str:
+    """Generate a 200-word cover letter draft tailored to this specific job.
+
+    Returns the plain-text draft (no markdown). Empty string on failure.
+    Uses the same Ollama model as scoring - quality is sufficient for a
+    first draft the user will edit anyway.
+    """
+    desc_excerpt = (description or "")[:2500] or "(no description available)"
+    breakdown    = breakdown or {}
+    matched      = ", ".join(breakdown.get("matched_skills") or [])
+    missing      = ", ".join(breakdown.get("missing_skills") or [])
+
+    prompt = (
+        "Write a 200-word cover letter for the candidate applying to this job.\n"
+        "Structure: 3 short paragraphs.\n"
+        "  Paragraph 1: open with a strong hook tying the candidate's most\n"
+        "    relevant experience to the role. Name the company.\n"
+        "  Paragraph 2: 2-3 sentences highlighting the candidate's strongest\n"
+        "    matched skills and a specific accomplishment from their CV.\n"
+        "  Paragraph 3: confident close with a clear call to action\n"
+        "    (interview / next steps).\n"
+        "Tone: professional but human. Specific, not generic.\n"
+        "Use the candidate's actual experience from the profile.\n"
+        "Plain text only. No markdown. No bullet points. No salutation or sign-off block\n"
+        "(the user will add those). Do not invent details not in the profile.\n\n"
+        f"CANDIDATE PROFILE:\n{profile}\n\n"
+        f"JOB TITLE:    {job.get('title', '')}\n"
+        f"COMPANY:      {job.get('company', '')}\n"
+        f"LOCATION:     {job.get('location', '')}\n"
+    )
+    if matched:
+        prompt += f"AI-DETECTED MATCHED SKILLS: {matched}\n"
+    if missing:
+        prompt += f"AI-DETECTED GAPS (acknowledge briefly but pivot to strengths): {missing}\n"
+    prompt += f"\nJOB DESCRIPTION:\n{desc_excerpt}\n"
+
+    try:
+        r = requests.post(
+            f"{ollama_url}/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=180,
+        )
+        r.raise_for_status()
+        text = (r.json().get("response") or "").strip()
+        # Strip leading "Here is a ... cover letter ...:" preamble the model sometimes adds
+        text = re.sub(r"^\s*(here\s+is|here'?s|below\s+is|the\s+following\s+is)\b[^\n]{0,160}:\s*\n+",
+                      "", text, count=1, flags=re.IGNORECASE).strip()
+        # Trim any trailing sign-off the model might add anyway
+        text = re.sub(r"\n+(Sincerely|Regards|Best|Best regards|Thank you|Yours).*$",
+                      "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+        return text[:3000]   # hard cap; Telegram + UI can handle ~2.5 KB easily
+    except requests.exceptions.ConnectionError:
+        _log(f"          Cover letter: Ollama unreachable")
+        return ""
+    except Exception as exc:
+        _log(f"          Cover letter error: {exc}")
+        return ""
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -449,6 +516,10 @@ def main() -> None:
     parser.add_argument("--verbose",      action="store_true", help="Verbose logging (profile chain, cache, prompt sizes)")
     parser.add_argument("--debug-prompt", action="store_true", help="Log the full LLM prompt + raw response (implies --verbose)")
     parser.add_argument("--health-check", action="store_true", help="Run a single end-to-end test, then exit with summary")
+    parser.add_argument("--cover-letter-threshold", type=int, default=DEFAULT_COVER_LETTER_THRESHOLD,
+                        help=f"Generate cover letter for jobs scoring >= this (default {DEFAULT_COVER_LETTER_THRESHOLD}, 0=disable)")
+    parser.add_argument("--cover-letter-max-per-run", type=int, default=DEFAULT_COVER_LETTER_PER_RUN,
+                        help=f"Cap cover-letter generations per run (default {DEFAULT_COVER_LETTER_PER_RUN})")
     args = parser.parse_args()
 
     global _VERBOSE, _DEBUG_PROMPT
@@ -521,7 +592,7 @@ def main() -> None:
 
     _log(f"Found {len(jobs)} unscored job(s). Scoring...")
 
-    scored = dismissed = failed = 0
+    scored = dismissed = failed = cover_letters_generated = 0
 
     for i, job in enumerate(jobs, 1):
         title   = job.get("title", "?")
@@ -580,6 +651,21 @@ def main() -> None:
             breakdown=breakdown,
         )
 
+        # Phase 5: generate cover-letter draft for high-scoring jobs.
+        # Throttled per run so a backfill doesn't take forever (~30s per draft).
+        if (args.cover_letter_threshold > 0
+                and score >= args.cover_letter_threshold
+                and cover_letters_generated < args.cover_letter_max_per_run):
+            _log(f"          Generating cover letter (score {score} >= {args.cover_letter_threshold})...")
+            draft = generate_cover_letter(job, description, profile, model, ollama,
+                                          breakdown=breakdown)
+            if draft:
+                db.update_cover_letter(supabase_url, supabase_key, job["job_id"], draft)
+                cover_letters_generated += 1
+                _log(f"          Cover letter saved ({len(draft)} chars)")
+            else:
+                _vlog("          Cover letter generation returned empty - skipping persist")
+
         # Send Telegram score notification for kept jobs (richer format with breakdown)
         if score >= min_score and tg_token and tg_chat:
             try:
@@ -597,7 +683,7 @@ def main() -> None:
         if i < len(jobs):
             time.sleep(0.5)  # small pause between Ollama calls
 
-    _log(f"Done. Scored={scored}, Auto-dismissed={dismissed}, Failed={failed}")
+    _log(f"Done. Scored={scored}, Auto-dismissed={dismissed}, Failed={failed}, CoverLetters={cover_letters_generated}")
 
     if args.health_check:
         if scored + dismissed > 0:
