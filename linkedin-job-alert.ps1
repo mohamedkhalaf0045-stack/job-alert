@@ -113,9 +113,55 @@ function Save-Settings {
 
 $script:SettingsSaveTimer = $null
 
+function Sync-SettingsToSupabase {
+    # Push all GUI settings to Supabase bot_state so the cloud worker respects them.
+    $settings = Load-Settings
+    $sUrl = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseUrl" -DefaultValue "")
+    $sKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
+    if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) {
+        return  # Supabase not configured — skip silently
+    }
+
+    $maxHours = switch ($script:TimeFilterBox.Text) {
+        "Last 24h"    { "24" }
+        "Last 3 days" { "72" }
+        "Last week"   { "168" }
+        "Custom"      { [string]$script:CustomHoursBox.Value }
+        default       { "24" }
+    }
+    $keywords = ($script:KeywordsBox.Lines | Where-Object { $_ -ne "" }) -join ","
+
+    $pairs = @(
+        [ordered]@{ key = "setting_keywords";           value = $keywords }
+        [ordered]@{ key = "setting_location";           value = $script:CountryBox.Text.Trim() }
+        [ordered]@{ key = "setting_max_hours";          value = $maxHours }
+        [ordered]@{ key = "setting_search_linkedin";    value = if ($script:LinkedInCheckBox.Checked) { "true" } else { "false" } }
+        [ordered]@{ key = "setting_search_indeed";      value = if ($script:IndeedCheckBox.Checked) { "true" } else { "false" } }
+        [ordered]@{ key = "setting_linkedin_cookie";    value = $script:CookieBox.Text.Trim() }
+        [ordered]@{ key = "setting_exclude_keywords";   value = $script:ExcludeBox.Text.Trim() }
+        [ordered]@{ key = "setting_telegram_bot_token"; value = $script:TelegramTokenBox.Text.Trim() }
+        [ordered]@{ key = "setting_telegram_chat_id";   value = $script:TelegramChatIdBox.Text.Trim() }
+    )
+
+    $headers = @{
+        "apikey"        = $sKey
+        "Authorization" = "Bearer $sKey"
+        "Content-Type"  = "application/json"
+        "Prefer"        = "resolution=merge-duplicates"
+    }
+    $body = $pairs | ConvertTo-Json
+    $uri  = "$sUrl/rest/v1/bot_state"
+    Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ErrorAction Stop | Out-Null
+}
+
 function Save-Settings-WithFeedback {
     try {
         Save-Settings
+        try {
+            Sync-SettingsToSupabase
+        } catch {
+            Add-LogLine "Warning: could not sync settings to cloud: $($_.Exception.Message)"
+        }
         Add-LogLine "Settings saved."
         $script:StatusLabel.Text      = "Settings saved [OK]"
         $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 140, 0)
