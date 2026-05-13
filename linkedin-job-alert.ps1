@@ -2006,6 +2006,113 @@ $script:CloudMenuSchedule.Add_Click({ try { Toggle-CloudSchedule } catch { Add-L
 
 $script:CloudLamp.ContextMenuStrip = $script:CloudMenu
 
+# ── AI enrichment lamp (Phase 1.5) ────────────────────────────────────────────
+$aiLampLabel           = New-Object System.Windows.Forms.Label
+$aiLampLabel.Text      = "AI:"
+$aiLampLabel.Location  = New-Object System.Drawing.Point(1078, 7)
+$aiLampLabel.Font      = $fntUi
+$aiLampLabel.ForeColor = $clrMuted
+$aiLampLabel.AutoSize  = $true
+[void]$statusPanel.Controls.Add($aiLampLabel)
+
+$script:AiLamp           = New-Object System.Windows.Forms.Panel
+$script:AiLamp.Location  = New-Object System.Drawing.Point(1106, 4)
+$script:AiLamp.Size      = New-Object System.Drawing.Size(22, 22)
+$script:AiLamp.BackColor = [System.Drawing.Color]::Transparent
+$script:AiLamp.Tag       = "grey"
+$script:AiLamp.Add_Paint({
+    param($sender, $e)
+    $g   = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $rgb = switch ($sender.Tag) {
+        "green"  { @(50, 205, 50) }
+        "red"    { @(220, 50, 50) }
+        "yellow" { @(240, 180, 0) }
+        default  { @(160, 160, 160) }
+    }
+    $mainColor = [System.Drawing.Color]::FromArgb($rgb[0], $rgb[1], $rgb[2])
+    $w = $sender.Width - 1
+    $h = $sender.Height - 1
+    $glowBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(70, $mainColor.R, $mainColor.G, $mainColor.B))
+    $g.FillEllipse($glowBrush, 0, 0, $w, $h)
+    $glowBrush.Dispose()
+    $mainBrush = New-Object System.Drawing.SolidBrush($mainColor)
+    $g.FillEllipse($mainBrush, 2, 2, $w - 4, $h - 4)
+    $mainBrush.Dispose()
+    $hlBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(110, 255, 255, 255))
+    $g.FillEllipse($hlBrush, 5, 5, [int](($w - 4) / 2.5), [int](($h - 4) / 2.5))
+    $hlBrush.Dispose()
+})
+$script:AiLampTooltip = New-Object System.Windows.Forms.ToolTip
+$script:AiLampTooltip.SetToolTip($script:AiLamp, "AI scoring: not yet polled")
+[void]$statusPanel.Controls.Add($script:AiLamp)
+
+function Update-AiLamp {
+    <#
+    Polls the enricher last-run logs and the persistent enricher.log to decide
+    whether AI scoring is healthy. Tag values: green | yellow | red | grey.
+    Tooltip lines: status + last-run summary.
+    #>
+    try {
+        $stdLog = Join-Path $script:AppRoot "enricher-last-run.log"
+        $errLog = Join-Path $script:AppRoot "enricher-last-run.err.log"
+
+        $tag     = "grey"
+        $tooltip = "AI scoring: never run yet on this machine"
+
+        if (Test-Path -LiteralPath $stdLog) {
+            $stdInfo = Get-Item -LiteralPath $stdLog
+            $ageMin  = [int]((Get-Date) - $stdInfo.LastWriteTime).TotalMinutes
+
+            $tail = (Get-Content -LiteralPath $stdLog -Tail 5 -ErrorAction SilentlyContinue) -join "`n"
+
+            if ($tail -match "Cannot reach Ollama|Ollama error") {
+                $tag     = "red"
+                $tooltip = "AI: Ollama unreachable ($ageMin min ago)`n$tail"
+            } elseif ($tail -match "Done\. Scored=") {
+                if ($ageMin -le 15) {
+                    $tag     = "green"
+                    $tooltip = "AI: last run $ageMin min ago - OK`n$tail"
+                } else {
+                    $tag     = "yellow"
+                    $tooltip = "AI: idle ($ageMin min since last run)`n$tail"
+                }
+            } elseif ($tail -match "No unscored jobs found") {
+                $tag     = "yellow"
+                $tooltip = "AI: no unscored jobs (last run $ageMin min ago)"
+            } else {
+                $tag     = "yellow"
+                $tooltip = "AI: last run incomplete ($ageMin min ago)`n$tail"
+            }
+        }
+
+        if (Test-Path -LiteralPath $errLog) {
+            $errSize = (Get-Item -LiteralPath $errLog).Length
+            if ($errSize -gt 0) {
+                $errTail = (Get-Content -LiteralPath $errLog -Tail 3 -ErrorAction SilentlyContinue) -join "`n"
+                if ($errTail.Trim()) {
+                    $tag     = "red"
+                    $tooltip = "AI: stderr non-empty`n$errTail"
+                }
+            }
+        }
+
+        if ($script:AiLamp.Tag -ne $tag) {
+            $script:AiLamp.Tag = $tag
+            $script:AiLamp.Invalidate()
+        }
+        $script:AiLampTooltip.SetToolTip($script:AiLamp, $tooltip)
+    } catch {
+        # Silent: this is a status indicator, not a critical path
+    }
+}
+
+$script:AiLampTimer          = New-Object System.Windows.Forms.Timer
+$script:AiLampTimer.Interval = 30000   # 30 seconds
+$script:AiLampTimer.Add_Tick({ Update-AiLamp })
+$script:AiLampTimer.Start()
+Update-AiLamp   # initial paint
+
 # ── Job Listings card ─────────────────────────────────────────────────────────
 $jobsCard = New-Card -X 10 -Y 478 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
 
