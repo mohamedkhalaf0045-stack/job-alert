@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/job.dart';
 import '../services/supabase_service.dart';
@@ -25,6 +26,20 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     setState(() => _saving = true);
     await SupabaseService.updateJobStatus(widget.job.url, newStatus);
     if (mounted) setState(() { _status = newStatus; _saving = false; });
+  }
+
+  Future<void> _copyCoverLetter() async {
+    final draft = widget.job.coverLetterDraft ?? '';
+    if (draft.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: draft));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cover letter copied to clipboard'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
@@ -77,10 +92,28 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
               icon: const Icon(Icons.open_in_new),
               label: const Text('Open in browser'),
             ),
+
+          // Phase 3: this job is a duplicate of another
+          if (job.isDuplicate) ...[
+            const SizedBox(height: 16),
+            _DuplicateBanner(canonicalUrl: job.duplicateOfUrl!),
+          ],
+
+          // Phase 2: multi-criteria breakdown
           if (job.llmScore != null) ...[
             const SizedBox(height: 16),
-            _AiMatchCard(score: job.llmScore!, summary: job.llmSummary),
+            _AiMatchCard(job: job),
           ],
+
+          // Phase 5: cover-letter draft
+          if (job.hasCoverLetter) ...[
+            const SizedBox(height: 16),
+            _CoverLetterCard(
+              draft: job.coverLetterDraft!,
+              onCopy: _copyCoverLetter,
+            ),
+          ],
+
           const SizedBox(height: 32),
           const Text('Update status:',
               style: TextStyle(fontWeight: FontWeight.bold)),
@@ -152,54 +185,271 @@ class _SourceBadge extends StatelessWidget {
   }
 }
 
+/// Phase 2: full multi-criteria breakdown card.
+/// Falls back to the legacy single-score layout if Phase 2 columns are null.
 class _AiMatchCard extends StatelessWidget {
-  final int score;
-  final String? summary;
-  const _AiMatchCard({required this.score, this.summary});
+  final Job job;
+  const _AiMatchCard({required this.job});
 
-  Color get _color {
-    if (score >= 8) return Colors.green;
-    if (score >= 5) return const Color(0xFFF0B400);
+  Color _scoreColor(int s) {
+    if (s >= 8) return Colors.green;
+    if (s >= 5) return const Color(0xFFF0B400);
     return Colors.grey;
   }
 
   @override
   Widget build(BuildContext context) {
+    final score = job.llmScore!;
+    final color = _scoreColor(score);
     return Card(
-      color: _color.withOpacity(0.1),
+      color: color.withOpacity(0.08),
       child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
+        padding: const EdgeInsets.all(14),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: _color),
-              alignment: Alignment.center,
-              child: Text(
-                '$score',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold),
+            // Header row: big score circle + label + reasoning
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                width: 44, height: 44,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+                alignment: Alignment.center,
+                child: Text('$score',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold)),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('AI Match: $score/10',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, color: color)),
+                    if ((job.llmSummary ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(job.llmSummary!,
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ],
+                ),
+              ),
+            ]),
+            // Sub-scores (Phase 2)
+            if (job.hasBreakdown) ...[
+              const SizedBox(height: 12),
+              _SubScoreRow(label: 'Skills',     value: job.skillsMatch),
+              _SubScoreRow(label: 'Experience', value: job.experienceMatch),
+              _SubScoreRow(label: 'Location',   value: job.locationMatch),
+              _SubScoreRow(label: 'Seniority',  value: job.seniorityMatch),
+            ],
+            // Matched / missing skills chips
+            if (job.matchedSkills.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _ChipGroup(
+                label: 'Matched',
+                items: job.matchedSkills,
+                color: Colors.green.shade700,
+                bg: Colors.green.shade50,
+              ),
+            ],
+            if (job.missingSkills.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _ChipGroup(
+                label: 'Missing',
+                items: job.missingSkills,
+                color: Colors.orange.shade800,
+                bg: Colors.orange.shade50,
+              ),
+            ],
+            if (job.redFlags.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _ChipGroup(
+                label: 'Red flags',
+                items: job.redFlags,
+                color: Colors.red.shade700,
+                bg: Colors.red.shade50,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SubScoreRow extends StatelessWidget {
+  final String label;
+  final int? value;
+  const _SubScoreRow({required this.label, required this.value});
+
+  Color _color(int s) {
+    if (s >= 8) return Colors.green;
+    if (s >= 5) return const Color(0xFFF0B400);
+    return Colors.red.shade400;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = value ?? 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        SizedBox(
+          width: 76,
+          child: Text(label,
+              style: const TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: v / 10.0,
+              minHeight: 8,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: AlwaysStoppedAnimation(_color(v)),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('AI Match: $score/10',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold, color: _color)),
-                  if (summary != null && summary!.isNotEmpty)
-                    Text(summary!,
-                        style: Theme.of(context).textTheme.bodySmall),
-                ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 32,
+          child: Text('$v/10',
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 12)),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ChipGroup extends StatelessWidget {
+  final String label;
+  final List<String> items;
+  final Color color;
+  final Color bg;
+  const _ChipGroup({
+    required this.label,
+    required this.items,
+    required this.color,
+    required this.bg,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label,
+          style: TextStyle(
+              fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+      const SizedBox(height: 4),
+      Wrap(
+        spacing: 6, runSpacing: 4,
+        children: items.map((s) => Chip(
+          label: Text(s, style: TextStyle(fontSize: 11, color: color)),
+          backgroundColor: bg,
+          side: BorderSide(color: color.withOpacity(0.3)),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+        )).toList(),
+      ),
+    ]);
+  }
+}
+
+/// Phase 5: cover-letter draft card with copy button.
+class _CoverLetterCard extends StatefulWidget {
+  final String draft;
+  final VoidCallback onCopy;
+  const _CoverLetterCard({required this.draft, required this.onCopy});
+
+  @override
+  State<_CoverLetterCard> createState() => _CoverLetterCardState();
+}
+
+class _CoverLetterCardState extends State<_CoverLetterCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.blue.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.description, color: Colors.blue),
+              const SizedBox(width: 8),
+              Text('Cover letter draft',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue.shade900)),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 20),
+                tooltip: 'Copy to clipboard',
+                onPressed: widget.onCopy,
               ),
+              IconButton(
+                icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 22),
+                tooltip: _expanded ? 'Collapse' : 'Show full draft',
+                onPressed: () => setState(() => _expanded = !_expanded),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Text(
+              widget.draft,
+              maxLines: _expanded ? null : 4,
+              overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'AI-generated. Read and edit before sending.',
+              style: TextStyle(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: Colors.grey.shade700),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Phase 3: banner shown when this job links to a canonical duplicate.
+class _DuplicateBanner extends StatelessWidget {
+  final String canonicalUrl;
+  const _DuplicateBanner({required this.canonicalUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.grey.shade200,
+      child: ListTile(
+        leading: const Icon(Icons.copy_all, color: Colors.grey),
+        title: const Text('Duplicate listing',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        subtitle: Text(
+          'Already seen on another source. Open the original below.',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.open_in_new),
+          tooltip: 'Open canonical version',
+          onPressed: () async {
+            final uri = Uri.tryParse(canonicalUrl);
+            if (uri != null) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+          },
         ),
       ),
     );

@@ -45,6 +45,12 @@ class JobCard extends StatelessWidget {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (job.hasCoverLetter)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 4),
+                            child: Icon(Icons.description,
+                                size: 16, color: Colors.blue),
+                          ),
                         if (job.llmScore != null) ...[
                           _ScoreBadge(score: job.llmScore!, color: _scoreColor(job.llmScore!)),
                           const SizedBox(width: 4),
@@ -58,6 +64,17 @@ class JobCard extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (job.matchedSkills.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          '${job.matchedSkills.length} matched',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.green.shade700,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     if (job.datePosted != null)
                       Text(
                         _daysAgo(job.datePosted!),

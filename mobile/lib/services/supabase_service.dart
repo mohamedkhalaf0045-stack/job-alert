@@ -15,15 +15,43 @@ class SupabaseService {
 
   // ── Jobs ──────────────────────────────────────────────────────────────────
 
-  static Future<List<Job>> listJobs({String? status, int limit = 100}) async {
-    var query = '$_base/jobs?order=date_collected.desc&limit=$limit';
+  // Phase 2/3/5: explicit column list so the new fields actually arrive.
+  // Without an explicit select, PostgREST returns the default projection which
+  // may not include columns added after the table was first introspected.
+  static const _jobColumns =
+      'job_id,title,company,location,url,source,status,'
+      'date_posted,date_collected,llm_score,llm_summary,'
+      'skills_match,experience_match,location_match,seniority_match,'
+      'matched_skills,missing_skills,red_flags,'
+      'duplicate_of_url,cover_letter_draft';
+
+  static Future<List<Job>> listJobs({String? status, int limit = 100,
+                                      bool hideDuplicates = true}) async {
+    var query = '$_base/jobs?select=$_jobColumns&order=date_collected.desc&limit=$limit';
     if (status != null && status != 'all') {
       query += '&status=eq.$status';
+    }
+    if (hideDuplicates) {
+      query += '&duplicate_of_url=is.null';
     }
     final res = await http.get(Uri.parse(query), headers: _headers);
     if (res.statusCode != 200) return [];
     final list = jsonDecode(res.body) as List<dynamic>;
     return list.map((e) => Job.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// Fetch the canonical job for a duplicate by URL. Returns null if not found.
+  static Future<Job?> getJobByUrl(String url) async {
+    if (url.isEmpty) return null;
+    final encoded = Uri.encodeComponent(url);
+    final res = await http.get(
+      Uri.parse('$_base/jobs?select=$_jobColumns&url=eq.$encoded&limit=1'),
+      headers: _headers,
+    );
+    if (res.statusCode != 200) return null;
+    final list = jsonDecode(res.body) as List<dynamic>;
+    if (list.isEmpty) return null;
+    return Job.fromJson(list.first as Map<String, dynamic>);
   }
 
   static Future<void> updateJobStatus(String url, String newStatus) async {
