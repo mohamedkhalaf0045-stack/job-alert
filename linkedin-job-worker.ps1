@@ -32,6 +32,81 @@ $script:LogFunction          = { param($m) Write-WorkerLog $m }
 $script:WorkerLastScanSummary = ""
 $script:WorkerTgScanToken     = ""
 $script:WorkerTgScanChatId    = ""
+$script:WorkerLastScanInserted = 0   # set by Invoke-WorkerScan; read by enricher auto-trigger
+
+function Invoke-EnricherAsync {
+    <#
+    Fire-and-forget launch of cloud/enricher.py as a background Python process.
+    Called by the main loop after a scan that produced new jobs.
+    Guarded by enricher.pid so we never run two concurrently.
+    #>
+    $enricherPath    = Join-Path $script:AppRoot "cloud\enricher.py"
+    if (-not (Test-Path -LiteralPath $enricherPath)) {
+        return
+    }
+
+    $enricherPidFile = Join-Path $script:AppRoot "enricher.pid"
+    if (Test-Path -LiteralPath $enricherPidFile) {
+        try {
+            $oldPid = [int](Get-Content -LiteralPath $enricherPidFile -Raw)
+            if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {
+                Write-WorkerLog "Enricher already running (PID $oldPid). Skipping this trigger."
+                return
+            }
+            Remove-Item -LiteralPath $enricherPidFile -Force -ErrorAction SilentlyContinue
+        } catch {
+            Remove-Item -LiteralPath $enricherPidFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    try {
+        $s       = Load-SettingsObject
+        $sUrl    = [string](Get-SettingValue -SettingsObject $s -Name "SupabaseUrl"    -DefaultValue "")
+        $sKey    = [string](Get-SettingValue -SettingsObject $s -Name "SupabaseKey"    -DefaultValue "")
+        $cookie  = [string](Get-SettingValue -SettingsObject $s -Name "LinkedInCookie" -DefaultValue "")
+        $ollama  = [string](Get-SettingValue -SettingsObject $s -Name "OllamaUrl"      -DefaultValue "http://localhost:11434")
+        $minSc   = [string](Get-SettingValue -SettingsObject $s -Name "MinAiScore"     -DefaultValue "4")
+
+        if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) {
+            Write-WorkerLog "Enricher: Supabase credentials missing - skipping auto-enrichment."
+            return
+        }
+
+        # Briefly export env vars so the spawned python inherits them
+        $envBackup = @{
+            SUPABASE_URL    = $env:SUPABASE_URL
+            SUPABASE_KEY    = $env:SUPABASE_KEY
+            LINKEDIN_COOKIE = $env:LINKEDIN_COOKIE
+        }
+        $env:SUPABASE_URL    = $sUrl
+        $env:SUPABASE_KEY    = $sKey
+        $env:LINKEDIN_COOKIE = $cookie
+
+        $stdLog = Join-Path $script:AppRoot "enricher-last-run.log"
+        $errLog = Join-Path $script:AppRoot "enricher-last-run.err.log"
+
+        try {
+            $proc = Start-Process -FilePath "python" `
+                -ArgumentList @($enricherPath, "--ollama", $ollama, "--min-score", $minSc, "--limit", "10") `
+                -WorkingDirectory $script:AppRoot `
+                -NoNewWindow `
+                -RedirectStandardOutput $stdLog `
+                -RedirectStandardError  $errLog `
+                -PassThru
+            if ($proc -and $proc.Id) {
+                Set-Content -LiteralPath $enricherPidFile -Value $proc.Id -Encoding ASCII
+                Write-WorkerLog "Enricher launched (PID $($proc.Id)) - last-run log: enricher-last-run.log"
+            }
+        } finally {
+            # Restore original env (only mutated for this launch)
+            if ($null -eq $envBackup.SUPABASE_URL)    { Remove-Item Env:\SUPABASE_URL    -ErrorAction SilentlyContinue } else { $env:SUPABASE_URL    = $envBackup.SUPABASE_URL }
+            if ($null -eq $envBackup.SUPABASE_KEY)    { Remove-Item Env:\SUPABASE_KEY    -ErrorAction SilentlyContinue } else { $env:SUPABASE_KEY    = $envBackup.SUPABASE_KEY }
+            if ($null -eq $envBackup.LINKEDIN_COOKIE) { Remove-Item Env:\LINKEDIN_COOKIE -ErrorAction SilentlyContinue } else { $env:LINKEDIN_COOKIE = $envBackup.LINKEDIN_COOKIE }
+        }
+    } catch {
+        Write-WorkerLog "Enricher launch failed: $($_.Exception.Message)"
+    }
+}
 
 function Get-WorkerSettingsSummary {
     try {
@@ -265,6 +340,7 @@ function Invoke-WorkerScan {
     Write-WorkerLog "LinkedIn total: inserted $($dbSyncLi.inserted), updated $($dbSyncLi.updated), seen $($dbSyncLi.seen), invalid $($dbSyncLi.invalid)."
     $dbSyncIndeed = Sync-JobsToDatabase -Jobs @($allIndeedJobs) -Source "Indeed"
     Write-WorkerLog "Indeed total: inserted $($dbSyncIndeed.inserted), updated $($dbSyncIndeed.updated), seen $($dbSyncIndeed.seen), invalid $($dbSyncIndeed.invalid)."
+    $script:WorkerLastScanInserted = [int]$dbSyncLi.inserted + [int]$dbSyncIndeed.inserted
 
     $visibleJobs = @((@($allLiJobs) + @($allIndeedJobs)) |
         Where-Object { (Get-PostedAgeHours -Job $_) -le $maxHours } |
@@ -363,7 +439,8 @@ try {
         $tgScanChatId = $script:WorkerTgScanChatId
         $script:WorkerTgScanToken  = ""
         $script:WorkerTgScanChatId = ""
-        $script:WorkerLastScanSummary = ""
+        $script:WorkerLastScanSummary  = ""
+        $script:WorkerLastScanInserted = 0
 
         try {
             Invoke-WorkerScan
@@ -371,6 +448,12 @@ try {
         catch {
             $script:WorkerLastScanSummary = "Scan failed: $($_.Exception.Message)"
             Write-WorkerLog $script:WorkerLastScanSummary
+        }
+
+        # Auto-trigger local LLM enrichment after scans that produced new jobs.
+        # Fire-and-forget: enricher writes its own log; we don't block the loop.
+        if ($script:WorkerLastScanInserted -gt 0) {
+            Invoke-EnricherAsync
         }
 
         # Send scan result to Telegram if this iteration was triggered by /scan command
@@ -490,5 +573,6 @@ finally {
     if (-not $RunOnce) {
         Remove-Item -LiteralPath $script:PidPath -Force -ErrorAction SilentlyContinue
     }
+    # Best-effort: leave enricher.pid alone (the python process owns it and may still be running)
     $script:HttpClient.Dispose()
 }
