@@ -112,6 +112,10 @@ function Save-Settings {
 }
 
 $script:SettingsSaveTimer = $null
+$script:EnrichTimer       = $null
+$script:EnrichJob         = $null
+$script:CvAnalyzeTimer    = $null
+$script:CvAnalyzeJob      = $null
 
 function Sync-SettingsToSupabase {
     # Push all GUI settings to Supabase bot_state so the cloud worker respects them.
@@ -2569,15 +2573,39 @@ $importCookiesButton.Add_Click({ Import-CookiesToForm })
 
 $script:Form.Add_FormClosing({
     Save-Settings
-    $script:Timer.Stop()
-    $script:WorkerCheckTimer.Stop()
-    $script:TelegramPollTimer.Stop()
-    $script:CloudCheckTimer.Stop()
-    if ($null -ne $script:CvAnalyzeTimer) { try { $script:CvAnalyzeTimer.Stop() } catch {} }
-    if ($null -ne $script:CvAnalyzeJob)   { try { Stop-Job -Job $script:CvAnalyzeJob; Remove-Job -Job $script:CvAnalyzeJob -Force } catch {} }
+
+    # Stop every timer so none fires against disposed controls
+    foreach ($t in @(
+        $script:Timer,
+        $script:WorkerCheckTimer,
+        $script:TelegramPollTimer,
+        $script:CloudCheckTimer,
+        $script:AiLampTimer,
+        $script:SettingsSaveTimer,
+        $script:ScanPollTimer,
+        $script:EnrichTimer,
+        $script:CvAnalyzeTimer
+    )) {
+        if ($null -ne $t) { try { $t.Stop(); $t.Dispose() } catch {} }
+    }
+
+    # Stop any running background jobs
+    foreach ($job in @($script:EnrichJob, $script:CvAnalyzeJob)) {
+        if ($null -ne $job) { try { Stop-Job $job -ErrorAction SilentlyContinue; Remove-Job $job -Force -ErrorAction SilentlyContinue } catch {} }
+    }
+
+    # Stop the scan runspace if a scan is in progress
+    if ($null -ne $script:ScanPS) {
+        try { $script:ScanPS.Stop() }         catch {}
+        try { $script:ScanPS.Dispose() }      catch {}
+    }
+    if ($null -ne $script:ScanHandle) {
+        try { $script:ScanHandle.AsyncWaitHandle.Close() } catch {}
+    }
+
     $script:NotifyIcon.Visible = $false
-    $script:NotifyIcon.Dispose()
-    $script:HttpClient.Dispose()
+    try { $script:NotifyIcon.Dispose() } catch {}
+    try { $script:HttpClient.Dispose()  } catch {}
 })
 
 $script:Form.Add_Shown({
