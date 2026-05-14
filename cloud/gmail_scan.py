@@ -19,6 +19,70 @@ import re
 from email.header import decode_header as _decode_header
 from urllib.parse import urlparse, urlunparse
 
+# ---------------------------------------------------------------------------
+# Location filtering
+# ---------------------------------------------------------------------------
+# Maps a normalised location string to a list of substrings that count as
+# a match.  Add more entries here if you ever search in other countries.
+_LOCATION_ALIASES: dict[str, list[str]] = {
+    "united arab emirates": [
+        "united arab emirates", "uae", "u.a.e",
+        "dubai", "abu dhabi", "sharjah", "ajman",
+        "ras al khaimah", "fujairah", "umm al quwain", "al ain",
+        "rak", "dxb",
+    ],
+    "saudi arabia": [
+        "saudi arabia", "ksa", "k.s.a",
+        "riyadh", "jeddah", "dammam", "mecca", "medina",
+        "makkah", "madinah",
+    ],
+    "egypt": ["egypt", "cairo", "alexandria", "giza"],
+    "kuwait": ["kuwait", "kuwait city"],
+    "bahrain": ["bahrain", "manama"],
+    "qatar": ["qatar", "doha"],
+    "oman": ["oman", "muscat"],
+    "jordan": ["jordan", "amman"],
+}
+
+
+def _normalise(text: str) -> str:
+    return text.strip().lower()
+
+
+def _get_aliases(location: str) -> list[str]:
+    """Return the alias list for the given location string.
+
+    Falls back to [normalised location string] so at minimum we do an
+    exact-substring match even for unknown countries.
+    """
+    key = _normalise(location)
+    # Direct key lookup first
+    if key in _LOCATION_ALIASES:
+        return _LOCATION_ALIASES[key]
+    # Partial: does the key contain a known entry?
+    for known_key, aliases in _LOCATION_ALIASES.items():
+        if known_key in key or key in known_key:
+            return aliases
+    return [key]
+
+
+def _job_location_matches(job_location: str, filter_location: str) -> bool:
+    """Return True if job_location is consistent with filter_location.
+
+    Rules:
+    - Empty job location  -> ACCEPT (we can't reject what we don't know)
+    - job location contains any alias of filter_location -> ACCEPT
+    - Otherwise -> REJECT
+    """
+    loc = _normalise(job_location)
+    if not loc:
+        return True  # unknown location — let it through, enricher will judge
+
+    for alias in _get_aliases(filter_location):
+        if alias in loc:
+            return True
+    return False
+
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
 
@@ -328,11 +392,18 @@ def _get_plaintext_body(msg: email.message.Message) -> str:
 def scan_gmail(
     email_address: str,
     app_password: str,
+    location: str = "",
     max_emails: int = 100,
 ) -> list[dict]:
     """
     Connect to Gmail via IMAP SSL, find all UNREAD job alert emails from
     known senders, parse them into job dicts, mark each as read.
+
+    If ``location`` is provided (e.g. "United Arab Emirates"), any job whose
+    Location field does NOT match that location (or its city aliases) is
+    silently dropped before being returned.  Jobs with an empty location
+    field are kept — we can't filter what we don't know.
+
     Returns [] if credentials are missing or on any error.
     """
     if not email_address or not app_password:
@@ -375,7 +446,22 @@ def scan_gmail(
                     continue
 
                 parsed = parser(body)
-                print(f"[Gmail] '{subject}' → {len(parsed)} job(s)")
+
+                # --- Location filter ---
+                if location:
+                    before = len(parsed)
+                    parsed = [
+                        j for j in parsed
+                        if _job_location_matches(j.get("Location", ""), location)
+                    ]
+                    dropped = before - len(parsed)
+                    if dropped:
+                        print(
+                            f"[Gmail] '{subject}' — dropped {dropped} job(s) "
+                            f"outside '{location}' (location filter)"
+                        )
+
+                print(f"[Gmail] '{subject}' -> {len(parsed)} job(s) kept")
                 all_jobs.extend(parsed)
 
                 # Mark read regardless — prevents infinite reprocessing

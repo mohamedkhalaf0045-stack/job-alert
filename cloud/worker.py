@@ -261,6 +261,20 @@ def main() -> None:
                     bing_key=bing_key,
                 )
                 if web_jobs:
+                    # Web search embeds location in the query but results can
+                    # still include jobs from neighbouring countries.  Filter
+                    # the same way we filter Gmail.
+                    before = len(web_jobs)
+                    web_jobs = [
+                        j for j in web_jobs
+                        if gmail_scan._job_location_matches(
+                            j.get("Location", ""), location
+                        )
+                    ]
+                    dropped = before - len(web_jobs)
+                    if dropped:
+                        _log(f"WebSearch '{keyword}': dropped {dropped} job(s) outside '{location}'")
+                if web_jobs:
                     summary = db.sync_jobs(supabase_url, supabase_key, web_jobs, source="Web")
                     _log(
                         f"WebSearch '{keyword}': "
@@ -274,7 +288,11 @@ def main() -> None:
     # --- Gmail job alert emails ---
     if search_gmail:
         try:
-            gm_jobs = gmail_scan.scan_gmail(gmail_email, gmail_password)
+            # Pass the active location so jobs from other countries are dropped
+            # before they ever reach Supabase or Telegram.
+            gm_jobs = gmail_scan.scan_gmail(
+                gmail_email, gmail_password, location=location
+            )
             if gm_jobs:
                 by_source: dict[str, list] = {}
                 for job in gm_jobs:
