@@ -25,11 +25,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _updateUrlCtrl   = TextEditingController();
   final _updateVerCtrl   = TextEditingController();
   final _updateCodeCtrl  = TextEditingController();
+  final _gmailEmailCtrl  = TextEditingController();
+  final _gmailPassCtrl   = TextEditingController();
   String _currentVersion = '';
 
   bool _searchLinkedIn = true;
   bool _searchIndeed   = true;
+  bool _searchGmail    = false;
   bool _showCookie     = false;
+  bool _showGmailPass  = false;
   bool _loading        = true;
   bool _saving         = false;
 
@@ -53,6 +57,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _updateUrlCtrl.dispose();
     _updateVerCtrl.dispose();
     _updateCodeCtrl.dispose();
+    _gmailEmailCtrl.dispose();
+    _gmailPassCtrl.dispose();
     super.dispose();
   }
 
@@ -77,6 +83,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _timezoneCtrl.text   = s.timezone;
           _searchLinkedIn      = s.searchLinkedIn;
           _searchIndeed        = s.searchIndeed;
+          _searchGmail         = s.searchGmail;
+          _gmailEmailCtrl.text = s.gmailEmail;
+          _gmailPassCtrl.text  = s.gmailAppPassword;
           _updateUrlCtrl.text  = url;
           _updateVerCtrl.text  = ver;
           _updateCodeCtrl.text = code;
@@ -100,19 +109,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .toList();
 
     final settings = AppSettings(
-      keywords:        keywords,
-      location:        _locationCtrl.text.trim(),
-      maxHours:        int.tryParse(_maxHoursCtrl.text.trim()) ?? 24,
-      searchLinkedIn:  _searchLinkedIn,
-      searchIndeed:    _searchIndeed,
-      excludeKeywords: _excludeCtrl.text.trim(),
-      linkedInCookie:  _cookieCtrl.text.trim(),
-      userProfile:     _profileCtrl.text.trim(),
-      minAiScore:      int.tryParse(_minScoreCtrl.text.trim()) ?? 4,
-      ollamaUrl:       _ollamaCtrl.text.trim(),
-      timezone:        _timezoneCtrl.text.trim().isEmpty
-                           ? AppSettings.deviceTimezone()
-                           : _timezoneCtrl.text.trim(),
+      keywords:           keywords,
+      location:           _locationCtrl.text.trim(),
+      maxHours:           int.tryParse(_maxHoursCtrl.text.trim()) ?? 24,
+      searchLinkedIn:     _searchLinkedIn,
+      searchIndeed:       _searchIndeed,
+      excludeKeywords:    _excludeCtrl.text.trim(),
+      linkedInCookie:     _cookieCtrl.text.trim(),
+      userProfile:        _profileCtrl.text.trim(),
+      minAiScore:         int.tryParse(_minScoreCtrl.text.trim()) ?? 4,
+      ollamaUrl:          _ollamaCtrl.text.trim(),
+      timezone:           _timezoneCtrl.text.trim().isEmpty
+                              ? AppSettings.deviceTimezone()
+                              : _timezoneCtrl.text.trim(),
+      searchGmail:        _searchGmail,
+      gmailEmail:         _gmailEmailCtrl.text.trim(),
+      gmailAppPassword:   _gmailPassCtrl.text.trim(),
     );
 
     final results = await Future.wait([
@@ -248,6 +260,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
             maxLines: _showCookie ? 3 : 1,
           ),
           const SizedBox(height: 24),
+          _Section('Email Alerts'),
+          SwitchListTile(
+            title: const Text('Search Gmail for job alerts'),
+            value: _searchGmail,
+            onChanged: (v) => setState(() => _searchGmail = v),
+          ),
+          if (_searchGmail) ...[
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _gmailEmailCtrl,
+              enabled: _searchGmail,
+              decoration: const InputDecoration(
+                labelText: 'Gmail address',
+                hintText: 'your.email@gmail.com',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _gmailPassCtrl,
+              enabled: _searchGmail,
+              obscureText: !_showGmailPass,
+              decoration: InputDecoration(
+                labelText: 'Gmail app password',
+                helperText: 'Get app password: myaccount.google.com/apppasswords (requires 2FA)',
+                suffixIcon: IconButton(
+                  icon: Icon(_showGmailPass ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _showGmailPass = !_showGmailPass),
+                ),
+              ),
+              maxLines: _showGmailPass ? 2 : 1,
+            ),
+          ],
+          const SizedBox(height: 24),
           _Section('AI Enrichment (Ollama)'),
           TextFormField(
             controller: _profileCtrl,
@@ -373,13 +418,23 @@ class _Section extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        title,
-        style: Theme.of(context)
-            .textTheme
-            .titleSmall
-            ?.copyWith(color: Theme.of(context).colorScheme.primary),
+      padding: const EdgeInsets.only(bottom: 12, top: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          title,
+          style: Theme.of(context)
+              .textTheme
+              .titleSmall
+              ?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+        ),
       ),
     );
   }

@@ -10,6 +10,9 @@ class AppSettings {
   final int minAiScore;
   final String ollamaUrl;
   final String timezone;
+  final bool searchGmail;
+  final String gmailEmail;
+  final String gmailAppPassword;
 
   const AppSettings({
     required this.keywords,
@@ -23,6 +26,9 @@ class AppSettings {
     required this.minAiScore,
     required this.ollamaUrl,
     required this.timezone,
+    required this.searchGmail,
+    required this.gmailEmail,
+    required this.gmailAppPassword,
   });
 
   factory AppSettings.defaults() => AppSettings(
@@ -37,6 +43,9 @@ class AppSettings {
         minAiScore: 4,
         ollamaUrl: 'http://localhost:11434',
         timezone: deviceTimezone(),
+        searchGmail: false,
+        gmailEmail: '',
+        gmailAppPassword: '',
       );
 
   static String deviceTimezone() {
@@ -63,6 +72,9 @@ class AppSettings {
         minAiScore: int.tryParse(map['llm_min_score'] ?? '') ?? 4,
         ollamaUrl: map['ollama_url'] ?? 'http://localhost:11434',
         timezone: map['timezone']?.isNotEmpty == true ? map['timezone']! : deviceTimezone(),
+        searchGmail: (map['search_gmail'] ?? 'false') != 'false',
+        gmailEmail: map['gmail_email'] ?? '',
+        gmailAppPassword: map['gmail_app_password'] ?? '',
       );
 
   Map<String, String> toMap() => {
@@ -77,6 +89,9 @@ class AppSettings {
         'llm_min_score': minAiScore.toString(),
         'ollama_url': ollamaUrl,
         'timezone': timezone,
+        'search_gmail': searchGmail.toString(),
+        'gmail_email': gmailEmail,
+        'gmail_app_password': gmailAppPassword,
       };
 
   /// Parses the stored timezone string and returns its UTC offset in hours.

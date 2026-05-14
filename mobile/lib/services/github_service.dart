@@ -18,7 +18,17 @@ class GitHubService {
       headers: _headers,
     );
     if (runsRes.statusCode != 200) {
-      return const CloudStatus(lampColor: 'grey', lastRunTime: 'API error');
+      String errorMsg = 'API error';
+      if (Config.githubToken.isEmpty) {
+        errorMsg = 'No GitHub token configured';
+      } else if (runsRes.statusCode == 401 || runsRes.statusCode == 403) {
+        errorMsg = 'GitHub token invalid';
+      } else if (runsRes.statusCode >= 500) {
+        errorMsg = 'GitHub service error';
+      } else if (runsRes.statusCode == 404) {
+        errorMsg = 'Repo not found';
+      }
+      return CloudStatus(lampColor: 'grey', lastRunTime: errorMsg);
     }
 
     final runsData = jsonDecode(runsRes.body) as Map<String, dynamic>;

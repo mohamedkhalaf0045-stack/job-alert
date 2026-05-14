@@ -1622,13 +1622,17 @@ function New-Card {
         param($s, $ev)
         $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(210, 212, 216), 1)
         $ev.Graphics.DrawRectangle($pen, 0, 0, $s.Width - 1, $s.Height - 1)
+        $shadowPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(230, 230, 230), 2)
+        $ev.Graphics.DrawLine($shadowPen, 1, $s.Height, $s.Width, $s.Height)
+        $ev.Graphics.DrawLine($shadowPen, $s.Width, 1, $s.Width, $s.Height)
+        $shadowPen.Dispose()
         $pen.Dispose()
     })
     if ($Title) {
         $lbl           = New-Object System.Windows.Forms.Label
         $lbl.Text      = $Title
         $lbl.Font      = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
-        $lbl.ForeColor = [System.Drawing.Color]::FromArgb(100, 104, 110)
+        $lbl.ForeColor = [System.Drawing.Color]::FromArgb(0, 102, 204)
         $lbl.Location  = New-Object System.Drawing.Point(12, 9)
         $lbl.AutoSize  = $true
         [void]$p.Controls.Add($lbl)
@@ -1689,6 +1693,8 @@ function New-Tb {
     $t.Size         = New-Object System.Drawing.Size($W, $H)
     $t.Font         = New-Object System.Drawing.Font("Segoe UI", 9)
     $t.BorderStyle  = "FixedSingle"
+    $t.ForeColor    = [System.Drawing.Color]::FromArgb(32, 33, 36)
+    $t.BackColor    = [System.Drawing.Color]::White
     return $t
 }
 

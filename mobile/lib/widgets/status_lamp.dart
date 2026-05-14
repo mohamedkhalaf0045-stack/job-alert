@@ -46,16 +46,16 @@ class _StatusLampState extends State<StatusLamp>
       builder: (_, __) => Opacity(
         opacity: isAnimated ? _anim.value : 1.0,
         child: Container(
-          width: 64,
-          height: 64,
+          width: 96,
+          height: 96,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: _mainColor,
             boxShadow: [
               BoxShadow(
                 color: _mainColor.withValues(alpha: 0.5),
-                blurRadius: 16,
-                spreadRadius: 4,
+                blurRadius: 24,
+                spreadRadius: 6,
               ),
             ],
           ),

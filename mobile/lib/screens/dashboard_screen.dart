@@ -229,13 +229,23 @@ class _CloudStatsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isError = status.lastRunTime.contains('error') ||
+        status.lastRunTime.contains('Error') ||
+        status.lastRunTime.contains('No') ||
+        status.lastRunTime.contains('invalid');
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _Stat(label: 'Last run', value: status.lastRunTime),
+            _Stat(
+              label: 'Status',
+              value: status.lastRunTime,
+              valueColor: isError ? Colors.red : null,
+              isError: isError,
+            ),
             _Stat(label: 'Total jobs', value: '${status.jobCount}'),
             _Stat(
               label: 'Schedule',
@@ -260,7 +270,7 @@ class _JobCountsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
@@ -283,19 +293,28 @@ class _CountChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text('$count',
-            style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: color)),
-        Text(label,
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: Colors.grey)),
-      ],
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 1),
+      ),
+      child: Column(
+        children: [
+          Text('$count',
+              style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: color)),
+          const SizedBox(height: 4),
+          Text(label,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelSmall
+                  ?.copyWith(color: Colors.grey)),
+        ],
+      ),
     );
   }
 }
@@ -306,10 +325,25 @@ class _Stat extends StatelessWidget {
   final String label;
   final String value;
   final Color? valueColor;
-  const _Stat({required this.label, required this.value, this.valueColor});
+  final bool isError;
+  const _Stat({
+    required this.label,
+    required this.value,
+    this.valueColor,
+    this.isError = false,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final valueText = Text(
+      value,
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.bold, color: valueColor),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+    );
+
     return Column(
       children: [
         Text(label,
@@ -318,9 +352,12 @@ class _Stat extends StatelessWidget {
                 .bodySmall
                 ?.copyWith(color: Colors.grey)),
         const SizedBox(height: 4),
-        Text(value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.bold, color: valueColor)),
+        isError
+            ? Tooltip(
+                message: value,
+                child: valueText,
+              )
+            : valueText,
       ],
     );
   }
