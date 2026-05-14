@@ -31,6 +31,17 @@ def _build_query(keyword: str, location: str) -> str:
     return f'"{keyword}" jobs "{location}"'
 
 
+def _freshness_params(max_hours: int) -> dict:
+    """Map max_hours to provider-neutral labels used by callers."""
+    if max_hours <= 24:
+        return {"tavily_days": 1,   "brave": "pd",    "google": "d1",    "bing": "Day"}
+    if max_hours <= 168:
+        return {"tavily_days": 7,   "brave": "pw",    "google": "w1",    "bing": "Week"}
+    if max_hours <= 720:
+        return {"tavily_days": 30,  "brave": "pm",    "google": "m1",    "bing": "Month"}
+    return     {"tavily_days": 365, "brave": "py",    "google": "y1",    "bing": "Month"}
+
+
 # ── result → job dict ─────────────────────────────────────────────────────────
 
 _TITLE_SEPARATORS = re.compile(r"\s*[-|–—·•@]\s*")
@@ -103,7 +114,7 @@ def _dedupe(jobs: list[dict]) -> list[dict]:
 
 # ── provider implementations ─────────────────────────────────────────────────
 
-def _tavily(query: str, keyword: str, api_key: str) -> list[dict] | None:
+def _tavily(query: str, keyword: str, api_key: str, fp: dict) -> list[dict] | None:
     """Returns list on success, None on rate-limit/error (try next provider)."""
     if not api_key:
         return None
@@ -116,6 +127,7 @@ def _tavily(query: str, keyword: str, api_key: str) -> list[dict] | None:
                 "search_depth": "basic",
                 "max_results":  15,
                 "include_answer": False,
+                "days":         fp["tavily_days"],
             },
             timeout=20,
         )
@@ -137,13 +149,13 @@ def _tavily(query: str, keyword: str, api_key: str) -> list[dict] | None:
         return None
 
 
-def _brave(query: str, keyword: str, api_key: str) -> list[dict] | None:
+def _brave(query: str, keyword: str, api_key: str, fp: dict) -> list[dict] | None:
     if not api_key:
         return None
     try:
         resp = requests.get(
             "https://api.search.brave.com/res/v1/web/search",
-            params={"q": query, "count": 20, "search_lang": "en"},
+            params={"q": query, "count": 20, "search_lang": "en", "freshness": fp["brave"]},
             headers={
                 "Accept": "application/json",
                 "Accept-Encoding": "gzip",
@@ -169,13 +181,13 @@ def _brave(query: str, keyword: str, api_key: str) -> list[dict] | None:
         return None
 
 
-def _google(query: str, keyword: str, api_key: str, cx: str) -> list[dict] | None:
+def _google(query: str, keyword: str, api_key: str, cx: str, fp: dict) -> list[dict] | None:
     if not api_key or not cx:
         return None
     try:
         resp = requests.get(
             "https://www.googleapis.com/customsearch/v1",
-            params={"key": api_key, "cx": cx, "q": query, "num": 10},
+            params={"key": api_key, "cx": cx, "q": query, "num": 10, "dateRestrict": fp["google"]},
             timeout=20,
         )
         if resp.status_code in (429, 403):
@@ -196,13 +208,13 @@ def _google(query: str, keyword: str, api_key: str, cx: str) -> list[dict] | Non
         return None
 
 
-def _bing(query: str, keyword: str, api_key: str) -> list[dict] | None:
+def _bing(query: str, keyword: str, api_key: str, fp: dict) -> list[dict] | None:
     if not api_key:
         return None
     try:
         resp = requests.get(
             "https://api.bing.microsoft.com/v7.0/search",
-            params={"q": query, "count": 20, "mkt": "en-AE"},
+            params={"q": query, "count": 20, "mkt": "en-AE", "freshness": fp["bing"]},
             headers={"Ocp-Apim-Subscription-Key": api_key},
             timeout=20,
         )
@@ -237,18 +249,22 @@ def search_jobs(
     google_key: str = "",
     google_cx: str = "",
     bing_key: str = "",
+    max_hours: int = 24,
 ) -> list[dict]:
     """
     Try each search provider in order: Tavily → Brave → Google → Bing.
+    max_hours is converted to the native freshness/date parameter of each API
+    so only recently-posted jobs are returned.
     Returns the first successful non-empty result set, or [] if all fail/are unconfigured.
     """
     query = _build_query(keyword, location)
+    fp    = _freshness_params(max_hours)
 
     providers = [
-        ("Tavily", lambda: _tavily(query, keyword, tavily_key)),
-        ("Brave",  lambda: _brave(query, keyword, brave_key)),
-        ("Google", lambda: _google(query, keyword, google_key, google_cx)),
-        ("Bing",   lambda: _bing(query, keyword, bing_key)),
+        ("Tavily", lambda: _tavily(query, keyword, tavily_key, fp)),
+        ("Brave",  lambda: _brave(query, keyword, brave_key,   fp)),
+        ("Google", lambda: _google(query, keyword, google_key, google_cx, fp)),
+        ("Bing",   lambda: _bing(query, keyword, bing_key,     fp)),
     ]
 
     for name, fn in providers:
@@ -256,7 +272,7 @@ def search_jobs(
         if result is None:
             continue          # rate-limited or no key — try next
         if result:
-            print(f"[WebSearch] {name} returned {len(result)} result(s) for '{keyword}'")
+            print(f"[WebSearch] {name} returned {len(result)} result(s) for '{keyword}' (max {max_hours}h)")
             return result
         # empty list from a working provider — still try next for more coverage
         print(f"[WebSearch] {name} returned 0 results for '{keyword}' — trying next")

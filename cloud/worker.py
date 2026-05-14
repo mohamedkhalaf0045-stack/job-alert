@@ -277,6 +277,7 @@ def main() -> None:
                     google_key=google_key,
                     google_cx=google_cx,
                     bing_key=bing_key,
+                    max_hours=max_hours,
                 )
                 if web_jobs:
                     web_jobs, web_dropped = _loc_filter(web_jobs)
