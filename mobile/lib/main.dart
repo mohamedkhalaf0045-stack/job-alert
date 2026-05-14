@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/jobs_screen.dart';
 import 'screens/settings_screen.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +37,16 @@ class _ShellState extends State<_Shell> {
   int _idx = 0;
 
   static const _titles = ['Cloud', 'Jobs', 'Settings'];
+
+  @override
+  void initState() {
+    super.initState();
+    NotificationService.init(
+      onUpdateTap: () {
+        if (mounted) setState(() => _idx = 0);
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/cloud_status.dart';
 import '../services/github_service.dart';
+import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/update_service.dart';
 import '../widgets/status_lamp.dart';
@@ -34,9 +35,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _countsFuture = SupabaseService.getJobCounts();
       });
 
+  bool _updateNotified = false;
+
   Future<void> _checkUpdate() async {
     final info = await UpdateService.checkForUpdate();
-    if (mounted) setState(() => _updateInfo = info);
+    if (mounted) {
+      setState(() => _updateInfo = info);
+      if (info != null && !_updateNotified) {
+        _updateNotified = true;
+        NotificationService.showUpdateAvailable(info.versionName);
+      }
+    }
   }
 
   Future<void> _doUpdate() async {
