@@ -106,6 +106,9 @@ function Save-Settings {
         UserProfile      = $script:UserProfileBox.Text.Trim()
         MinAiScore       = [int]$script:MinAiScoreBox.Value
         OllamaUrl        = $script:OllamaUrlBox.Text.Trim()
+        SearchGmail      = $script:GmailCheckBox.Checked
+        GmailEmail       = $script:GmailEmailBox.Text.Trim()
+        GmailPassword    = $script:GmailPasswordBox.Text.Trim()
     }
 
     $settings | ConvertTo-Json | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
@@ -147,6 +150,9 @@ function Sync-SettingsToSupabase {
         [ordered]@{ key = "setting_exclude_keywords";   value = $script:ExcludeBox.Text.Trim() }
         [ordered]@{ key = "setting_telegram_bot_token"; value = $script:TelegramTokenBox.Text.Trim() }
         [ordered]@{ key = "setting_telegram_chat_id";   value = $script:TelegramChatIdBox.Text.Trim() }
+        [ordered]@{ key = "setting_search_gmail";       value = if ($script:GmailCheckBox.Checked) { "true" } else { "false" } }
+        [ordered]@{ key = "setting_gmail_email";        value = $script:GmailEmailBox.Text.Trim() }
+        [ordered]@{ key = "setting_gmail_app_password"; value = $script:GmailPasswordBox.Text.Trim() }
     )
 
     $headers = @{
@@ -1689,9 +1695,9 @@ function New-Tb {
 # ── Form ──────────────────────────────────────────────────────────────────────
 $script:Form               = New-Object System.Windows.Forms.Form
 $script:Form.Text          = "LinkedIn UAE Job Alert"
-$script:Form.ClientSize    = New-Object System.Drawing.Size(1160, 910)
+$script:Form.ClientSize    = New-Object System.Drawing.Size(1160, 1030)
 $script:Form.StartPosition = "CenterScreen"
-$script:Form.MinimumSize   = New-Object System.Drawing.Size(1160, 950)
+$script:Form.MinimumSize   = New-Object System.Drawing.Size(1160, 1070)
 $script:Form.BackColor     = $clrBg
 $script:Form.Font          = $fntUi
 
@@ -1789,7 +1795,7 @@ $script:IndeedCheckBox.Checked    = [bool](Get-SettingValue -SettingsObject $sav
 [void]$searchCard.Controls.Add($script:IndeedCheckBox)
 
 # ── Automation card ───────────────────────────────────────────────────────────
-$autoCard = New-Card -X 573 -Y 60 -W 577 -H 310 -Title "AUTOMATION"
+$autoCard = New-Card -X 573 -Y 60 -W 577 -H 430 -Title "AUTOMATION"
 
 $startButton    = New-Btn "Start"       12  34  100 34 "green"
 $stopButton     = New-Btn "Stop"       118  34  100 34 "red"
@@ -1882,8 +1888,39 @@ $script:CvSkillsBox.Text         = "(skills will appear here after analysis)"
 $script:CvSkillsBox.ForeColor    = [System.Drawing.Color]::Gray
 [void]$autoCard.Controls.Add($script:CvSkillsBox)
 
+# Gmail alerts checkbox
+$script:GmailCheckBox               = New-Object System.Windows.Forms.CheckBox
+$script:GmailCheckBox.Text          = "Search Gmail for job alerts"
+$script:GmailCheckBox.Location      = New-Object System.Drawing.Point(12, 310)
+$script:GmailCheckBox.Size          = New-Object System.Drawing.Size(290, 24)
+$script:GmailCheckBox.Font          = $fntUi
+$script:GmailCheckBox.Checked       = [bool](Get-SettingValue -SettingsObject $savedSettings -Name "SearchGmail" -DefaultValue $false)
+$script:GmailCheckBox.Add_CheckedChanged({
+    $script:GmailEmailBox.Enabled = $script:GmailCheckBox.Checked
+    $script:GmailPasswordBox.Enabled = $script:GmailCheckBox.Checked
+})
+[void]$autoCard.Controls.Add($script:GmailCheckBox)
+
+[void]$autoCard.Controls.Add((New-Lbl "Gmail Email" 12 340))
+$script:GmailEmailBox           = New-Tb -X 12 -Y 358 -W 250 -H 26
+$script:GmailEmailBox.Text      = [string](Get-SettingValue -SettingsObject $savedSettings -Name "GmailEmail" -DefaultValue "")
+$script:GmailEmailBox.Enabled   = $script:GmailCheckBox.Checked
+[void]$autoCard.Controls.Add($script:GmailEmailBox)
+
+[void]$autoCard.Controls.Add((New-Lbl "Gmail App Password" 280 340))
+$script:GmailPasswordBox           = New-Tb -X 280 -Y 358 -W 285 -H 26
+$script:GmailPasswordBox.Text      = [string](Get-SettingValue -SettingsObject $savedSettings -Name "GmailPassword" -DefaultValue "")
+$script:GmailPasswordBox.UseSystemPasswordChar = $true
+$script:GmailPasswordBox.Enabled   = $script:GmailCheckBox.Checked
+[void]$autoCard.Controls.Add($script:GmailPasswordBox)
+
+$gmailInfoLbl          = New-Lbl "Get app password: myaccount.google.com/apppasswords (requires 2FA)" 12 393
+$gmailInfoLbl.AutoSize = $false
+$gmailInfoLbl.Size     = New-Object System.Drawing.Size(553, 18)
+[void]$autoCard.Controls.Add($gmailInfoLbl)
+
 # ── LinkedIn Session card ─────────────────────────────────────────────────────
-$cookieCard = New-Card -X 10 -Y 378 -W 555 -H 116 -Title "LINKEDIN SESSION"
+$cookieCard = New-Card -X 10 -Y 498 -W 555 -H 116 -Title "LINKEDIN SESSION"
 
 $script:CookieBox      = New-Tb -X 12 -Y 32 -W 395 -H 26
 $script:CookieBox.Text = [string](Get-SettingValue -SettingsObject $savedSettings -Name "LinkedInCookie" -DefaultValue "")
@@ -1898,7 +1935,7 @@ $cookieHintLbl.Size     = New-Object System.Drawing.Size(530, 18)
 [void]$cookieCard.Controls.Add($cookieHintLbl)
 
 # ── Telegram Alerts card ──────────────────────────────────────────────────────
-$telegramCard = New-Card -X 573 -Y 378 -W 577 -H 116 -Title "TELEGRAM ALERTS"
+$telegramCard = New-Card -X 573 -Y 498 -W 577 -H 116 -Title "TELEGRAM ALERTS"
 
 [void]$telegramCard.Controls.Add((New-Lbl "Bot token" 12 31))
 $script:TelegramTokenBox      = New-Tb -X 12 -Y 49 -W 262 -H 26
@@ -1922,7 +1959,7 @@ $tgHintLbl.Size     = New-Object System.Drawing.Size(550, 18)
 
 # ── Status bar ────────────────────────────────────────────────────────────────
 $statusPanel           = New-Object System.Windows.Forms.Panel
-$statusPanel.Location  = New-Object System.Drawing.Point(10, 502)
+$statusPanel.Location  = New-Object System.Drawing.Point(10, 622)
 $statusPanel.Size      = New-Object System.Drawing.Size(1140, 30)
 $statusPanel.BackColor = $clrBg
 
@@ -2201,7 +2238,7 @@ function Update-CvStatusLabel {
 }
 
 # ── Job Listings card ─────────────────────────────────────────────────────────
-$jobsCard = New-Card -X 10 -Y 540 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
+$jobsCard = New-Card -X 10 -Y 660 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
 
 $exportCsvButton = New-Btn "Export CSV" 990 4 120 22 "outline"
 $exportCsvButton.Font = [System.Drawing.Font]::new("Segoe UI", 8)
@@ -2236,7 +2273,7 @@ $script:JobsList.ContextMenuStrip = $jobContextMenu
 [void]$jobsCard.Controls.Add($script:JobsList)
 
 # ── Activity Log card ─────────────────────────────────────────────────────────
-$logCard = New-Card -X 10 -Y 792 -W 1140 -H 110 -Title "ACTIVITY LOG"
+$logCard = New-Card -X 10 -Y 912 -W 1140 -H 110 -Title "ACTIVITY LOG"
 
 $script:LogBox              = New-Object System.Windows.Forms.TextBox
 $script:LogBox.Location     = New-Object System.Drawing.Point(12, 30)
