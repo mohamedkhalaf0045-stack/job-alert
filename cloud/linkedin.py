@@ -233,9 +233,11 @@ def scrape_linkedin(
     cookie_header: str = "",
     hide_applied: bool = False,
     max_pages: int = 2,
+    max_hours: int = 72,
 ) -> list[dict]:
     all_jobs: list[dict] = []
     seen_ids: set[str] = set()
+    skipped_old = 0
 
     for page_idx in range(max_pages):
         start = page_idx * 25
@@ -255,10 +257,16 @@ def scrape_linkedin(
                 continue
             if hide_applied and job["IsApplied"]:
                 continue
+            age = get_posted_age_hours(job)
+            if age > max_hours:
+                skipped_old += 1
+                continue
             seen_ids.add(job["Id"])
             all_jobs.append(job)
 
         if page_idx < max_pages - 1:
             time.sleep(1.5)  # pace requests to stay under LinkedIn rate limit
 
+    if skipped_old:
+        print(f"[LinkedIn] '{keyword}': skipped {skipped_old} job(s) older than {max_hours}h")
     return all_jobs

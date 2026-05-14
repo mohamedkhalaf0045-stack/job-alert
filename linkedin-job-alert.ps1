@@ -123,11 +123,13 @@ function Sync-SettingsToSupabase {
     }
 
     $maxHours = switch ($script:TimeFilterBox.Text) {
-        "Last 24h"    { "24" }
-        "Last 3 days" { "72" }
-        "Last week"   { "168" }
-        "Custom"      { [string]$script:CustomHoursBox.Value }
-        default       { "24" }
+        "Last 1 hour"   { "1" }
+        "Last 2 hours"  { "2" }
+        "Last 24 hours" { "24" }
+        "Last week"     { "168" }
+        "Last month"    { "720" }
+        "Custom"        { [string]$script:CustomHoursBox.Value }
+        default         { "24" }
     }
     $keywords = ($script:KeywordsBox.Lines | Where-Object { $_ -ne "" }) -join ","
 
@@ -1683,9 +1685,9 @@ function New-Tb {
 # ── Form ──────────────────────────────────────────────────────────────────────
 $script:Form               = New-Object System.Windows.Forms.Form
 $script:Form.Text          = "LinkedIn UAE Job Alert"
-$script:Form.ClientSize    = New-Object System.Drawing.Size(1160, 848)
+$script:Form.ClientSize    = New-Object System.Drawing.Size(1160, 910)
 $script:Form.StartPosition = "CenterScreen"
-$script:Form.MinimumSize   = New-Object System.Drawing.Size(1160, 888)
+$script:Form.MinimumSize   = New-Object System.Drawing.Size(1160, 950)
 $script:Form.BackColor     = $clrBg
 $script:Form.Font          = $fntUi
 
@@ -1783,7 +1785,7 @@ $script:IndeedCheckBox.Checked    = [bool](Get-SettingValue -SettingsObject $sav
 [void]$searchCard.Controls.Add($script:IndeedCheckBox)
 
 # ── Automation card ───────────────────────────────────────────────────────────
-$autoCard = New-Card -X 573 -Y 60 -W 577 -H 248 -Title "AUTOMATION"
+$autoCard = New-Card -X 573 -Y 60 -W 577 -H 310 -Title "AUTOMATION"
 
 $startButton    = New-Btn "Start"       12  34  100 34 "green"
 $stopButton     = New-Btn "Stop"       118  34  100 34 "red"
@@ -1844,16 +1846,40 @@ $script:MinAiScoreBox.Font     = $fntUi
 $script:MinAiScoreBox.Value    = [decimal](Get-SettingValue -SettingsObject $savedSettings -Name "MinAiScore" -DefaultValue 4)
 [void]$autoCard.Controls.Add($script:MinAiScoreBox)
 
-[void]$autoCard.Controls.Add((New-Lbl "CV / Profile  (paste CV path, LinkedIn URL, or type a description)" 12 186))
-$script:UserProfileBox           = New-Tb -X 12 -Y 202 -W 400 -H 24
+[void]$autoCard.Controls.Add((New-Lbl "CV / Profile  (paste path, LinkedIn URL, or type a description)" 12 186))
+$script:UserProfileBox           = New-Tb -X 12 -Y 202 -W 322 -H 24
 $script:UserProfileBox.Text      = [string](Get-SettingValue -SettingsObject $savedSettings -Name "UserProfile" -DefaultValue "")
 [void]$autoCard.Controls.Add($script:UserProfileBox)
 
-$browseCvButton = New-Btn "Browse CV PDF..." 420 201 148 26 "outline"
+$browseCvButton  = New-Btn "Browse PDF..."  338 201 108 26 "outline"
+$analyzeCvButton = New-Btn "Analyze CV"     452 201 112 26 "accent"
 [void]$autoCard.Controls.Add($browseCvButton)
+[void]$autoCard.Controls.Add($analyzeCvButton)
+
+# CV status label -- updated after analysis
+$script:CvStatusLabel           = New-Object System.Windows.Forms.Label
+$script:CvStatusLabel.Location  = New-Object System.Drawing.Point(12, 234)
+$script:CvStatusLabel.Size      = New-Object System.Drawing.Size(553, 18)
+$script:CvStatusLabel.Font      = $fntUi
+$script:CvStatusLabel.Text      = "CV: not analyzed yet -- click Analyze CV to extract skills"
+$script:CvStatusLabel.ForeColor = [System.Drawing.Color]::Gray
+[void]$autoCard.Controls.Add($script:CvStatusLabel)
+
+# Skills preview box -- read-only, shows extracted skills after analysis
+$script:CvSkillsBox              = New-Object System.Windows.Forms.TextBox
+$script:CvSkillsBox.Location     = New-Object System.Drawing.Point(12, 256)
+$script:CvSkillsBox.Size         = New-Object System.Drawing.Size(553, 44)
+$script:CvSkillsBox.Multiline    = $true
+$script:CvSkillsBox.ReadOnly     = $true
+$script:CvSkillsBox.ScrollBars   = "Vertical"
+$script:CvSkillsBox.Font         = $fntUi
+$script:CvSkillsBox.BackColor    = [System.Drawing.Color]::FromArgb(245, 247, 250)
+$script:CvSkillsBox.Text         = "(skills will appear here after analysis)"
+$script:CvSkillsBox.ForeColor    = [System.Drawing.Color]::Gray
+[void]$autoCard.Controls.Add($script:CvSkillsBox)
 
 # ── LinkedIn Session card ─────────────────────────────────────────────────────
-$cookieCard = New-Card -X 10 -Y 316 -W 555 -H 116 -Title "LINKEDIN SESSION"
+$cookieCard = New-Card -X 10 -Y 378 -W 555 -H 116 -Title "LINKEDIN SESSION"
 
 $script:CookieBox      = New-Tb -X 12 -Y 32 -W 395 -H 26
 $script:CookieBox.Text = [string](Get-SettingValue -SettingsObject $savedSettings -Name "LinkedInCookie" -DefaultValue "")
@@ -1868,7 +1894,7 @@ $cookieHintLbl.Size     = New-Object System.Drawing.Size(530, 18)
 [void]$cookieCard.Controls.Add($cookieHintLbl)
 
 # ── Telegram Alerts card ──────────────────────────────────────────────────────
-$telegramCard = New-Card -X 573 -Y 316 -W 577 -H 116 -Title "TELEGRAM ALERTS"
+$telegramCard = New-Card -X 573 -Y 378 -W 577 -H 116 -Title "TELEGRAM ALERTS"
 
 [void]$telegramCard.Controls.Add((New-Lbl "Bot token" 12 31))
 $script:TelegramTokenBox      = New-Tb -X 12 -Y 49 -W 262 -H 26
@@ -1892,7 +1918,7 @@ $tgHintLbl.Size     = New-Object System.Drawing.Size(550, 18)
 
 # ── Status bar ────────────────────────────────────────────────────────────────
 $statusPanel           = New-Object System.Windows.Forms.Panel
-$statusPanel.Location  = New-Object System.Drawing.Point(10, 440)
+$statusPanel.Location  = New-Object System.Drawing.Point(10, 502)
 $statusPanel.Size      = New-Object System.Drawing.Size(1140, 30)
 $statusPanel.BackColor = $clrBg
 
@@ -2113,8 +2139,65 @@ $script:AiLampTimer.Add_Tick({ Update-AiLamp })
 $script:AiLampTimer.Start()
 Update-AiLamp   # initial paint
 
+function Update-CvStatusLabel {
+    <#
+    Reads cv_skills and cv_analyzed_at from Supabase bot_state and refreshes
+    the CV status label and skills preview TextBox in the Automation card.
+    Safe to call at any time -- all errors are swallowed.
+    #>
+    try {
+        $settings = Load-Settings
+        $sUrl = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseUrl" -DefaultValue "")
+        $sKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
+        if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) {
+            $script:CvStatusLabel.Text      = "CV: configure Supabase to enable CV analysis"
+            $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(160, 160, 160)
+            return
+        }
+        $headers = @{ "apikey" = $sKey; "Authorization" = "Bearer $sKey" }
+        $uri  = "$sUrl/rest/v1/bot_state?key=in.(cv_skills,cv_analyzed_at)&select=key,value"
+        $rows = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -ErrorAction Stop -TimeoutSec 8
+
+        $cvMap = @{}
+        foreach ($row in $rows) { $cvMap[$row.key] = $row.value }
+
+        $analyzedAt = $cvMap["cv_analyzed_at"]
+        $cvSkills   = $cvMap["cv_skills"]
+
+        if ([string]::IsNullOrWhiteSpace($analyzedAt)) {
+            $script:CvStatusLabel.Text      = "CV: not analyzed yet -- click Analyze CV to extract skills"
+            $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(160, 160, 160)
+            $script:CvSkillsBox.Text        = ""
+            return
+        }
+
+        # Count non-empty skills
+        $skillCount = if ($cvSkills) {
+            ($cvSkills.Split(",") | Where-Object { $_.Trim() }).Count
+        } else { 0 }
+
+        # Human-readable age string
+        $ageStr = "analyzed"
+        try {
+            $ts   = [datetime]::Parse($analyzedAt, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+            $ageH = [int]([datetime]::UtcNow - $ts).TotalHours
+            $ageStr = if     ($ageH -lt 1)   { "just now" }
+                      elseif ($ageH -lt 24)  { "${ageH}h ago" }
+                      elseif ($ageH -lt 48)  { "yesterday" }
+                      else                   { "$([int]($ageH/24)) days ago" }
+        } catch {}
+
+        $script:CvStatusLabel.Text      = "CV: $skillCount skills extracted  |  Analyzed $ageStr"
+        $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 160, 100)
+        $script:CvSkillsBox.Text        = if ($cvSkills) { $cvSkills } else { "" }
+    } catch {
+        $script:CvStatusLabel.Text      = "CV: could not read profile -- check Supabase settings"
+        $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(180, 60, 60)
+    }
+}
+
 # ── Job Listings card ─────────────────────────────────────────────────────────
-$jobsCard = New-Card -X 10 -Y 478 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
+$jobsCard = New-Card -X 10 -Y 540 -W 1140 -H 244 -Title "JOB LISTINGS   (green: <= 3 h, yellow: 4-24 h)"
 
 $exportCsvButton = New-Btn "Export CSV" 990 4 120 22 "outline"
 $exportCsvButton.Font = [System.Drawing.Font]::new("Segoe UI", 8)
@@ -2149,7 +2232,7 @@ $script:JobsList.ContextMenuStrip = $jobContextMenu
 [void]$jobsCard.Controls.Add($script:JobsList)
 
 # ── Activity Log card ─────────────────────────────────────────────────────────
-$logCard = New-Card -X 10 -Y 730 -W 1140 -H 110 -Title "ACTIVITY LOG"
+$logCard = New-Card -X 10 -Y 792 -W 1140 -H 110 -Title "ACTIVITY LOG"
 
 $script:LogBox              = New-Object System.Windows.Forms.TextBox
 $script:LogBox.Location     = New-Object System.Drawing.Point(12, 30)
@@ -2345,7 +2428,74 @@ $browseCvButton.Add_Click({
         $script:UserProfileBox.Text = $dlg.FileName
         Save-Settings
         Add-LogLine "CV set: $($dlg.FileName)"
+        # Auto-start CV analysis whenever a new file is chosen
+        $analyzeCvButton.PerformClick()
     }
+})
+
+$analyzeCvButton.Add_Click({
+    $cvPath = $script:UserProfileBox.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($cvPath)) {
+        Add-LogLine "ERROR: No CV path set. Click 'Browse PDF...' first."
+        return
+    }
+    if (-not $cvPath.ToLower().EndsWith(".pdf")) {
+        Add-LogLine "ERROR: CV path must be a PDF file (got: $cvPath)"
+        return
+    }
+    if (-not (Test-Path -LiteralPath $cvPath)) {
+        Add-LogLine "ERROR: CV file not found: $cvPath"
+        return
+    }
+    $analyzerPath = Join-Path $script:AppRoot "cloud\cv_analyzer.py"
+    if (-not (Test-Path -LiteralPath $analyzerPath)) {
+        Add-LogLine "ERROR: cloud\cv_analyzer.py not found at $analyzerPath"
+        return
+    }
+    $settings    = Load-Settings
+    $supabaseUrl = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseUrl" -DefaultValue "")
+    $supabaseKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
+    if ([string]::IsNullOrWhiteSpace($supabaseUrl) -or [string]::IsNullOrWhiteSpace($supabaseKey)) {
+        Add-LogLine "ERROR: SupabaseUrl / SupabaseKey not set in settings.json"
+        return
+    }
+    Add-LogLine "Analyzing CV: $(Split-Path $cvPath -Leaf) ..."
+    $script:CvStatusLabel.Text      = "CV: analyzing..."
+    $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(240, 160, 0)
+    $analyzeCvButton.Enabled        = $false
+    $script:Form.Cursor             = [System.Windows.Forms.Cursors]::WaitCursor
+
+    $script:CvAnalyzeJob = Start-Job -ScriptBlock {
+        param($analyzer, $sUrl, $sKey, $cv)
+        $env:SUPABASE_URL = $sUrl
+        $env:SUPABASE_KEY = $sKey
+        & python $analyzer --cv $cv 2>&1
+    } -ArgumentList $analyzerPath, $supabaseUrl, $supabaseKey, $cvPath
+
+    $script:CvAnalyzeTimer          = New-Object System.Windows.Forms.Timer
+    $script:CvAnalyzeTimer.Interval = 1500
+    $script:CvAnalyzeTimer.Add_Tick({
+        $state = $script:CvAnalyzeJob.State
+        $out   = Receive-Job -Job $script:CvAnalyzeJob
+        foreach ($line in ($out -split "`n")) {
+            $line = $line.Trim()
+            if ($line -match "^CV_SKILL_COUNT=\d+$") {
+                # Informational line handled by Update-CvStatusLabel — skip it
+            } elseif ($line) {
+                Add-LogLine $line
+            }
+        }
+        if ($state -in @("Completed","Failed","Stopped")) {
+            $script:CvAnalyzeTimer.Stop()
+            $script:CvAnalyzeTimer.Dispose()
+            Remove-Job -Job $script:CvAnalyzeJob -Force
+            $analyzeCvButton.Enabled = $true
+            $script:Form.Cursor      = [System.Windows.Forms.Cursors]::Default
+            Add-LogLine "CV analysis complete."
+            Update-CvStatusLabel
+        }
+    })
+    $script:CvAnalyzeTimer.Start()
 })
 
 $enrichAiButton.Add_Click({
@@ -2423,6 +2573,8 @@ $script:Form.Add_FormClosing({
     $script:WorkerCheckTimer.Stop()
     $script:TelegramPollTimer.Stop()
     $script:CloudCheckTimer.Stop()
+    if ($null -ne $script:CvAnalyzeTimer) { try { $script:CvAnalyzeTimer.Stop() } catch {} }
+    if ($null -ne $script:CvAnalyzeJob)   { try { Stop-Job -Job $script:CvAnalyzeJob; Remove-Job -Job $script:CvAnalyzeJob -Force } catch {} }
     $script:NotifyIcon.Visible = $false
     $script:NotifyIcon.Dispose()
     $script:HttpClient.Dispose()
@@ -2434,11 +2586,37 @@ $script:Form.Add_Shown({
     $script:CloudCheckTimer.Start()
     Update-WorkerLamp
     try { Update-CloudLamp } catch {}
+    # Load CV analysis status into the Automation card on startup
+    try { Update-CvStatusLabel } catch {}
     # Auto-scan on startup so jobs appear without pressing Scan Now
     try { Invoke-JobScan } catch {}
 })
 
 Update-TimeFilterUI
+
+# ── Resize anchoring ──────────────────────────────────────────────────────────
+# Controls are anchored so the window fills properly when maximised.
+# Left-column cards keep a fixed width; right-column cards grow rightward.
+# jobsCard fills all remaining vertical space; logCard stays pinned to the bottom.
+$_TL   = [System.Windows.Forms.AnchorStyles]::Top    -bor [System.Windows.Forms.AnchorStyles]::Left
+$_TLR  = [System.Windows.Forms.AnchorStyles]::Top    -bor [System.Windows.Forms.AnchorStyles]::Left  -bor [System.Windows.Forms.AnchorStyles]::Right
+$_BLR  = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left  -bor [System.Windows.Forms.AnchorStyles]::Right
+$_ALL  = [System.Windows.Forms.AnchorStyles]::Top    -bor [System.Windows.Forms.AnchorStyles]::Left  -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+$_TR   = [System.Windows.Forms.AnchorStyles]::Top    -bor [System.Windows.Forms.AnchorStyles]::Right
+
+$headerPanel.Anchor  = $_TLR   # full-width header
+$searchCard.Anchor   = $_TL    # left column — fixed width
+$autoCard.Anchor     = $_TLR   # right column — grows with window
+$cookieCard.Anchor   = $_TL    # left column — fixed width
+$telegramCard.Anchor = $_TLR   # right column — grows with window
+$statusPanel.Anchor  = $_TLR   # status bar — full width, stays at fixed Y
+$jobsCard.Anchor     = $_ALL   # job list — grows to fill all available space
+$logCard.Anchor      = $_BLR   # activity log — pinned to bottom, full width
+
+# Inner controls that must resize with their parent cards
+$script:JobsList.Anchor  = $_ALL   # job table fills the jobs card
+$script:LogBox.Anchor    = $_ALL   # log text fills the log card
+$exportCsvButton.Anchor  = $_TR    # Export CSV stays top-right of jobs card
 
 # ── Assemble form ─────────────────────────────────────────────────────────────
 $script:Form.Controls.AddRange(@(

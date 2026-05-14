@@ -180,6 +180,14 @@ def main() -> None:
         except Exception as exc:
             _log(f"Telegram command poll error: {exc}")
 
+    def _loc_filter(jobs: list[dict]) -> tuple[list[dict], int]:
+        """Drop jobs whose Location doesn't match the active location setting.
+        Returns (kept_jobs, dropped_count). Pass-through when location is empty."""
+        if not location:
+            return jobs, 0
+        kept = [j for j in jobs if gmail_scan._job_location_matches(j.get("Location", ""), location)]
+        return kept, len(jobs) - len(kept)
+
     all_new_jobs: list[dict] = []
 
     for idx, keyword in enumerate(keywords):
@@ -198,7 +206,11 @@ def main() -> None:
                     location=location,
                     cookie_header=cookie_header,
                     hide_applied=hide_applied,
+                    max_hours=max_hours,
                 )
+                li_jobs, li_dropped = _loc_filter(li_jobs)
+                if li_dropped:
+                    _log(f"LinkedIn '{keyword}': dropped {li_dropped} job(s) outside '{location}'")
                 summary = db.sync_jobs(supabase_url, supabase_key, li_jobs, source="LinkedIn")
                 _log(
                     f"LinkedIn '{keyword}': "
@@ -217,6 +229,9 @@ def main() -> None:
                     location=location,
                     max_hours=max_hours,
                 )
+                indeed_jobs, indeed_dropped = _loc_filter(indeed_jobs)
+                if indeed_dropped:
+                    _log(f"Indeed '{keyword}': dropped {indeed_dropped} job(s) outside '{location}'")
                 summary = db.sync_jobs(supabase_url, supabase_key, indeed_jobs, source="Indeed")
                 _log(
                     f"Indeed '{keyword}': "
@@ -236,6 +251,9 @@ def main() -> None:
                     app_id=adzuna_app_id,
                     app_key=adzuna_app_key,
                 )
+                adzuna_jobs, adzuna_dropped = _loc_filter(adzuna_jobs)
+                if adzuna_dropped:
+                    _log(f"Adzuna '{keyword}': dropped {adzuna_dropped} job(s) outside '{location}'")
                 summary = db.sync_jobs(supabase_url, supabase_key, adzuna_jobs, source="Adzuna")
                 _log(
                     f"Adzuna '{keyword}': "
@@ -261,19 +279,9 @@ def main() -> None:
                     bing_key=bing_key,
                 )
                 if web_jobs:
-                    # Web search embeds location in the query but results can
-                    # still include jobs from neighbouring countries.  Filter
-                    # the same way we filter Gmail.
-                    before = len(web_jobs)
-                    web_jobs = [
-                        j for j in web_jobs
-                        if gmail_scan._job_location_matches(
-                            j.get("Location", ""), location
-                        )
-                    ]
-                    dropped = before - len(web_jobs)
-                    if dropped:
-                        _log(f"WebSearch '{keyword}': dropped {dropped} job(s) outside '{location}'")
+                    web_jobs, web_dropped = _loc_filter(web_jobs)
+                    if web_dropped:
+                        _log(f"WebSearch '{keyword}': dropped {web_dropped} job(s) outside '{location}'")
                 if web_jobs:
                     summary = db.sync_jobs(supabase_url, supabase_key, web_jobs, source="Web")
                     _log(

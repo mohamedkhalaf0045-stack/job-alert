@@ -30,6 +30,7 @@ import db
 import dedup
 import linkedin as li
 import preferences
+import cv_analyzer
 
 DEFAULT_PROFILE = (
     "IT Support Engineer / System Administrator with 3-5 years experience in UAE. "
@@ -260,12 +261,26 @@ def resolve_profile_with_fallback(args_cv: str, supabase_url: str, supabase_key:
     Walk the full profile-source fallback chain and return (profile_text, label).
 
     Priority (first non-empty wins):
-      1. --cv command-line arg
-      2. settings.json `ProfileText` key (plain text resume — new in Phase 1)
-      3. settings.json `UserProfile` key (PDF path / LinkedIn URL / text)
-      4. Supabase bot_state `setting_user_profile`
-      5. Hardcoded DEFAULT_PROFILE
+      1. Structured CV profile stored in Supabase via cv_analyzer (best quality)
+      2. --cv command-line arg
+      3. settings.json `ProfileText` key (plain text resume)
+      4. settings.json `UserProfile` key (PDF path / LinkedIn URL / text)
+      5. Supabase bot_state `setting_user_profile`
+      6. Hardcoded DEFAULT_PROFILE
     """
+    # 1. Structured CV profile (from cv_analyzer.py -- most accurate)
+    try:
+        cv_profile = cv_analyzer.get_cv_profile(supabase_url, supabase_key)
+        if cv_profile:
+            formatted = cv_analyzer.format_profile_for_prompt(cv_profile)
+            if formatted:
+                analyzed_at = cv_profile.get("cv_analyzed_at", "unknown")
+                skill_count = len(cv_profile.get("skills", []))
+                _log(f"Profile source: structured CV profile ({skill_count} skills, analyzed {analyzed_at[:10]})")
+                return formatted, f"structured CV ({skill_count} skills)"
+    except Exception as exc:
+        _vlog(f"Structured CV profile lookup failed (non-fatal): {exc}")
+
     settings = _load_settings_json()
 
     chain: list[tuple[str, str]] = []
@@ -290,7 +305,7 @@ def resolve_profile_with_fallback(args_cv: str, supabase_url: str, supabase_key:
         if text:
             return text, f"{label} (from {origin})"
 
-    _log("Profile fallback: all sources empty — using DEFAULT_PROFILE")
+    _log("Profile fallback: all sources empty -- using DEFAULT_PROFILE")
     return DEFAULT_PROFILE, "default"
 
 
@@ -339,7 +354,7 @@ def ollama_score(
     Breakdown keys: skills_match, experience_match, location_match, seniority_match,
                     overall_score, matched_skills, missing_skills, red_flags, reasoning.
     """
-    desc_excerpt = description[:2000] if description else "(no description available)"
+    desc_excerpt = description[:3000] if description else "(no description available)"
 
     prompt = (
         "You are a job-fit scorer. Rate how well this job matches the candidate on FOUR axes,\n"
@@ -520,6 +535,8 @@ def main() -> None:
                         help=f"Generate cover letter for jobs scoring >= this (default {DEFAULT_COVER_LETTER_THRESHOLD}, 0=disable)")
     parser.add_argument("--cover-letter-max-per-run", type=int, default=DEFAULT_COVER_LETTER_PER_RUN,
                         help=f"Cap cover-letter generations per run (default {DEFAULT_COVER_LETTER_PER_RUN})")
+    parser.add_argument("--analyze-cv", action="store_true",
+                        help="Analyze CV and store structured profile to Supabase, then exit")
     args = parser.parse_args()
 
     global _VERBOSE, _DEBUG_PROMPT
@@ -554,7 +571,34 @@ def main() -> None:
     except ValueError:
         min_score = args.min_score
 
-    # Profile resolution with full fallback chain (--cv > ProfileText > UserProfile > Supabase > default)
+    # --analyze-cv: one-shot CV analysis, store to Supabase, then exit
+    if args.analyze_cv:
+        cv_path = args.cv.strip()
+        if not cv_path:
+            cfg = _load_settings_json()
+            cv_path = (cfg.get("UserProfile") or "").strip()
+        if not cv_path:
+            _log("ERROR: No CV path. Use --cv path/to/cv.pdf or set UserProfile in settings.json.")
+            sys.exit(1)
+        _log(f"CV analysis requested: {cv_path}")
+        text = cv_analyzer.extract_cv_text(cv_path)
+        if not text:
+            _log("ERROR: Could not extract text from CV file.")
+            sys.exit(1)
+        _log(f"Extracted {len(text)} chars -- sending to Ollama ({ollama}) model={model} ...")
+        cv_profile = cv_analyzer.analyze_cv(text, ollama_url=ollama, model=model)
+        if not cv_profile:
+            _log("ERROR: Ollama returned empty response. Is 'ollama serve' running?")
+            sys.exit(1)
+        skills = cv_profile.get("skills", [])
+        _log(f"Extracted {len(skills)} skills: "
+             f"{', '.join(skills[:15])}{'...' if len(skills) > 15 else ''}")
+        cv_analyzer.store_cv_profile(supabase_url, supabase_key, cv_profile)
+        _log("Done. Future scoring runs will use this structured profile.")
+        sys.exit(0)
+
+    # Profile resolution with full fallback chain:
+    # structured CV (Supabase) > --cv arg > ProfileText > UserProfile > Supabase setting > default
     profile, profile_label = resolve_profile_with_fallback(args.cv, supabase_url, supabase_key, cookie)
 
     # Load Telegram config for post-score alerts
