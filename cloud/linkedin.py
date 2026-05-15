@@ -34,25 +34,13 @@ _SESSION.headers.update({
 })
 
 
-_GEO_IDS = {
-    "united arab emirates": "101452733",
-    "uae": "101452733",
-    "dubai": "106204383",
-    "abu dhabi": "104664959",
-    "sharjah": "106478610",
-    "saudi arabia": "101452733",  # fallback
-}
-
-
 def _guest_url(keyword: str, location: str, start: int, max_hours: int = 24) -> str:
     k = quote(keyword)
     l = quote(location)
     tpr = max(max_hours, 1) * 3600  # LinkedIn uses seconds
-    geo = _GEO_IDS.get(location.strip().lower(), "")
-    geo_param = f"&geoId={geo}" if geo else ""
     return (
         f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-        f"?keywords={k}&location={l}{geo_param}&start={start}&f_TPR=r{tpr}"
+        f"?keywords={k}&location={l}&start={start}&f_TPR=r{tpr}"
     )
 
 
