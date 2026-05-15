@@ -272,7 +272,9 @@ def scrape_linkedin(
             if hide_applied and job["IsApplied"]:
                 continue
             age = get_posted_age_hours(job)
-            if age > max_hours:
+            # If age is unknown (no <time> in card), trust f_TPR pre-filtered at API level.
+            # Only drop jobs whose age is positively confirmed to exceed the limit.
+            if age != float("inf") and age > max_hours:
                 skipped_old += 1
                 continue
             seen_ids.add(job["Id"])
