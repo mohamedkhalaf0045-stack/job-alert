@@ -34,12 +34,25 @@ _SESSION.headers.update({
 })
 
 
-def _guest_url(keyword: str, location: str, start: int) -> str:
+_GEO_IDS = {
+    "united arab emirates": "101452733",
+    "uae": "101452733",
+    "dubai": "106204383",
+    "abu dhabi": "104664959",
+    "sharjah": "106478610",
+    "saudi arabia": "101452733",  # fallback
+}
+
+
+def _guest_url(keyword: str, location: str, start: int, max_hours: int = 24) -> str:
     k = quote(keyword)
     l = quote(location)
+    tpr = max(max_hours, 1) * 3600  # LinkedIn uses seconds
+    geo = _GEO_IDS.get(location.strip().lower(), "")
+    geo_param = f"&geoId={geo}" if geo else ""
     return (
         f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-        f"?keywords={k}&location={l}&start={start}"
+        f"?keywords={k}&location={l}{geo_param}&start={start}&f_TPR=r{tpr}"
     )
 
 
@@ -232,7 +245,7 @@ def scrape_linkedin(
     location: str,
     cookie_header: str = "",
     hide_applied: bool = False,
-    max_pages: int = 2,
+    max_pages: int = 4,
     max_hours: int = 72,
 ) -> list[dict]:
     all_jobs: list[dict] = []
@@ -241,7 +254,7 @@ def scrape_linkedin(
 
     for page_idx in range(max_pages):
         start = page_idx * 25
-        url = _guest_url(keyword, location, start)
+        url = _guest_url(keyword, location, start, max_hours)
         html_text = _fetch(url, cookie_header, referer="https://www.linkedin.com/jobs/")
         if html_text is None:
             print(f"[LinkedIn] rate-limited on '{keyword}' page {page_idx + 1} — skipping")
@@ -252,6 +265,7 @@ def scrape_linkedin(
         if not jobs:
             break
 
+        new_on_page = 0
         for job in jobs:
             if job["Id"] in seen_ids:
                 continue
@@ -263,6 +277,11 @@ def scrape_linkedin(
                 continue
             seen_ids.add(job["Id"])
             all_jobs.append(job)
+            new_on_page += 1
+
+        # No fresh jobs on this page → LinkedIn has exhausted fresh results
+        if new_on_page == 0 and page_idx > 0:
+            break
 
         if page_idx < max_pages - 1:
             time.sleep(1.5)  # pace requests to stay under LinkedIn rate limit
