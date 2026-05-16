@@ -655,6 +655,15 @@ def main() -> None:
     tg_compact = (db.get_config(supabase_url, supabase_key, "setting_telegram_compact", "")
                   .strip().lower() in ("true", "1", "yes", "on"))
 
+    # Read max_hours (freshness window) from Supabase — used as the notification
+    # staleness cutoff.  Jobs posted longer ago than this are scored silently
+    # (visible in the app) but never sent as a Telegram notification.
+    try:
+        max_hours_cfg = db.get_config(supabase_url, supabase_key, "setting_max_hours", "")
+        max_notification_hours = int(max_hours_cfg) if max_hours_cfg else 120  # default 5 days
+    except Exception:
+        max_notification_hours = 120
+
     # Build relevance engine for the pre-LLM gate (replaces _ENRICHER_NON_IT_TITLE regex).
     # Uses the same CV profile stored in Supabase so the gate is always personalised.
     try:
@@ -827,13 +836,33 @@ def main() -> None:
         if score >= min_score and tg_token and tg_chat:
             already_sent = bool(job.get("telegram_sent_at"))
             if not already_sent:
-                try:
-                    import telegram_notify as tg
-                    tg.send_score_alert(tg_token, tg_chat, job, breakdown, compact=tg_compact)
-                    db.mark_telegram_sent(supabase_url, supabase_key, job.get("url", ""))
-                    time.sleep(0.3)
-                except Exception as exc:
-                    _log(f"          Telegram score alert error: {exc}")
+                # Staleness gate — don't alert for jobs posted outside the freshness window.
+                # Catches old jobs that leaked through LinkedIn's f_TPR filter or were
+                # sitting unscored in the enricher backlog for too long.
+                is_stale = False
+                date_posted = job.get("date_posted") or ""
+                if date_posted:
+                    try:
+                        posted_dt = datetime.fromisoformat(date_posted.replace("Z", "+00:00"))
+                        hours_old = (datetime.now(timezone.utc) - posted_dt).total_seconds() / 3600
+                        if hours_old > max_notification_hours:
+                            is_stale = True
+                            _log(
+                                f"          Telegram: skipped — posted {int(hours_old / 24)}d ago "
+                                f"(>{max_notification_hours}h freshness threshold). "
+                                f"Job is visible in the app."
+                            )
+                    except Exception:
+                        pass  # unknown date → allow notification
+
+                if not is_stale:
+                    try:
+                        import telegram_notify as tg
+                        tg.send_score_alert(tg_token, tg_chat, job, breakdown, compact=tg_compact)
+                        db.mark_telegram_sent(supabase_url, supabase_key, job.get("url", ""))
+                        time.sleep(0.3)
+                    except Exception as exc:
+                        _log(f"          Telegram score alert error: {exc}")
             else:
                 _log(f"          Telegram: skipped (already notified by worker)")
 

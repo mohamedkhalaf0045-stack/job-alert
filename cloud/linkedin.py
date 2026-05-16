@@ -158,6 +158,19 @@ def _parse_cards(html_text: str, keyword: str) -> list[dict]:
         )
         time_m = re.search(r'<time[^>]*datetime="([^"]+)"[^>]*>(.*?)</time>', chunk, re.DOTALL)
 
+        # Fallback: when <time> element is missing or doesn't parse, search the
+        # card's plain text for relative age strings like "1 week ago", "3 days ago".
+        # This prevents f_TPR-leaked old jobs from slipping through the age filter.
+        posted_text_fallback = ""
+        if not time_m:
+            plain_card = _plain_text(chunk)
+            age_text_m = re.search(
+                r'\b(\d+)\s+(second|minute|hour|day|week|month)s?\s+ago\b',
+                plain_card, re.I
+            )
+            if age_text_m:
+                posted_text_fallback = age_text_m.group(0)  # e.g. "1 week ago"
+
         plain = _plain_text(chunk).lower()
         is_applied = bool(re.search(r'\b(applied|application submitted|submitted|already applied)\b', plain))
 
@@ -169,7 +182,7 @@ def _parse_cards(html_text: str, keyword: str) -> list[dict]:
             "Location":   _plain_text(location_m.group(1)) if location_m else "",
             "Url":        _canonical_url(raw_url),
             "PostedDate": _plain_text(time_m.group(1)) if time_m else "",
-            "PostedText": _plain_text(time_m.group(2)) if time_m else "",
+            "PostedText": _plain_text(time_m.group(2)) if time_m else posted_text_fallback,
             "IsApplied":  is_applied,
             "Source":     "LinkedIn",
         })
@@ -236,6 +249,9 @@ def get_posted_age_hours(job: dict) -> float:
         m = re.search(r"(\d+)\s*week", text, re.I)
         if m:
             return float(m.group(1)) * 24 * 7
+        m = re.search(r"(\d+)\s*month", text, re.I)
+        if m:
+            return float(m.group(1)) * 24 * 30
         if re.search(r"just now|just posted|today", text, re.I):
             return 0.0
     if date:
