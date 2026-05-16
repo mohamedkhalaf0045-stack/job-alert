@@ -34,10 +34,19 @@ _SESSION.headers.update({
 })
 
 
-def _guest_url(keyword: str, location: str, start: int, max_hours: int = 24) -> str:
-    k = quote(keyword)
-    l = quote(location)
+def _guest_url(keyword: str, location: str, start: int, max_hours: int = 24,
+               geo_id: str = "") -> str:
+    k   = quote(keyword)
     tpr = max(max_hours, 1) * 3600  # LinkedIn uses seconds
+    if geo_id:
+        # Use numeric geoId when available — this matches what LinkedIn's own
+        # job-alert algorithm uses and returns a more complete, location-accurate
+        # result set than the text-based location parameter.
+        return (
+            f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+            f"?keywords={k}&geoId={geo_id}&start={start}&f_TPR=r{tpr}"
+        )
+    l = quote(location)
     return (
         f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
         f"?keywords={k}&location={l}&start={start}&f_TPR=r{tpr}"
@@ -246,8 +255,9 @@ def scrape_linkedin(
     location: str,
     cookie_header: str = "",
     hide_applied: bool = False,
-    max_pages: int = 4,
+    max_pages: int = 6,
     max_hours: int = 72,
+    geo_id: str = "",
 ) -> list[dict]:
     all_jobs: list[dict] = []
     seen_ids: set[str] = set()
@@ -255,7 +265,7 @@ def scrape_linkedin(
 
     for page_idx in range(max_pages):
         start = page_idx * 25
-        url = _guest_url(keyword, location, start, max_hours)
+        url = _guest_url(keyword, location, start, max_hours, geo_id=geo_id)
         html_text = _fetch(url, cookie_header, referer="https://www.linkedin.com/jobs/")
         if html_text is None:
             print(f"[LinkedIn] rate-limited on '{keyword}' page {page_idx + 1} — skipping")

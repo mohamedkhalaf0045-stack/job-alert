@@ -71,6 +71,7 @@ def main() -> None:
     location      = _env("LOCATION", _DEFAULT_LOCATION)
     max_hours     = int(_env("MAX_HOURS", "72"))
     min_score     = int(_env("LLM_MIN_SCORE", "4"))  # Supabase override applied below
+    li_geo_id     = _env("LINKEDIN_GEOID", "")       # e.g. "104305776" for UAE
     cookie_header  = _env("LINKEDIN_COOKIE")
     hide_applied   = _env_bool("HIDE_APPLIED", default=False)
     search_li      = _env_bool("SEARCH_LINKEDIN", default=True)
@@ -107,6 +108,7 @@ def main() -> None:
         setting_adzuna_id   = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_id", "")
         setting_adzuna_key  = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_key", "")
         setting_min_score   = db.get_config(supabase_url, supabase_key, "setting_llm_min_score", "")
+        setting_li_geoid    = db.get_config(supabase_url, supabase_key, "setting_linkedin_geoid", "")
 
         if setting_kw:
             keywords = [k.strip() for k in setting_kw.split(",") if k.strip()]
@@ -136,6 +138,8 @@ def main() -> None:
                 min_score = int(setting_min_score)
             except ValueError:
                 pass
+        if setting_li_geoid:
+            li_geo_id = setting_li_geoid.strip()
 
         setting_web        = db.get_config(supabase_url, supabase_key, "setting_search_web", "")
         setting_tavily     = db.get_config(supabase_url, supabase_key, "setting_tavily_api_key", "")
@@ -169,7 +173,8 @@ def main() -> None:
         _log(f"RelevanceEngine load error (non-fatal, using keyword-only fallback): {exc}")
         engine = relevance_engine.RelevanceEngine(keywords, set(), set(), set())
 
-    _log(f"Starting scan: {len(keywords)} keyword(s), location={location}, max_hours={max_hours}")
+    geo_info = f", geoId={li_geo_id}" if li_geo_id else " (text-location fallback — set setting_linkedin_geoid for best results)"
+    _log(f"Starting scan: {len(keywords)} keyword(s), location={location}{geo_info}, max_hours={max_hours}")
 
     # --- Handle pending Telegram commands (/status etc.) ---
     if tg_token and tg_chat:
@@ -233,6 +238,7 @@ def main() -> None:
                     cookie_header=cookie_header,
                     hide_applied=hide_applied,
                     max_hours=max_hours,
+                    geo_id=li_geo_id,
                 )
                 li_jobs, li_dropped = _loc_filter(li_jobs)
                 if li_dropped:
