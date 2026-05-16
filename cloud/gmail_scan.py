@@ -36,7 +36,27 @@ _LOCATION_ALIASES: dict[str, list[str]] = {
         "riyadh", "jeddah", "dammam", "mecca", "medina",
         "makkah", "madinah",
     ],
-    "egypt": ["egypt", "cairo", "alexandria", "giza"],
+    "egypt": [
+        "egypt", "cairo", "alexandria", "giza",
+        # Cairo districts / suburbs LinkedIn commonly uses
+        "nasr city", "maadi", "heliopolis", "zamalek", "mohandessin",
+        "new cairo", "6th of october", "sixth of october", "dokki",
+        "shubra", "obour", "el obour", "el shorouk", "shorouk",
+        "10th of ramadan", "tenth of ramadan", "fifth settlement",
+        "new capital", "el rehab", "rehab city", "badr city",
+        "hadayek el ahram", "hadayek", "imbaba", "ain shams",
+        "abbassia", "ramses", "downtown cairo", "garden city",
+        "new heliopolis", "sheraton", "nasr",
+        # Tech / business hubs
+        "smart village", "techno park", "tiec",
+        # Alexandria areas
+        "smouha", "sidi beshr", "moharam bek", "miami",
+        # Other major cities
+        "port said", "suez", "mansoura", "tanta", "assiut",
+        "luxor", "aswan", "hurghada", "sharm el sheikh",
+        "el mahalla", "fayoum", "beni suef", "minya",
+        "zagazig", "ismailia", "damietta", "sohag", "qena",
+    ],
     "kuwait": ["kuwait", "kuwait city"],
     "bahrain": ["bahrain", "manama"],
     "qatar": ["qatar", "doha"],
@@ -99,11 +119,24 @@ _JOB_ALERT_SENDERS = [
 # ── URL helpers ───────────────────────────────────────────────────────────────
 
 def _canonical_url(raw: str) -> str:
+    """Normalize a job URL for deduplication.
+
+    LinkedIn job URLs come in two shapes depending on the source:
+      - Guest API / email:  /jobs/view/4203456789
+      - Web search:         /jobs/view/it-support-specialist-at-company-4203456789
+    Both refer to the same job. Extract the trailing numeric ID and build a
+    stable canonical form so lookups always match across sources.
+    """
     try:
-        p = urlparse(raw.strip())
+        raw = (raw or "").strip()
+        if "linkedin.com/jobs/view/" in raw.lower():
+            m = re.search(r'/jobs/view/[^/?#]*?(\d{7,})(?:[/?#]|$)', raw)
+            if m:
+                return f"https://www.linkedin.com/jobs/view/{m.group(1)}"
+        p = urlparse(raw)
         return urlunparse((p.scheme, p.netloc, p.path, "", "", "")).rstrip("/")
     except Exception:
-        return raw.strip()
+        return (raw or "").strip()
 
 
 def _url_id(url: str) -> str:
@@ -111,10 +144,14 @@ def _url_id(url: str) -> str:
 
 
 def _clean_li_url(raw: str) -> str:
-    """Strip LinkedIn tracking params, keep only the /jobs/view/ID/ path."""
-    m = re.search(r"/jobs/view/(\d+)", raw)
+    """Strip LinkedIn tracking params, keep only the /jobs/view/{ID} path.
+
+    Handles both numeric-only paths and slug+ID paths (e.g.
+    /jobs/view/it-support-specialist-4203456789).
+    """
+    m = re.search(r'/jobs/view/[^/?#]*?(\d{7,})(?:[/?#]|$)', raw)
     if m:
-        return f"https://www.linkedin.com/jobs/view/{m.group(1)}/"
+        return f"https://www.linkedin.com/jobs/view/{m.group(1)}"
     return _canonical_url(raw)
 
 

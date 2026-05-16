@@ -28,7 +28,21 @@ def _normalize(value: str) -> str:
 
 
 def _canonical_url(raw: str) -> str:
+    """Normalize a job URL for deduplication.
+
+    LinkedIn job URLs come in two shapes depending on the source:
+      - Guest API:   /jobs/view/4203456789
+      - Web search:  /jobs/view/it-support-specialist-at-company-4203456789
+
+    Both refer to the same job.  Extract the trailing numeric ID and build a
+    stable canonical form so different sources produce the same URL string.
+    """
     try:
+        raw = (raw or "").strip()
+        if "linkedin.com/jobs/view/" in raw.lower():
+            m = re.search(r'/jobs/view/[^/?#]*?(\d{7,})(?:[/?#]|$)', raw)
+            if m:
+                return f"https://www.linkedin.com/jobs/view/{m.group(1)}"
         p = urlparse(raw)
         return urlunparse((p.scheme, p.netloc, p.path, "", "", "")).rstrip("/")
     except Exception:
@@ -142,7 +156,7 @@ def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> 
     try:
         result = (
             sb.table("jobs")
-            .select("job_id,title,company,location,url,source")
+            .select("job_id,title,company,location,url,source,telegram_sent_at")
             .is_("llm_score", "null")
             .eq("status", "new")
             .order("date_collected", desc=True)
@@ -390,10 +404,21 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
 
     sb = _get_client(supabase_url, supabase_key)
 
-    # Fetch existing URLs in one query for dedup
+    # ── Layer 1: dedup by canonical URL ──────────────────────────────────────
     all_urls = [_canonical_url(str(j.get("Url", ""))) for j in jobs]
     existing_resp = sb.table("jobs").select("job_id,url,title,company,location,source").in_("url", all_urls).execute()
-    existing_by_url = {row["url"]: row for row in (existing_resp.data or [])}
+    existing_by_url: dict[str, dict] = {row["url"]: row for row in (existing_resp.data or [])}
+
+    # ── Layer 2: dedup by job_id ─────────────────────────────────────────────
+    # Catches the same LinkedIn job stored under two URL formats
+    # (e.g. /jobs/view/12345 vs /jobs/view/slug-name-12345).
+    known_job_ids = {row["job_id"] for row in (existing_resp.data or [])}
+    candidate_ids = [_job_id(j) for j in jobs]
+    lookup_ids = [jid for jid in candidate_ids if jid and jid not in known_job_ids]
+    existing_by_id: dict[str, dict] = {}
+    if lookup_ids:
+        id_resp = sb.table("jobs").select("job_id,url,title,company,location,source").in_("job_id", lookup_ids).execute()
+        existing_by_id = {row["job_id"]: row for row in (id_resp.data or [])}
 
     for job in jobs:
         job_id = _job_id(job)
@@ -420,14 +445,15 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
             "status": _normalize(str(job.get("Status", "new"))) or "new",
         }
 
-        existing = existing_by_url.get(url)
+        # Prefer URL match; fall back to job_id match (URL format changed)
+        existing = existing_by_url.get(url) or existing_by_id.get(job_id)
         if existing is None:
             try:
                 sb.table("jobs").insert(record).execute()
                 summary["inserted"] += 1
                 summary["new_jobs"].append(job)
             except Exception:
-                # May fail if job_id conflict — treat as seen
+                # Unique-constraint violation (race condition or stale cache) — treat as seen
                 summary["seen"] += 1
         else:
             changed = (
@@ -443,7 +469,7 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
                     "location": record["location"],
                     "date_collected": record["date_collected"],
                     "source": record["source"],
-                }).eq("url", url).execute()
+                }).eq("url", existing["url"]).execute()  # use stored URL (may differ from canonical)
                 summary["updated"] += 1
             else:
                 summary["seen"] += 1

@@ -31,6 +31,7 @@ import dedup
 import linkedin as li
 import preferences
 import cv_analyzer
+import relevance_engine
 
 DEFAULT_PROFILE = (
     "IT Support Engineer / System Administrator with 3-5 years experience in UAE. "
@@ -312,7 +313,7 @@ def resolve_profile_with_fallback(args_cv: str, supabase_url: str, supabase_key:
 # ── Ollama ────────────────────────────────────────────────────────────────────
 
 _FEW_SHOT_EXAMPLES = """\
-EXAMPLE 1 (obvious match):
+EXAMPLE 1 (obvious IT match):
   Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking / O365.
   Job: "Senior IT Support, Dubai" at TechCorp. Manages Windows servers + AD + helpdesk.
   Output: {"skills_match": 9, "experience_match": 9, "location_match": 10, "seniority_match": 9, "overall_score": 9,
@@ -320,22 +321,57 @@ EXAMPLE 1 (obvious match):
            "missing_skills": [], "red_flags": [],
            "reasoning": "Strong overlap on every axis: skills, seniority, and UAE location all align."}
 
-EXAMPLE 2 (obvious mismatch):
-  Candidate: IT Support Engineer, 4 years UAE, no sales experience.
-  Job: "Senior Sales Manager, Real Estate, Dubai".
-  Output: {"skills_match": 1, "experience_match": 1, "location_match": 10, "seniority_match": 3, "overall_score": 2,
-           "matched_skills": [], "missing_skills": ["Sales","Real Estate"],
-           "red_flags": ["Completely different field (sales vs IT)"],
-           "reasoning": "Location aligns but role is in a different domain entirely."}
+EXAMPLE 2 (completely wrong field — real estate/property):
+  Candidate: IT Support Engineer, 4 years UAE.
+  Job: "Property Consultant - Russian/European Speaker" at Property Shop Investment.
+       Description: Sell residential properties, meet clients, manage listings.
+  FIELD CHECK: "property consultant" is real estate sales — NOT an IT/technology role.
+  Output: {"skills_match": 0, "experience_match": 0, "location_match": 10, "seniority_match": 0, "overall_score": 1,
+           "matched_skills": [],
+           "missing_skills": ["Real estate sales","Property market knowledge","Russian/European language"],
+           "red_flags": ["Wrong field — real estate sales, not IT","Language requirement (Russian/European)"],
+           "reasoning": "Not an IT role. Field domain mismatch overrides location and experience scores."}
 
-EXAMPLE 3 (borderline):
+EXAMPLE 2b (completely wrong field — oil & gas engineering):
+  Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking.
+  Job: "PMC Engineering Manager - Site" at Wood. 20+ years oil & gas required. LNG, FEED, ADNOC, EPC projects.
+  FIELD CHECK: "Engineering Manager" in oil & gas — NOT an IT/technology role. The word "engineering" does NOT make it IT.
+  Output: {"skills_match": 0, "experience_match": 0, "location_match": 10, "seniority_match": 0, "overall_score": 0,
+           "matched_skills": [],
+           "missing_skills": ["Oil & gas engineering","LNG/FEED experience","20+ years EPC projects"],
+           "red_flags": ["Wrong field — oil & gas engineering, not IT","Requires 20+ years O&G experience"],
+           "reasoning": "Oil & gas engineering management role. No overlap with IT support background whatsoever."}
+
+EXAMPLE 3 (completely wrong field — sales/marketing):
+  Candidate: IT Support Engineer, 4 years UAE, no sales background.
+  Job: "Digital Marketing Manager, Dubai". Manages campaigns, SEO, social media.
+  FIELD CHECK: Marketing — NOT an IT/technology role.
+  Output: {"skills_match": 1, "experience_match": 1, "location_match": 10, "seniority_match": 3, "overall_score": 1,
+           "matched_skills": [],
+           "missing_skills": ["Digital marketing","SEO","Campaign management"],
+           "red_flags": ["Wrong field — marketing, not IT"],
+           "reasoning": "Not an IT role. Location match cannot compensate for a complete field mismatch."}
+
+EXAMPLE 3b (completely wrong field — compliance/finance/legal):
+  Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking.
+  Job: "Head Financial Crime Compliance (Crypto)" at Revolut, UAE.
+       Requires AML, KYC, regulatory compliance, financial crime investigation.
+  FIELD CHECK: Financial compliance / legal — NOT an IT/technology role.
+  "Crypto" in the title does NOT make it an IT job; the role is about financial regulation.
+  Output: {"skills_match": 0, "experience_match": 0, "location_match": 10, "seniority_match": 0, "overall_score": 0,
+           "matched_skills": [],
+           "missing_skills": ["AML/KYC expertise","Financial crime investigation","Regulatory compliance","Legal background"],
+           "red_flags": ["Wrong field — financial compliance, not IT","Crypto context is regulatory, not technical"],
+           "reasoning": "Financial crime compliance is a legal/regulatory role. No technical IT skills required."}
+
+EXAMPLE 4 (borderline IT-adjacent, partial fit):
   Candidate: IT Support Engineer, 4 years UAE, no cloud cert yet.
   Job: "Cloud Infrastructure Engineer (AWS), Abu Dhabi". Requires AWS cert, Linux, scripting.
   Output: {"skills_match": 5, "experience_match": 6, "location_match": 9, "seniority_match": 7, "overall_score": 6,
            "matched_skills": ["Linux","Scripting"],
            "missing_skills": ["AWS certification","Cloud infrastructure"],
            "red_flags": ["AWS cert is a hard requirement"],
-           "reasoning": "Partial fit; foundational IT skills transfer but the cloud-specific requirements are gaps."}
+           "reasoning": "Partial fit; foundational IT skills transfer but cloud-specific requirements are gaps."}
 
 """
 
@@ -357,20 +393,31 @@ def ollama_score(
     desc_excerpt = description[:3000] if description else "(no description available)"
 
     prompt = (
-        "You are a job-fit scorer. Rate how well this job matches the candidate on FOUR axes,\n"
-        "then give an overall score that weighs them holistically (skills + experience matter most).\n"
-        "Output STRICT JSON only - no markdown, no prose outside the JSON.\n\n"
+        "You are a job-fit scorer for an IT professional. Rate how well this job matches the candidate.\n"
+        "Output STRICT JSON only — no markdown, no prose outside the JSON.\n\n"
+        "=== CRITICAL RULE — FIELD DOMAIN CHECK ===\n"
+        "BEFORE scoring, decide: is this job in the IT / technology / engineering field?\n"
+        "Non-IT fields include: real estate, property sales, marketing, HR, finance, accounting,\n"
+        "hospitality, medical, legal, logistics, retail sales, and any role where the primary\n"
+        "activity is NOT technology-related.\n"
+        "If the job is NOT in IT/technology:\n"
+        "  - Set skills_match=0, experience_match=0, seniority_match=0\n"
+        "  - Set overall_score to 0 or 1 (max 1, regardless of location match)\n"
+        "  - Add 'Wrong field — <field>, not IT' as the first red_flag\n"
+        "  - Leave matched_skills empty []\n"
+        "Location match (10/10 UAE) does NOT compensate for a field mismatch.\n"
+        "=== END CRITICAL RULE ===\n\n"
         "Schema:\n"
         "{\n"
-        '  "skills_match":     <int 0-10>,  // overlap of required skills with candidate skills\n'
+        '  "skills_match":     <int 0-10>,  // skills explicitly required in the job description that the candidate has\n'
         '  "experience_match": <int 0-10>,  // years/level vs candidate background\n'
         '  "location_match":   <int 0-10>,  // job location vs candidate location\n'
         '  "seniority_match":  <int 0-10>,  // role level (junior/mid/senior) vs candidate level\n'
-        '  "overall_score":    <int 0-10>,  // weighted overall fit\n'
-        '  "matched_skills":   [<short strings>],  // up to 5 skills present in both job and candidate\n'
-        '  "missing_skills":   [<short strings>],  // up to 5 important skills required but candidate lacks\n'
-        '  "red_flags":        [<short strings>],  // up to 3 hard mismatches (e.g., language requirement, on-site only)\n'
-        '  "reasoning":        "<one sentence why this overall_score>"\n'
+        '  "overall_score":    <int 0-10>,  // weighted overall fit (field mismatch caps this at 1)\n'
+        '  "matched_skills":   [<short strings>],  // ONLY skills that appear in BOTH the job description AND the candidate profile. Do NOT list candidate skills that are absent from the job description.\n'
+        '  "missing_skills":   [<short strings>],  // up to 5 skills the job requires but the candidate lacks\n'
+        '  "red_flags":        [<short strings>],  // up to 3 hard blockers (wrong field, language req, nationals only, etc.)\n'
+        '  "reasoning":        "<one sentence explaining the overall_score>"\n'
         "}\n\n"
         f"{_FEW_SHOT_EXAMPLES}"
         f"{dynamic_few_shot}"
@@ -608,6 +655,18 @@ def main() -> None:
     tg_compact = (db.get_config(supabase_url, supabase_key, "setting_telegram_compact", "")
                   .strip().lower() in ("true", "1", "yes", "on"))
 
+    # Build relevance engine for the pre-LLM gate (replaces _ENRICHER_NON_IT_TITLE regex).
+    # Uses the same CV profile stored in Supabase so the gate is always personalised.
+    try:
+        keywords_cfg = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
+        enricher_keywords = [k.strip() for k in keywords_cfg.split(",") if k.strip()]
+        rel_engine = relevance_engine.RelevanceEngine.from_supabase(
+            supabase_url, supabase_key, enricher_keywords
+        )
+    except Exception as exc:
+        _log(f"RelevanceEngine load error (non-fatal, pre-LLM gate disabled): {exc}")
+        rel_engine = None
+
     effective_limit = 1 if args.health_check else args.limit
     _log(f"Enricher starting - model={model}, min_score={min_score}, limit={effective_limit}, profile={profile_label}")
 
@@ -646,9 +705,59 @@ def main() -> None:
         company = job.get("company", "?")
         _log(f"[{i}/{len(jobs)}] {title} @ {company}")
 
+        # Skip jobs restricted to nationals/citizens — they slipped through the
+        # worker filter (e.g. inserted before the filter was added) or the title
+        # didn't reveal the restriction until the description was read.  We check
+        # the title here; the description check happens further down when available.
+        if re.search(
+            r"\b(uae\s+national[s]?|emirati[s]?|gcc\s+national[s]?"
+            r"|nationals\s+only|citizens\s+only)\b",
+            title, re.I
+        ):
+            _log("          Skipping — job restricted to nationals/citizens")
+            db.update_job_enrichment(
+                supabase_url, supabase_key,
+                job["job_id"], "", score=0,
+                summary="Skipped — restricted to nationals/citizens",
+                min_score=1,
+            )
+            dismissed += 1
+            continue
+
+        # Pre-LLM relevance gate — catches jobs in wrong fields (real estate, HR, etc.)
+        # that slipped through the worker filter or entered the DB before the filter existed.
+        # Using the engine avoids wasting Ollama time and is CV-driven, not hardcoded.
+        if rel_engine is not None:
+            relevant, rel_reason = rel_engine.is_relevant(title)
+            if not relevant:
+                _log(f"          Skipping — {rel_reason}")
+                db.update_job_enrichment(
+                    supabase_url, supabase_key,
+                    job["job_id"], "", score=0,
+                    summary=f"Filtered: {rel_reason}",
+                    min_score=1,
+                )
+                dismissed += 1
+                continue
+
         description = li.fetch_job_description(job.get("url", ""), cookie)
         if description:
             _log(f"          Description: {len(description)} chars")
+            # Secondary check: restriction may be buried in the description body
+            if re.search(
+                r"\b(uae\s+national[s]?|emirati[s]?|gcc\s+national[s]?"
+                r"|nationals\s+only|citizens\s+only|open\s+to\s+(?:uae\s+)?nationals)\b",
+                description[:1000], re.I
+            ):
+                _log("          Skipping — description restricts to nationals/citizens")
+                db.update_job_enrichment(
+                    supabase_url, supabase_key,
+                    job["job_id"], description[:500], score=0,
+                    summary="Skipped — restricted to nationals/citizens",
+                    min_score=1,
+                )
+                dismissed += 1
+                continue
         else:
             _log("          No description fetched - scoring on title/company/location only")
 
@@ -713,14 +822,20 @@ def main() -> None:
             else:
                 _vlog("          Cover letter generation returned empty - skipping persist")
 
-        # Send Telegram score notification for kept jobs (richer format with breakdown)
+        # Send Telegram score notification for kept jobs (richer format with breakdown).
+        # Skip if worker.py already sent a basic alert for this job.
         if score >= min_score and tg_token and tg_chat:
-            try:
-                import telegram_notify as tg
-                tg.send_score_alert(tg_token, tg_chat, job, breakdown, compact=tg_compact)
-                time.sleep(0.3)
-            except Exception as exc:
-                _log(f"          Telegram score alert error: {exc}")
+            already_sent = bool(job.get("telegram_sent_at"))
+            if not already_sent:
+                try:
+                    import telegram_notify as tg
+                    tg.send_score_alert(tg_token, tg_chat, job, breakdown, compact=tg_compact)
+                    db.mark_telegram_sent(supabase_url, supabase_key, job.get("url", ""))
+                    time.sleep(0.3)
+                except Exception as exc:
+                    _log(f"          Telegram score alert error: {exc}")
+            else:
+                _log(f"          Telegram: skipped (already notified by worker)")
 
         if score < min_score:
             dismissed += 1

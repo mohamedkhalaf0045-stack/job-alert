@@ -25,12 +25,28 @@ class SupabaseService {
       'matched_skills,missing_skills,red_flags,'
       'duplicate_of_url,cover_letter_draft';
 
-  static Future<List<Job>> listJobs({String? status, int limit = 100,
+  static Future<List<Job>> listJobs({String? status, int limit = 200,
                                       bool hideDuplicates = true}) async {
     var query = '$_base/jobs?select=$_jobColumns&order=date_collected.desc&limit=$limit';
     if (status != null && status != 'all') {
       query += '&status=eq.$status';
     }
+    if (hideDuplicates) {
+      query += '&duplicate_of_url=is.null';
+    }
+    final res = await http.get(Uri.parse(query), headers: _headers);
+    if (res.statusCode != 200) return [];
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list.map((e) => Job.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// Scored jobs only, sorted best score first.
+  static Future<List<Job>> listScoredJobs({int limit = 200,
+                                            bool hideDuplicates = true}) async {
+    var query = '$_base/jobs?select=$_jobColumns'
+        '&llm_score=not.is.null'
+        '&order=llm_score.desc,date_collected.desc'
+        '&limit=$limit';
     if (hideDuplicates) {
       query += '&duplicate_of_url=is.null';
     }

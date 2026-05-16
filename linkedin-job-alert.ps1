@@ -106,6 +106,7 @@ function Save-Settings {
         UserProfile      = $script:UserProfileBox.Text.Trim()
         MinAiScore       = [int]$script:MinAiScoreBox.Value
         OllamaUrl        = $script:OllamaUrlBox.Text.Trim()
+        AutoEnrich       = $script:AutoEnrichCheckBox.Checked
         SearchGmail      = $script:GmailCheckBox.Checked
         GmailEmail       = $script:GmailEmailBox.Text.Trim()
         GmailPassword    = $script:GmailPasswordBox.Text.Trim()
@@ -114,11 +115,12 @@ function Save-Settings {
     $settings | ConvertTo-Json | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
 }
 
-$script:SettingsSaveTimer = $null
-$script:EnrichTimer       = $null
-$script:EnrichJob         = $null
-$script:CvAnalyzeTimer    = $null
-$script:CvAnalyzeJob      = $null
+$script:SettingsSaveTimer        = $null
+$script:EnrichTimer              = $null
+$script:EnrichJob                = $null
+$script:CvAnalyzeTimer           = $null
+$script:CvAnalyzeJob             = $null
+$script:AutoEnrichLastRunId      = 0   # last GH Actions run id that triggered auto-enrich
 
 function Sync-SettingsToSupabase {
     # Push all GUI settings to Supabase bot_state so the cloud worker respects them.
@@ -749,6 +751,12 @@ function Update-CloudLamp {
         } elseif ($run.conclusion -eq "success") {
             $script:CloudLamp.Tag = "green"
             $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud: last run OK - $($run.created_at) - right-click for controls")
+            # Auto AI score: trigger enricher when a new run completes and auto-enrich is on
+            if ($script:AutoEnrichCheckBox.Checked -and
+                [long]$run.id -ne $script:AutoEnrichLastRunId) {
+                $script:AutoEnrichLastRunId = [long]$run.id
+                Start-Enrichment -Silent $true
+            }
         } else {
             $script:CloudLamp.Tag = "red"
             $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud: FAILED ($($run.conclusion)) - $($run.created_at) - right-click to retry")
@@ -1862,6 +1870,14 @@ $script:MinAiScoreBox.Font     = $fntUi
 $script:MinAiScoreBox.Value    = [decimal](Get-SettingValue -SettingsObject $savedSettings -Name "MinAiScore" -DefaultValue 4)
 [void]$autoCard.Controls.Add($script:MinAiScoreBox)
 
+$script:AutoEnrichCheckBox          = New-Object System.Windows.Forms.CheckBox
+$script:AutoEnrichCheckBox.Text     = "Auto AI score after each cloud scan"
+$script:AutoEnrichCheckBox.Location = New-Object System.Drawing.Point(297, 152)
+$script:AutoEnrichCheckBox.Size     = New-Object System.Drawing.Size(268, 24)
+$script:AutoEnrichCheckBox.Font     = $fntUi
+$script:AutoEnrichCheckBox.Checked  = [bool](Get-SettingValue -SettingsObject $savedSettings -Name "AutoEnrich" -DefaultValue $false)
+[void]$autoCard.Controls.Add($script:AutoEnrichCheckBox)
+
 [void]$autoCard.Controls.Add((New-Lbl "CV / Profile  (paste path, LinkedIn URL, or type a description)" 12 186))
 $script:UserProfileBox           = New-Tb -X 12 -Y 202 -W 322 -H 24
 $script:UserProfileBox.Text      = [string](Get-SettingValue -SettingsObject $savedSettings -Name "UserProfile" -DefaultValue "")
@@ -2545,8 +2561,12 @@ $analyzeCvButton.Add_Click({
     $script:CvAnalyzeTimer.Start()
 })
 
-$enrichAiButton.Add_Click({
-    Save-Settings
+function Start-Enrichment {
+    param([bool]$Silent = $false)
+    if ($script:EnrichJob -and $script:EnrichJob.State -eq "Running") {
+        if (-not $Silent) { Add-LogLine "AI enrichment is already running." }
+        return
+    }
     $enricherPath = Join-Path $script:AppRoot "cloud\enricher.py"
     if (-not (Test-Path -LiteralPath $enricherPath)) {
         Add-LogLine "ERROR: cloud\enricher.py not found at $enricherPath"
@@ -2556,25 +2576,30 @@ $enrichAiButton.Add_Click({
     $supabaseUrl = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseUrl" -DefaultValue "")
     $supabaseKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
     if ([string]::IsNullOrWhiteSpace($supabaseUrl) -or [string]::IsNullOrWhiteSpace($supabaseKey)) {
-        Add-LogLine "ERROR: SupabaseUrl / SupabaseKey not set in settings.json"
+        if (-not $Silent) { Add-LogLine "ERROR: SupabaseUrl / SupabaseKey not set in settings.json" }
         return
     }
     $ollamaUrl      = [string](Get-SettingValue -SettingsObject $settings -Name "OllamaUrl"       -DefaultValue "http://localhost:11434")
     $minScore       = [string](Get-SettingValue -SettingsObject $settings -Name "MinAiScore"      -DefaultValue "4")
     $linkedInCookie = [string](Get-SettingValue -SettingsObject $settings -Name "LinkedInCookie"  -DefaultValue "")
-    $cvOrProfile = [string](Get-SettingValue -SettingsObject $settings -Name "UserProfile" -DefaultValue "")
+    $cvOrProfile    = [string](Get-SettingValue -SettingsObject $settings -Name "UserProfile"     -DefaultValue "")
 
-    $cvLabel = "default profile"
-    if (-not [string]::IsNullOrWhiteSpace($cvOrProfile)) {
-        if ($cvOrProfile.ToLower().EndsWith(".pdf")) {
-            $cvLabel = "CV: $(Split-Path $cvOrProfile -Leaf)"
-        } elseif ($cvOrProfile.ToLower().Contains("linkedin.com/in/")) {
-            $cvLabel = "LinkedIn profile"
-        } else {
-            $cvLabel = "text profile"
+    if (-not $Silent) {
+        $cvLabel = "default profile"
+        if (-not [string]::IsNullOrWhiteSpace($cvOrProfile)) {
+            if ($cvOrProfile.ToLower().EndsWith(".pdf")) {
+                $cvLabel = "CV: $(Split-Path $cvOrProfile -Leaf)"
+            } elseif ($cvOrProfile.ToLower().Contains("linkedin.com/in/")) {
+                $cvLabel = "LinkedIn profile"
+            } else {
+                $cvLabel = "text profile"
+            }
         }
+        Add-LogLine "Starting AI enrichment - profile source: $cvLabel"
+    } else {
+        Add-LogLine "Auto AI score: running enricher after cloud scan..."
     }
-    Add-LogLine "Starting AI enrichment - profile source: $cvLabel"
+
     $enrichAiButton.Enabled = $false
     $script:Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
     $script:EnrichJob = Start-Job -ScriptBlock {
@@ -2608,6 +2633,11 @@ $enrichAiButton.Add_Click({
         }
     })
     $script:EnrichTimer.Start()
+}
+
+$enrichAiButton.Add_Click({
+    Save-Settings
+    Start-Enrichment -Silent $false
 })
 
 $telegramTestButton.Add_Click({ Send-TelegramTest })

@@ -33,6 +33,7 @@ import adzuna as adzuna_scraper
 import websearch
 import gmail_scan
 import telegram_notify as tg
+import relevance_engine
 
 
 def _env(name: str, default: str = "") -> str:
@@ -68,7 +69,8 @@ def main() -> None:
     # Seed defaults from env vars (may be empty — Supabase overrides below)
     keywords      = [k.strip() for k in _env("KEYWORDS", _DEFAULT_KEYWORDS).split(",") if k.strip()]
     location      = _env("LOCATION", _DEFAULT_LOCATION)
-    max_hours     = int(_env("MAX_HOURS", "24"))
+    max_hours     = int(_env("MAX_HOURS", "72"))
+    min_score     = int(_env("LLM_MIN_SCORE", "4"))  # Supabase override applied below
     cookie_header  = _env("LINKEDIN_COOKIE")
     hide_applied   = _env_bool("HIDE_APPLIED", default=False)
     search_li      = _env_bool("SEARCH_LINKEDIN", default=True)
@@ -85,7 +87,6 @@ def main() -> None:
     search_gmail   = _env_bool("SEARCH_GMAIL",   default=False)
     gmail_email    = _env("GMAIL_EMAIL")
     gmail_password = _env("GMAIL_APP_PASSWORD")
-
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
 
@@ -105,6 +106,7 @@ def main() -> None:
         setting_adzuna      = db.get_config(supabase_url, supabase_key, "setting_search_adzuna", "")
         setting_adzuna_id   = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_id", "")
         setting_adzuna_key  = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_key", "")
+        setting_min_score   = db.get_config(supabase_url, supabase_key, "setting_llm_min_score", "")
 
         if setting_kw:
             keywords = [k.strip() for k in setting_kw.split(",") if k.strip()]
@@ -129,6 +131,11 @@ def main() -> None:
             adzuna_app_id = setting_adzuna_id
         if setting_adzuna_key:
             adzuna_app_key = setting_adzuna_key
+        if setting_min_score:
+            try:
+                min_score = int(setting_min_score)
+            except ValueError:
+                pass
 
         setting_web        = db.get_config(supabase_url, supabase_key, "setting_search_web", "")
         setting_tavily     = db.get_config(supabase_url, supabase_key, "setting_tavily_api_key", "")
@@ -149,8 +156,18 @@ def main() -> None:
             google_cx = setting_google_cx
         if setting_bing:
             bing_key = setting_bing
+
     except Exception as exc:
         _log(f"Could not read Supabase settings (using env vars): {exc}")
+
+    # --- Build relevance engine (CV-driven, replaces all hardcoded regex filters) ---
+    try:
+        engine = relevance_engine.RelevanceEngine.from_supabase(
+            supabase_url, supabase_key, keywords
+        )
+    except Exception as exc:
+        _log(f"RelevanceEngine load error (non-fatal, using keyword-only fallback): {exc}")
+        engine = relevance_engine.RelevanceEngine(keywords, set(), set(), set())
 
     _log(f"Starting scan: {len(keywords)} keyword(s), location={location}, max_hours={max_hours}")
 
@@ -188,6 +205,15 @@ def main() -> None:
         kept = [j for j in jobs if gmail_scan._job_location_matches(j.get("Location", ""), location)]
         return kept, len(jobs) - len(kept)
 
+    def _nat_filter(jobs: list[dict], source_label: str) -> list[dict]:
+        """Drop jobs explicitly restricted to nationals / citizens of any country.
+        Logs the count of dropped jobs so it's visible in the GitHub Actions log."""
+        kept = [j for j in jobs if not relevance_engine.is_nationals_only(j)]
+        dropped = len(jobs) - len(kept)
+        if dropped:
+            _log(f"{source_label}: dropped {dropped} job(s) restricted to nationals/citizens")
+        return kept
+
     all_new_jobs: list[dict] = []
 
     for idx, keyword in enumerate(keywords):
@@ -211,6 +237,10 @@ def main() -> None:
                 li_jobs, li_dropped = _loc_filter(li_jobs)
                 if li_dropped:
                     _log(f"LinkedIn '{keyword}': dropped {li_dropped} job(s) outside '{location}'")
+                li_jobs = _nat_filter(li_jobs, f"LinkedIn '{keyword}'")
+                li_jobs, li_kw_dropped = engine.filter_jobs(li_jobs, log_prefix=f"LinkedIn '{keyword}'")
+                if li_kw_dropped:
+                    _log(f"LinkedIn '{keyword}': dropped {li_kw_dropped} unrelated job(s)")
                 summary = db.sync_jobs(supabase_url, supabase_key, li_jobs, source="LinkedIn")
                 _log(
                     f"LinkedIn '{keyword}': "
@@ -232,6 +262,10 @@ def main() -> None:
                 indeed_jobs, indeed_dropped = _loc_filter(indeed_jobs)
                 if indeed_dropped:
                     _log(f"Indeed '{keyword}': dropped {indeed_dropped} job(s) outside '{location}'")
+                indeed_jobs = _nat_filter(indeed_jobs, f"Indeed '{keyword}'")
+                indeed_jobs, indeed_kw_dropped = engine.filter_jobs(indeed_jobs, log_prefix=f"Indeed '{keyword}'")
+                if indeed_kw_dropped:
+                    _log(f"Indeed '{keyword}': dropped {indeed_kw_dropped} unrelated job(s)")
                 summary = db.sync_jobs(supabase_url, supabase_key, indeed_jobs, source="Indeed")
                 _log(
                     f"Indeed '{keyword}': "
@@ -254,6 +288,10 @@ def main() -> None:
                 adzuna_jobs, adzuna_dropped = _loc_filter(adzuna_jobs)
                 if adzuna_dropped:
                     _log(f"Adzuna '{keyword}': dropped {adzuna_dropped} job(s) outside '{location}'")
+                adzuna_jobs = _nat_filter(adzuna_jobs, f"Adzuna '{keyword}'")
+                adzuna_jobs, adzuna_kw_dropped = engine.filter_jobs(adzuna_jobs, log_prefix=f"Adzuna '{keyword}'")
+                if adzuna_kw_dropped:
+                    _log(f"Adzuna '{keyword}': dropped {adzuna_kw_dropped} unrelated job(s)")
                 summary = db.sync_jobs(supabase_url, supabase_key, adzuna_jobs, source="Adzuna")
                 _log(
                     f"Adzuna '{keyword}': "
@@ -283,6 +321,10 @@ def main() -> None:
                     web_jobs, web_dropped = _loc_filter(web_jobs)
                     if web_dropped:
                         _log(f"WebSearch '{keyword}': dropped {web_dropped} job(s) outside '{location}'")
+                    web_jobs = _nat_filter(web_jobs, f"WebSearch '{keyword}'")
+                    web_jobs, web_kw_dropped = engine.filter_jobs(web_jobs, log_prefix=f"WebSearch '{keyword}'")
+                    if web_kw_dropped:
+                        _log(f"WebSearch '{keyword}': dropped {web_kw_dropped} unrelated job(s)")
                 if web_jobs:
                     summary = db.sync_jobs(supabase_url, supabase_key, web_jobs, source="Web")
                     _log(
@@ -302,6 +344,14 @@ def main() -> None:
             gm_jobs = gmail_scan.scan_gmail(
                 gmail_email, gmail_password, location=location
             )
+            if gm_jobs:
+                gm_jobs = _nat_filter(gm_jobs, "Gmail")
+            if gm_jobs:
+                # Gmail jobs have no per-keyword context — the engine already
+                # carries all active keywords so a single pass covers them all.
+                gm_jobs, gm_dropped = engine.filter_jobs(gm_jobs, log_prefix="Gmail")
+                if gm_dropped:
+                    _log(f"Gmail: dropped {gm_dropped} unrelated job(s) (not matching any keyword or CV skills)")
             if gm_jobs:
                 by_source: dict[str, list] = {}
                 for job in gm_jobs:
@@ -338,15 +388,59 @@ def main() -> None:
             _log(f"Score merge error (non-fatal): {exc}")
 
     # --- Send Telegram alerts ---
+    # IMPORTANT: Worker only alerts jobs that already have a score >= min_score.
+    # Unscored jobs (the vast majority of newly inserted jobs) are NOT alerted here —
+    # enricher.py scores them and sends the alert only if score >= min_score.
+    # This ensures the min_score setting is respected end-to-end.
     if tg_token and tg_chat:
         sent_count = 0
+        skipped_sent = 0
+        skipped_unscored = 0
+        skipped_low_score = 0
+        # Load already-notified URLs so we never double-send (e.g. if worker
+        # retried after a crash, or enricher already sent a score alert)
+        try:
+            already_sent = db.get_telegram_sent_urls(supabase_url, supabase_key)
+        except Exception:
+            already_sent = set()
+
         for job in all_new_jobs:
+            job_url = job.get("Url", "")
+
+            if job_url in already_sent:
+                skipped_sent += 1
+                continue
+
+            llm_score = job.get("llm_score")
+
+            # No score yet — enricher will score and alert after this run
+            if llm_score is None:
+                skipped_unscored += 1
+                continue
+
+            # Score exists but is below the user's threshold — skip silently
+            if llm_score < min_score:
+                skipped_low_score += 1
+                _log(f"Telegram: skipped low-score job ({llm_score}/{min_score}) — {job.get('Title', '?')}")
+                continue
+
             ok = tg.send_job_alert(tg_token, tg_chat, job)
             if ok:
                 sent_count += 1
+                try:
+                    db.mark_telegram_sent(supabase_url, supabase_key, job_url)
+                except Exception:
+                    pass
                 time.sleep(0.3)  # avoid Telegram flood limits
             else:
                 _log(f"Failed to send Telegram alert for: {job.get('Title', '?')}")
+
+        if skipped_sent:
+            _log(f"Telegram: skipped {skipped_sent} already-notified job(s).")
+        if skipped_unscored:
+            _log(f"Telegram: deferred {skipped_unscored} unscored job(s) — enricher will alert after scoring.")
+        if skipped_low_score:
+            _log(f"Telegram: suppressed {skipped_low_score} low-score job(s) (score < {min_score}).")
         _log(f"Telegram: sent {sent_count}/{len(all_new_jobs)} alert(s).")
     else:
         _log("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing). Skipping alerts.")

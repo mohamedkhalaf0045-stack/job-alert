@@ -21,6 +21,7 @@ bot_state keys written:
     cv_certifications   comma-separated list
     cv_languages        comma-separated list
     cv_education        comma-separated list
+    cv_domain_terms     comma-separated filter words (auto-derived from skills+titles)
     cv_analyzed_at      ISO timestamp (UTC)
 """
 
@@ -41,6 +42,15 @@ import db
 
 DEFAULT_MODEL  = "llama3.1:latest"
 DEFAULT_OLLAMA = "http://localhost:11434"
+
+# Stopwords stripped when generating domain filter terms from the CV.
+# These common words add no signal to a title-matching rule.
+_DOMAIN_STOPWORDS = frozenset({
+    "and", "or", "the", "of", "in", "at", "for", "to", "with",
+    "using", "via", "a", "an", "be", "are", "is", "was", "as",
+    "on", "by", "from", "up", "into", "over", "under", "its",
+    "that", "this", "has", "have", "not", "but",
+})
 
 
 def _log(msg: str) -> None:
@@ -173,11 +183,46 @@ def analyze_cv(
 
 
 # ---------------------------------------------------------------------------
+# Domain term generation
+# ---------------------------------------------------------------------------
+
+def generate_domain_terms(profile: dict) -> list[str]:
+    """Derive job-domain filter words from the CV's skills and job titles.
+
+    Splits every word in skills + job_titles on whitespace / hyphens / slashes,
+    lower-cases, strips non-alphanumeric chars (except +/#), removes stopwords,
+    keeps words ≥ 3 characters, and deduplicates.
+
+    Example:
+      skills     = ["Windows Server", "Active Directory", "PowerShell", "Networking"]
+      job_titles = ["IT Support Engineer", "System Administrator"]
+      → domain_terms = ["active", "administrator", "directory", "engineer",
+                         "networking", "powershell", "server", "support",
+                         "system", "windows"]
+
+    These terms are stored as cv_domain_terms in Supabase and used by
+    relevance_engine.RelevanceEngine as the Tier-4 catch-all domain filter.
+    """
+    words: set[str] = set()
+    sources = profile.get("skills", []) + profile.get("job_titles", [])
+    for item in sources:
+        for word in re.split(r"[\s/\-\.]+", str(item).lower()):
+            word = re.sub(r"[^a-z0-9+#]", "", word)
+            if len(word) >= 3 and word not in _DOMAIN_STOPWORDS:
+                words.add(word)
+    return sorted(words)
+
+
+# ---------------------------------------------------------------------------
 # Supabase storage
 # ---------------------------------------------------------------------------
 
 def store_cv_profile(supabase_url: str, supabase_key: str, profile: dict) -> None:
-    """Persist the structured CV profile to Supabase bot_state."""
+    """Persist the structured CV profile to Supabase bot_state.
+
+    Also generates and stores cv_domain_terms — the word-level filter set used
+    by relevance_engine.RelevanceEngine (Tier-4 domain catch-all).
+    """
     def _csv(lst: list) -> str:
         return ", ".join(str(s) for s in lst if str(s).strip())
 
@@ -188,10 +233,16 @@ def store_cv_profile(supabase_url: str, supabase_key: str, profile: dict) -> Non
     db.set_config(supabase_url, supabase_key, "cv_certifications",   _csv(profile.get("certifications", [])))
     db.set_config(supabase_url, supabase_key, "cv_languages",        _csv(profile.get("languages", [])))
     db.set_config(supabase_url, supabase_key, "cv_education",        _csv(profile.get("education", [])))
+
+    # Generate and store domain filter terms (used by RelevanceEngine T4 tier)
+    domain_terms = generate_domain_terms(profile)
+    db.set_config(supabase_url, supabase_key, "cv_domain_terms",
+                  ", ".join(domain_terms))
+
     db.set_config(supabase_url, supabase_key, "cv_analyzed_at",
                   datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
     skill_count = len(profile.get("skills", []))
-    _log(f"CV profile stored ({skill_count} skills)")
+    _log(f"CV profile stored ({skill_count} skills, {len(domain_terms)} domain filter term(s))")
     # Print a parseable line so the PowerShell GUI can update its status label
     print(f"CV_SKILL_COUNT={skill_count}", flush=True)
 
@@ -216,6 +267,7 @@ def get_cv_profile(supabase_url: str, supabase_key: str) -> dict | None:
         "certifications":   _to_list(db.get_config(supabase_url, supabase_key, "cv_certifications",   "")),
         "languages":        _to_list(db.get_config(supabase_url, supabase_key, "cv_languages",        "")),
         "education":        _to_list(db.get_config(supabase_url, supabase_key, "cv_education",        "")),
+        "domain_terms":     _to_list(db.get_config(supabase_url, supabase_key, "cv_domain_terms",     "")),
         "cv_analyzed_at":   analyzed_at,
     }
 
@@ -309,6 +361,8 @@ def main() -> None:
         print(f"Languages     : {', '.join(profile['languages'])}")
         print(f"Education     : {', '.join(profile['education'])}")
         print(f"Summary       : {profile['summary']}")
+        domain_terms = profile.get("domain_terms", [])
+        print(f"Domain filter ({len(domain_terms)} terms): {', '.join(domain_terms[:30])}{'...' if len(domain_terms) > 30 else ''}")
         print("\n=== Scoring prompt block ===")
         print(format_profile_for_prompt(profile))
         sys.exit(0)

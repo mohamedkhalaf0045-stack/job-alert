@@ -60,7 +60,20 @@ def _plain_text(value: str) -> str:
 
 
 def _canonical_url(raw: str) -> str:
+    """Normalize a LinkedIn job URL for deduplication.
+
+    LinkedIn job URLs come in two shapes depending on the source:
+      - Guest API:   /jobs/view/4203456789
+      - Web search:  /jobs/view/it-support-specialist-at-company-4203456789
+    Both refer to the same job. Extract the trailing numeric ID and build a
+    stable canonical form so different sources produce the same URL string.
+    """
     try:
+        raw = (raw or "").strip()
+        if "linkedin.com/jobs/view/" in raw.lower():
+            m = re.search(r'/jobs/view/[^/?#]*?(\d{7,})(?:[/?#]|$)', raw)
+            if m:
+                return f"https://www.linkedin.com/jobs/view/{m.group(1)}"
         p = urlparse(raw)
         return urlunparse((p.scheme, p.netloc, p.path, "", "", "")).rstrip("/")
     except Exception:
