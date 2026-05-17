@@ -1,7 +1,7 @@
 name: job_alert_mobile
 description: Job Alert mobile controller — cloud status and job browser.
 publish_to: none
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

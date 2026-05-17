@@ -1,0 +1,41 @@
+name: Easy Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Job ID to apply to (from Supabase jobs table)'
+        required: true
+        type: string
+
+jobs:
+  apply:
+    name: Auto-fill Easy Apply form
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install requests playwright
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run Easy Apply executor
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python cloud/apply_executor.py --job-id "${{ inputs.job_id }}"

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/job.dart';
 import '../services/supabase_service.dart';
+import 'apply_preview_screen.dart';
 
 class JobDetailScreen extends StatefulWidget {
   final Job job;
@@ -114,7 +115,37 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             ),
           ],
 
-          const SizedBox(height: 32),
+          // ── Easy Apply ─────────────────────────────────────────────────
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ApplyPreviewScreen(job: job),
+                ),
+              );
+              // Refresh status in case the apply screen marked it as applied
+              if (mounted) setState(() => _status = 'applied');
+            },
+            icon: const Icon(Icons.bolt),
+            label: const Text('Easy Apply'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.teal,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              minimumSize: const Size.fromHeight(48),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Preview & confirm your answers before the form is auto-filled.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+          ),
+
+          const SizedBox(height: 24),
           const Text('Update status:',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),

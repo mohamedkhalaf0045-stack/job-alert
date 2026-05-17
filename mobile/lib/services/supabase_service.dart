@@ -152,6 +152,60 @@ class SupabaseService {
     }
   }
 
+  // ── CV profile ───────────────────────────────────────────────────────────
+
+  /// Loads all cv_* keys from bot_state in one round-trip.
+  static Future<Map<String, String>> getCvProfile() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_base/bot_state?key=like.cv_%25&select=key,value'),
+        headers: _headers,
+      );
+      if (res.statusCode != 200) return {};
+      final rows = jsonDecode(res.body) as List<dynamic>;
+      return {
+        for (final r in rows)
+          (r['key'] as String): (r['value'] as String? ?? ''),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // ── Easy Apply ────────────────────────────────────────────────────────────
+
+  /// Stores an apply request as a JSON blob in bot_state.
+  /// Key: apply_req_{jobId}
+  static Future<bool> saveApplyRequest({
+    required String jobId,
+    required String jobUrl,
+    required String jobTitle,
+    required String company,
+    required Map<String, dynamic> answers,
+  }) async {
+    final data = jsonEncode({
+      'job_id':    jobId,
+      'job_url':   jobUrl,
+      'job_title': jobTitle,
+      'company':   company,
+      'answers':   answers,
+      'status':    'pending',
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    return setConfigValue('apply_req_$jobId', data);
+  }
+
+  /// Reads back a previously saved apply request.
+  static Future<Map<String, dynamic>?> getApplyRequest(String jobId) async {
+    final raw = await getConfigValue('apply_req_$jobId', '');
+    if (raw.isEmpty) return null;
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<bool> saveSettings(AppSettings s) async {
     try {
       final entries = s.toMap().entries.toList();

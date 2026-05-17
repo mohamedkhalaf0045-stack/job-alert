@@ -146,6 +146,17 @@ class GitHubService {
     return res.statusCode == 202;
   }
 
+  /// Dispatch the easy-apply.yml workflow for the given jobId.
+  static Future<bool> triggerEasyApply(String jobId) async {
+    final res = await http.post(
+      Uri.parse(
+          '$_base/repos/${Config.githubRepo}/actions/workflows/easy-apply.yml/dispatches'),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({'ref': 'main', 'inputs': {'job_id': jobId}}),
+    );
+    return res.statusCode == 204;
+  }
+
   static Future<bool> toggleSchedule(int workflowId, bool currentlyActive) async {
     final action = currentlyActive ? 'disable' : 'enable';
     final res = await http.put(
