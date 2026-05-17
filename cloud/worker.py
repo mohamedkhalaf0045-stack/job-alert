@@ -328,6 +328,16 @@ def main() -> None:
                     if web_dropped:
                         _log(f"WebSearch '{keyword}': dropped {web_dropped} job(s) outside '{location}'")
                     web_jobs = _nat_filter(web_jobs, f"WebSearch '{keyword}'")
+                    # Age filter: API freshness hints are best-effort; drop jobs whose
+                    # age is positively confirmed (via snippet text/date) to be too old.
+                    # Jobs with unknown age (inf) pass through, matching LinkedIn behaviour.
+                    web_fresh = [j for j in web_jobs
+                                 if (a := li_scraper.get_posted_age_hours(j)) == float("inf")
+                                 or a <= max_hours]
+                    web_stale = len(web_jobs) - len(web_fresh)
+                    if web_stale:
+                        _log(f"WebSearch '{keyword}': dropped {web_stale} stale job(s) older than {max_hours}h")
+                    web_jobs = web_fresh
                     web_jobs, web_kw_dropped = engine.filter_jobs(web_jobs, log_prefix=f"WebSearch '{keyword}'")
                     if web_kw_dropped:
                         _log(f"WebSearch '{keyword}': dropped {web_kw_dropped} unrelated job(s)")

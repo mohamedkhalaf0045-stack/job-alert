@@ -78,6 +78,13 @@ def _is_job_url(url: str) -> bool:
         return False
 
 
+_AGE_IN_SNIPPET = re.compile(
+    r"\d+\s*(?:minute|hour|day|week|month|year)s?\s*ago|just\s*now|just\s*posted|today",
+    re.I,
+)
+_DATE_IN_SNIPPET = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+
 def _parse_result(title: str, url: str, snippet: str, keyword: str, source_tag: str) -> dict | None:
     """Convert a single search result into a job dict. Returns None if it looks non-job."""
     if not _is_job_url(url):
@@ -101,6 +108,10 @@ def _parse_result(title: str, url: str, snippet: str, keyword: str, source_tag: 
     )
     location_str = loc_match.group(0) if loc_match else "UAE"
 
+    # Extract age/date from snippet so the caller can apply an age filter
+    age_m  = _AGE_IN_SNIPPET.search(snippet)
+    date_m = _DATE_IN_SNIPPET.search(snippet)
+
     return {
         "Id":         _url_id(url),
         "Keyword":    keyword,
@@ -108,8 +119,8 @@ def _parse_result(title: str, url: str, snippet: str, keyword: str, source_tag: 
         "Company":    company,
         "Location":   location_str,
         "Url":        _canonical_url(url),
-        "PostedDate": "",
-        "PostedText": "",
+        "PostedDate": date_m.group(1) if date_m and not age_m else "",
+        "PostedText": age_m.group(0)  if age_m  else "",
         "IsApplied":  False,
         "Source":     source_tag,
     }
