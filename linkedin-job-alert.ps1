@@ -1294,7 +1294,8 @@ function Invoke-JobScan {
                 if ($searchLinkedIn) {
                     $state.LogQueue.Enqueue("Checking LinkedIn '$keyword'...")
                     $liJobs = @(Get-LinkedInJobs -Keyword $keyword -Location $location `
-                                -CookieHeader $cookieHeader -HideAppliedJobs:$hideApplied)
+                                -CookieHeader $cookieHeader -HideAppliedJobs:$hideApplied `
+                                -MaxHours $maxHours)
                     $dbSync = Sync-JobsToDatabase -Jobs $liJobs -Source "LinkedIn"
                     $state.LogQueue.Enqueue("LinkedIn '$keyword': +$($dbSync.inserted) new, $($dbSync.seen) known.")
                 }

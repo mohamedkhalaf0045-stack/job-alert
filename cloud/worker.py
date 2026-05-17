@@ -394,14 +394,18 @@ def main() -> None:
             _log(f"Score merge error (non-fatal): {exc}")
 
     # --- Send Telegram alerts ---
-    # IMPORTANT: Worker only alerts jobs that already have a score >= min_score.
-    # Unscored jobs (the vast majority of newly inserted jobs) are NOT alerted here —
-    # enricher.py scores them and sends the alert only if score >= min_score.
-    # This ensures the min_score setting is respected end-to-end.
+    # Worker sends a basic "new job" alert for every new relevant job immediately.
+    # Enricher (runs locally with Ollama) later sends a richer "scored" alert,
+    # but only for jobs scoring >= min_score that were NOT already notified here.
+    # This ensures the user always gets timely notifications — even when enricher
+    # isn't running — because non-IT junk is already filtered out by the
+    # relevance engine before jobs ever reach this point.
+    #
+    # Exception: if a job was pre-scored (rare) and its score is below min_score,
+    # it is suppressed here too — no alert at all.
     if tg_token and tg_chat:
         sent_count = 0
         skipped_sent = 0
-        skipped_unscored = 0
         skipped_low_score = 0
         # Load already-notified URLs so we never double-send (e.g. if worker
         # retried after a crash, or enricher already sent a score alert)
@@ -419,15 +423,11 @@ def main() -> None:
 
             llm_score = job.get("llm_score")
 
-            # No score yet — enricher will score and alert after this run
-            if llm_score is None:
-                skipped_unscored += 1
-                continue
-
-            # Score exists but is below the user's threshold — skip silently
-            if llm_score < min_score:
+            # Job was pre-scored (rare — enricher ran before this worker cycle)
+            # and score is below threshold. Suppress silently.
+            if llm_score is not None and llm_score < min_score:
                 skipped_low_score += 1
-                _log(f"Telegram: skipped low-score job ({llm_score}/{min_score}) — {job.get('Title', '?')}")
+                _log(f"Telegram: skipped pre-scored low-score job ({llm_score}/{min_score}) — {job.get('Title', '?')}")
                 continue
 
             ok = tg.send_job_alert(tg_token, tg_chat, job)
@@ -443,10 +443,8 @@ def main() -> None:
 
         if skipped_sent:
             _log(f"Telegram: skipped {skipped_sent} already-notified job(s).")
-        if skipped_unscored:
-            _log(f"Telegram: deferred {skipped_unscored} unscored job(s) — enricher will alert after scoring.")
         if skipped_low_score:
-            _log(f"Telegram: suppressed {skipped_low_score} low-score job(s) (score < {min_score}).")
+            _log(f"Telegram: suppressed {skipped_low_score} pre-scored low-score job(s) (score < {min_score}).")
         _log(f"Telegram: sent {sent_count}/{len(all_new_jobs)} alert(s).")
     else:
         _log("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing). Skipping alerts.")

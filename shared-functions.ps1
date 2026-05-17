@@ -40,16 +40,20 @@ function New-SearchUrl {
         [string]$Keyword,
         [string]$Location,
         [int]$Start,
+        [int]$MaxHours = 72,
         [bool]$UseAuthenticatedSearch = $false  # kept for signature compat; ignored
     )
 
     $encodedKeyword  = [System.Uri]::EscapeDataString($Keyword)
     $encodedLocation = [System.Uri]::EscapeDataString($Location)
+    $tpr = [Math]::Max($MaxHours, 1) * 3600   # LinkedIn uses seconds; f_TPR=r<secs>
 
     # Always use the guest API endpoint — it returns HTML fragments that
     # Parse-JobCards understands. The cookie (if present) is still sent by
     # Invoke-GetStringWithRetry, which lets LinkedIn mark applied jobs.
-    return "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=$encodedKeyword&location=$encodedLocation&start=$Start"
+    # f_TPR restricts results to jobs posted within MaxHours — matching what
+    # LinkedIn's own job-alert algorithm uses, and reducing bot-detection risk.
+    return "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=$encodedKeyword&location=$encodedLocation&start=$Start&f_TPR=r$tpr"
 }
 
 function Invoke-GetStringWithRetry {
@@ -149,6 +153,25 @@ function Parse-JobCards {
         $normalizedChunk = Convert-ToPlainText $chunk
         $applied = $normalizedChunk -match '(?i)\b(applied|application submitted|submitted|already applied)\b'
 
+        # Extract posting age from <time> element; fall back to plain-text age string
+        # ("1 week ago", "3 days ago") when the element is absent.  This prevents
+        # LinkedIn's f_TPR-leaked old jobs from slipping through the age filter.
+        $postedDateVal = ""
+        $postedTextVal = ""
+        if ($timeMatch.Success) {
+            $postedDateVal = Convert-ToPlainText $timeMatch.Groups[1].Value
+            $postedTextVal = Convert-ToPlainText $timeMatch.Groups[2].Value
+        } else {
+            $ageTextMatch = [regex]::Match(
+                $normalizedChunk,
+                '\b(\d+)\s+(second|minute|hour|day|week|month)s?\s+ago\b',
+                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
+            if ($ageTextMatch.Success) {
+                $postedTextVal = $ageTextMatch.Value  # e.g. "1 week ago"
+            }
+        }
+
         $items += [pscustomobject]@{
             Id         = $idMatch.Groups[1].Value
             Keyword    = $Keyword
@@ -156,8 +179,8 @@ function Parse-JobCards {
             Company    = if ($companyMatch.Success) { Convert-ToPlainText $companyMatch.Groups[1].Value } else { "" }
             Location   = if ($locationMatch.Success) { Convert-ToPlainText $locationMatch.Groups[1].Value } else { "" }
             Url        = $rawUrl
-            PostedDate = if ($timeMatch.Success) { Convert-ToPlainText $timeMatch.Groups[1].Value } else { "" }
-            PostedText = if ($timeMatch.Success) { Convert-ToPlainText $timeMatch.Groups[2].Value } else { "" }
+            PostedDate = $postedDateVal
+            PostedText = $postedTextVal
             IsApplied  = $applied
             Source     = "LinkedIn"
         }
@@ -175,8 +198,10 @@ function Get-PostedAgeHours {
     if (-not [string]::IsNullOrWhiteSpace($postedText)) {
         if ($postedText -match '(?i)(\d+)\s*hour')   { return [double]$matches[1] }
         if ($postedText -match '(?i)(\d+)\s*minute') { return 0 }
+        if ($postedText -match '(?i)(\d+)\s*second') { return 0 }
         if ($postedText -match '(?i)(\d+)\s*day')    { return ([double]$matches[1]) * 24 }
         if ($postedText -match '(?i)(\d+)\s*week')   { return ([double]$matches[1]) * 24 * 7 }
+        if ($postedText -match '(?i)(\d+)\s*month')  { return ([double]$matches[1]) * 24 * 30 }
         if ($postedText -match '(?i)just now|just posted|today') { return 0 }
     }
 
@@ -201,7 +226,8 @@ function Get-LinkedInJobs {
         [string]$Keyword,
         [string]$Location,
         [string]$CookieHeader = "",
-        [bool]$HideAppliedJobs = $false
+        [bool]$HideAppliedJobs = $false,
+        [int]$MaxHours = 72
     )
 
     $allJobs = @()
@@ -214,7 +240,7 @@ function Get-LinkedInJobs {
         if ($script:LogFunction) {
             & $script:LogFunction "  LinkedIn '$Keyword' page $pageNum - fetching..."
         }
-        $url  = New-SearchUrl -Keyword $Keyword -Location $Location -Start $offset -UseAuthenticatedSearch:$useAuthenticatedSearch
+        $url  = New-SearchUrl -Keyword $Keyword -Location $Location -Start $offset -MaxHours $MaxHours -UseAuthenticatedSearch:$useAuthenticatedSearch
         $html = Invoke-GetStringWithRetry -Url $url -CookieHeader $CookieHeader -Referer "https://www.linkedin.com/jobs/"
 
         if ($useAuthenticatedSearch -and $html -match 'sign-in-modal' -and $html -match 'public_jobs') {

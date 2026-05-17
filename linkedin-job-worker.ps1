@@ -282,7 +282,7 @@ function Invoke-WorkerScan {
         $indeedJobs = @()
         $log        = [System.Collections.Generic.List[string]]::new()
         try {
-            $liJobs     = @(Get-LinkedInJobs -Keyword $Keyword -Location $Location -CookieHeader $CookieHeader -HideAppliedJobs:$HideAppliedJobs)
+            $liJobs     = @(Get-LinkedInJobs -Keyword $Keyword -Location $Location -CookieHeader $CookieHeader -HideAppliedJobs:$HideAppliedJobs -MaxHours $MaxHours)
             $indeedJobs = @(Get-IndeedJobs   -Keyword $Keyword -Location $Location -MaxHours $MaxHours)
         } catch {
             $log.Add("Fetch error for '$Keyword': $($_.Exception.Message)")
