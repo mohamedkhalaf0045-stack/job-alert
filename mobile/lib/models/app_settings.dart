@@ -13,6 +13,7 @@ class AppSettings {
   final bool searchGmail;
   final String gmailEmail;
   final String gmailAppPassword;
+  final String githubToken;
 
   const AppSettings({
     required this.keywords,
@@ -29,6 +30,7 @@ class AppSettings {
     required this.searchGmail,
     required this.gmailEmail,
     required this.gmailAppPassword,
+    required this.githubToken,
   });
 
   factory AppSettings.defaults() => AppSettings(
@@ -46,6 +48,7 @@ class AppSettings {
         searchGmail: false,
         gmailEmail: '',
         gmailAppPassword: '',
+        githubToken: '',
       );
 
   static String deviceTimezone() {
@@ -75,6 +78,7 @@ class AppSettings {
         searchGmail: (map['search_gmail'] ?? 'false') != 'false',
         gmailEmail: map['gmail_email'] ?? '',
         gmailAppPassword: map['gmail_app_password'] ?? '',
+        githubToken: map['github_token'] ?? '',
       );
 
   Map<String, String> toMap() => {
@@ -92,6 +96,7 @@ class AppSettings {
         'search_gmail': searchGmail.toString(),
         'gmail_email': gmailEmail,
         'gmail_app_password': gmailAppPassword,
+        'github_token': githubToken,
       };
 
   /// Parses the stored timezone string and returns its UTC offset in hours.

@@ -47,7 +47,13 @@ jobs:
 
       - name: Build APKs (split per ABI)
         working-directory: mobile
-        run: flutter build apk --release --split-per-abi
+        # GH_PAT = a GitHub fine-grained PAT with Actions: Read & Write permission.
+        # Add it as a repo secret named GH_PAT so the Cloud tab works in the APK.
+        # The app also reads setting_github_token from Supabase at runtime, so you
+        # can update the token without rebuilding the APK.
+        run: |
+          flutter build apk --release --split-per-abi \
+            --dart-define=GITHUB_TOKEN=${{ secrets.GH_PAT }}
 
       - name: Resolve tag name
         id: tag

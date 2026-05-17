@@ -2,14 +2,42 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/cloud_status.dart';
+import 'supabase_service.dart';
 
 class GitHubService {
   static const _base = 'https://api.github.com';
 
-  static Map<String, String> get _headers => {
-        'Authorization': 'Bearer ${Config.githubToken}',
-        'Accept': 'application/vnd.github+json',
-      };
+  // Runtime token — seeded from compile-time --dart-define, then overridden
+  // by the value stored in Supabase (setting_github_token).  Updated whenever
+  // the settings screen saves a new token.
+  static String _token = Config.githubToken;
+
+  /// Called once at app startup. Reads setting_github_token from Supabase and
+  /// caches it so all subsequent API calls use the correct PAT.
+  static Future<void> loadToken() async {
+    try {
+      final stored = await SupabaseService.getConfigValue('setting_github_token', '');
+      if (stored.isNotEmpty) {
+        _token = stored;
+      }
+    } catch (_) {}
+  }
+
+  /// Called by the settings screen after saving a new token.
+  static void setToken(String token) => _token = token.trim();
+
+  /// Returns the headers map.  Authorization is omitted when the token is empty
+  /// so that unauthenticated requests to public repos work (GitHub returns 401
+  /// for an *empty* Bearer token, but 200 for a request with NO auth header).
+  static Map<String, String> get _headers {
+    final h = <String, String>{
+      'Accept': 'application/vnd.github+json',
+    };
+    if (_token.isNotEmpty) {
+      h['Authorization'] = 'Bearer $_token';
+    }
+    return h;
+  }
 
   static Future<CloudStatus> getCloudStatus() async {
     // 1. Get latest run
@@ -18,15 +46,15 @@ class GitHubService {
       headers: _headers,
     );
     if (runsRes.statusCode != 200) {
-      String errorMsg = 'API error';
-      if (Config.githubToken.isEmpty) {
-        errorMsg = 'No GitHub token configured';
+      String errorMsg = 'API error (${runsRes.statusCode})';
+      if (_token.isEmpty) {
+        errorMsg = 'No GitHub token — add it in Settings';
       } else if (runsRes.statusCode == 401 || runsRes.statusCode == 403) {
-        errorMsg = 'GitHub token invalid';
+        errorMsg = 'GitHub token invalid or expired';
       } else if (runsRes.statusCode >= 500) {
         errorMsg = 'GitHub service error';
       } else if (runsRes.statusCode == 404) {
-        errorMsg = 'Repo not found';
+        errorMsg = 'Repo / workflow not found';
       }
       return CloudStatus(lampColor: 'grey', lastRunTime: errorMsg);
     }

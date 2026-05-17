@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../models/app_settings.dart';
 import '../services/supabase_service.dart';
+import '../services/github_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -27,6 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _updateCodeCtrl  = TextEditingController();
   final _gmailEmailCtrl  = TextEditingController();
   final _gmailPassCtrl   = TextEditingController();
+  final _ghTokenCtrl     = TextEditingController();
   String _currentVersion = '';
 
   bool _searchLinkedIn = true;
@@ -34,6 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _searchGmail    = false;
   bool _showCookie     = false;
   bool _showGmailPass  = false;
+  bool _showGhToken    = false;
   bool _loading        = true;
   bool _saving         = false;
 
@@ -59,6 +62,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _updateCodeCtrl.dispose();
     _gmailEmailCtrl.dispose();
     _gmailPassCtrl.dispose();
+    _ghTokenCtrl.dispose();
     super.dispose();
   }
 
@@ -86,6 +90,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _searchGmail         = s.searchGmail;
           _gmailEmailCtrl.text = s.gmailEmail;
           _gmailPassCtrl.text  = s.gmailAppPassword;
+          _ghTokenCtrl.text    = s.githubToken;
           _updateUrlCtrl.text  = url;
           _updateVerCtrl.text  = ver;
           _updateCodeCtrl.text = code;
@@ -125,7 +130,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       searchGmail:        _searchGmail,
       gmailEmail:         _gmailEmailCtrl.text.trim(),
       gmailAppPassword:   _gmailPassCtrl.text.trim(),
+      githubToken:        _ghTokenCtrl.text.trim(),
     );
+
+    // Update the in-memory token immediately so the Cloud tab picks it up
+    // without needing an app restart.
+    GitHubService.setToken(_ghTokenCtrl.text.trim());
 
     final results = await Future.wait([
       SupabaseService.saveSettings(settings),
@@ -246,6 +256,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
           _Section('Authentication'),
+          TextFormField(
+            controller: _ghTokenCtrl,
+            obscureText: !_showGhToken,
+            decoration: InputDecoration(
+              labelText: 'GitHub Personal Access Token',
+              helperText: 'github.com → Settings → Developer settings → Personal access tokens → Fine-grained → Actions: Read & Write',
+              suffixIcon: IconButton(
+                icon: Icon(_showGhToken ? Icons.visibility_off : Icons.visibility),
+                onPressed: () => setState(() => _showGhToken = !_showGhToken),
+              ),
+            ),
+            maxLines: _showGhToken ? 2 : 1,
+          ),
+          const SizedBox(height: 12),
           TextFormField(
             controller: _cookieCtrl,
             obscureText: !_showCookie,
