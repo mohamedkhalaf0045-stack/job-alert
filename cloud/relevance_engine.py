@@ -51,6 +51,37 @@ _STOPWORDS = frozenset({
 })
 
 
+# ── Generic role words (T4 guard) ─────────────────────────────────────────────
+#
+# These words appear in both IT and non-IT job titles, so they are too ambiguous
+# to trigger T4 acceptance on their own.  When cv_analyzer extracts domain terms
+# from the user's CV (e.g. "IT Support Coordinator" → "coordinator"), these words
+# end up in cv_domain_terms and would otherwise match unrelated roles like
+# "Packaging Coordinator" or "Document Controller".
+#
+# T4 only fires when at least one match is NOT in this set — i.e. there must be
+# a genuinely IT-flavoured domain word in the title alongside the generic one.
+# T1/T2/T3 are unaffected: "IT Support Coordinator" is already accepted by T1
+# (keyword word "support"), so removing "coordinator" from T4 causes no loss.
+
+_GENERIC_ROLE_WORDS = frozenset({
+    "coordinator",    # Packaging Coordinator, Logistics Coordinator
+    "controller",     # Document Controller, Financial Controller
+    "inspector",      # Site Inspector, Quality Inspector
+    "supervisor",     # Floor Supervisor, Warehouse Supervisor
+    "officer",        # Compliance Officer, Safety Officer, HSE Officer
+    "assistant",      # Administrative Assistant, Executive Assistant
+    "associate",      # Sales Associate, Operations Associate
+    "executive",      # Sales Executive, Marketing Executive
+    "representative", # Sales Representative, Brand Representative
+    "planner",        # Event Planner, Urban Planner
+    "advisor",        # Financial Advisor, HR Advisor
+    "facilitator",    # Training Facilitator
+    "liaison",        # Client Liaison, Site Liaison
+    "specialist",     # Packaging Specialist — legitimate IT use (T1/T3 cover those)
+})
+
+
 # ── Hard-reject patterns (T5) ─────────────────────────────────────────────────
 #
 # Titles that are unambiguously outside the IT/technology domain, regardless
@@ -82,9 +113,15 @@ _HARD_REJECT = re.compile(
     # ── Healthcare / hospitality / transport ──────────────────────────────────
     r"nurse|nursing|doctor|physician|medical\s+(officer|representative)|pharmacist|"
     r"chef|cook|barista|waiter|waitress|driver|delivery\s+(driver|rider)|"
-    # ── Supply chain / procurement ────────────────────────────────────────────
+    # ── Supply chain / procurement / physical coordination ───────────────────
     r"procurement\s+(manager|officer)|supply\s+chain\s+(manager|coordinator)|"
     r"logistics\s+(coordinator|manager)|"
+    r"packaging\s+(coordinator|specialist|engineer|technician|manager|operator)|"
+    r"document\s+controller|"
+    r"materials\s+(coordinator|controller|planner|handler|specialist)|"
+    r"warehouse\s+(coordinator|supervisor|manager|operative)|"
+    r"quality\s+inspector|"
+    r"hse\s+(officer|engineer|manager|advisor)|health\s+safety\s+environment|"
     # ── Education / teaching ──────────────────────────────────────────────────
     r"teacher|teaching\s+assistant|lecturer|professor|tutor|"
     r"academic\s+(coordinator|advisor|director|dean)|"
@@ -323,9 +360,14 @@ class RelevanceEngine:
             return False, f"T5:hard_reject({fragment})"
 
         # T4 — CV domain-term catch-all
+        # Strip generic role words (coordinator, controller, inspector, …) so that
+        # a single vague word can't accept an unrelated role (e.g. "Packaging
+        # Coordinator" matching only on "coordinator" from the user's CV titles).
+        # A job must contain at least one genuinely IT-flavoured domain term.
         matches = title_words & self.cv_domain_terms
-        if matches:
-            sample = next(iter(matches))
+        real_matches = matches - _GENERIC_ROLE_WORDS
+        if real_matches:
+            sample = next(iter(real_matches))
             return True, f"T4:domain_term({sample})"
 
         return False, "REJECT:no_match"
