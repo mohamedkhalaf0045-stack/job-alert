@@ -55,6 +55,60 @@ def _freshness_params(max_hours: int) -> dict:
     return     {"tavily_days": 365, "brave": "py",    "google": "y1",    "bing": "Month"}
 
 
+# ── date extraction from snippet text ────────────────────────────────────────
+
+_AGO_RE = re.compile(
+    r"(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago", re.I
+)
+_TODAY_RE    = re.compile(r"\bjust\s+now\b|\btoday\b",    re.I)
+_YESTERDAY_RE = re.compile(r"\byesterday\b",              re.I)
+
+def _extract_posted_date(snippet: str) -> tuple[str, str]:
+    """Try to parse a posting date / relative age from a search-result snippet.
+
+    Returns (human_text, iso_utc_string).
+    Both are empty strings if no recognisable date phrase is found.
+
+    Examples that are handled:
+        "Posted 2 days ago"           → ("2 days ago", "2025-05-15T...")
+        "3 weeks ago · Dubai"         → ("3 weeks ago", "2025-04-26T...")
+        "1 year ago"                  → ("1 year ago",  "2024-05-17T...")
+        "Just now"                    → ("Just now",    "2025-05-17T...")
+        "Yesterday"                   → ("Yesterday",   "2025-05-16T...")
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+
+    m = _AGO_RE.search(snippet)
+    if m:
+        n    = int(m.group(1))
+        unit = m.group(2).lower()
+        deltas = {
+            "second": timedelta(seconds=n),
+            "minute": timedelta(minutes=n),
+            "hour":   timedelta(hours=n),
+            "day":    timedelta(days=n),
+            "week":   timedelta(weeks=n),
+            "month":  timedelta(days=n * 30),
+            "year":   timedelta(days=n * 365),
+        }
+        delta = deltas.get(unit)
+        if delta is not None:
+            dt = now - delta
+            return m.group(0), dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if _TODAY_RE.search(snippet):
+        return "Today", now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if _YESTERDAY_RE.search(snippet):
+        from datetime import timedelta as _td
+        dt = now - _td(days=1)
+        return "Yesterday", dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return "", ""
+
+
 # ── result → job dict ─────────────────────────────────────────────────────────
 
 _TITLE_SEPARATORS = re.compile(r"\s*[-|–—·•@]\s*")
@@ -101,6 +155,11 @@ def _parse_result(title: str, url: str, snippet: str, keyword: str, source_tag: 
     )
     location_str = loc_match.group(0) if loc_match else "UAE"
 
+    # Try to extract posting age from the snippet (e.g. "3 days ago", "1 year ago").
+    # This populates PostedDate so worker.py's age gate can reject stale results
+    # that slipped through the search engine's advisory freshness parameter.
+    posted_text, posted_date_str = _extract_posted_date(snippet)
+
     return {
         "Id":         _url_id(url),
         "Keyword":    keyword,
@@ -108,8 +167,8 @@ def _parse_result(title: str, url: str, snippet: str, keyword: str, source_tag: 
         "Company":    company,
         "Location":   location_str,
         "Url":        _canonical_url(url),
-        "PostedDate": "",
-        "PostedText": "",
+        "PostedDate": posted_date_str,
+        "PostedText": posted_text,
         "IsApplied":  False,
         "Source":     source_tag,
     }

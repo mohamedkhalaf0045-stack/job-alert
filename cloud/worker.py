@@ -210,6 +210,42 @@ def main() -> None:
         kept = [j for j in jobs if gmail_scan._job_location_matches(j.get("Location", ""), location)]
         return kept, len(jobs) - len(kept)
 
+    def _age_filter(jobs: list[dict], source_label: str) -> tuple[list[dict], int]:
+        """Drop jobs whose PostedDate is set and older than max_hours.
+
+        Jobs with no PostedDate are passed through — we can't verify their age,
+        but the search-API freshness parameter already made a best-effort filter.
+        This is a safety net for cases where search engines ignore their own
+        freshness parameter (e.g. returning a 1-year-old Tes Jobs post for a
+        "past day" query).
+        """
+        if max_hours <= 0:
+            return jobs, 0
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_hours)
+        kept: list[dict] = []
+        dropped = 0
+        for job in jobs:
+            raw = (job.get("PostedDate") or "").strip()
+            if not raw:
+                kept.append(job)   # unknown age — accept
+                continue
+            try:
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < cutoff:
+                    dropped += 1
+                    _log(
+                        f"{source_label}: DROPPED stale job '{job.get('Title','?')}' "
+                        f"(posted ~{raw[:10]}, limit {max_hours}h)"
+                    )
+                    continue
+            except (ValueError, TypeError):
+                pass  # unparseable date — accept
+            kept.append(job)
+        return kept, dropped
+
     def _nat_filter(jobs: list[dict], source_label: str) -> list[dict]:
         """Drop jobs explicitly restricted to nationals / citizens of any country.
         Logs the count of dropped jobs so it's visible in the GitHub Actions log."""
@@ -240,6 +276,9 @@ def main() -> None:
                     max_hours=max_hours,
                     geo_id=li_geo_id,
                 )
+                li_jobs, li_age_dropped = _age_filter(li_jobs, f"LinkedIn '{keyword}'")
+                if li_age_dropped:
+                    _log(f"LinkedIn '{keyword}': dropped {li_age_dropped} stale job(s) (>{max_hours}h old)")
                 li_jobs, li_dropped = _loc_filter(li_jobs)
                 if li_dropped:
                     _log(f"LinkedIn '{keyword}': dropped {li_dropped} job(s) outside '{location}'")
@@ -265,6 +304,9 @@ def main() -> None:
                     location=location,
                     max_hours=max_hours,
                 )
+                indeed_jobs, ind_age_dropped = _age_filter(indeed_jobs, f"Indeed '{keyword}'")
+                if ind_age_dropped:
+                    _log(f"Indeed '{keyword}': dropped {ind_age_dropped} stale job(s) (>{max_hours}h old)")
                 indeed_jobs, indeed_dropped = _loc_filter(indeed_jobs)
                 if indeed_dropped:
                     _log(f"Indeed '{keyword}': dropped {indeed_dropped} job(s) outside '{location}'")
@@ -291,6 +333,9 @@ def main() -> None:
                     app_id=adzuna_app_id,
                     app_key=adzuna_app_key,
                 )
+                adzuna_jobs, az_age_dropped = _age_filter(adzuna_jobs, f"Adzuna '{keyword}'")
+                if az_age_dropped:
+                    _log(f"Adzuna '{keyword}': dropped {az_age_dropped} stale job(s) (>{max_hours}h old)")
                 adzuna_jobs, adzuna_dropped = _loc_filter(adzuna_jobs)
                 if adzuna_dropped:
                     _log(f"Adzuna '{keyword}': dropped {adzuna_dropped} job(s) outside '{location}'")
@@ -324,6 +369,9 @@ def main() -> None:
                     max_hours=max_hours,
                 )
                 if web_jobs:
+                    web_jobs, wb_age_dropped = _age_filter(web_jobs, f"WebSearch '{keyword}'")
+                    if wb_age_dropped:
+                        _log(f"WebSearch '{keyword}': dropped {wb_age_dropped} stale job(s) (>{max_hours}h old)")
                     web_jobs, web_dropped = _loc_filter(web_jobs)
                     if web_dropped:
                         _log(f"WebSearch '{keyword}': dropped {web_dropped} job(s) outside '{location}'")
@@ -350,6 +398,10 @@ def main() -> None:
             gm_jobs = gmail_scan.scan_gmail(
                 gmail_email, gmail_password, location=location
             )
+            if gm_jobs:
+                gm_jobs, gm_age_dropped = _age_filter(gm_jobs, "Gmail")
+                if gm_age_dropped:
+                    _log(f"Gmail: dropped {gm_age_dropped} stale job(s) (>{max_hours}h old)")
             if gm_jobs:
                 gm_jobs = _nat_filter(gm_jobs, "Gmail")
             if gm_jobs:
