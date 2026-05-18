@@ -121,11 +121,54 @@ _SKIP_DOMAINS = {
     "facebook.com", "twitter.com", "reddit.com", "wikipedia.org",
 }
 
+# URL patterns that identify search-results / listing pages, NOT individual postings.
+# These are rejected so we only notify for a single, real job opening.
+_LISTING_PAGE_URL = re.compile(
+    r"""
+    # Indeed listing  /q-systems-administrator-l-dubai-jobs.html
+    /q-[^/?#]+-l-[^/?#]+-jobs\.html(?:[?#]|$)
+    # Glassdoor SRCH listing  -jobs-SRCH_IL.0,20_IN6_KO21,38.htm
+    | -jobs-SRCH_(?:IL|KO|IM|IC|IN|AL|GD)
+    | /Job/[a-z0-9%+\-]+-jobs-SRCH
+    # LinkedIn job search page  /jobs/search/?keywords=…
+    | linkedin\.com/jobs/search(?:/|\?|$)
+    # Generic search / listing page patterns
+    | /jobs/search(?:/|\?|$)
+    | /job-search(?:/|\?|$)
+    | /search-jobs(?:/|\?|$)
+    # Query-string search signals  ?q=…  ?keywords=…  ?query=…
+    | [?&](?:q|query|keywords|k)=[^&\s]
+    # Bare job-board root  /jobs  or  /jobs/  (no specific job path after it)
+    | /jobs/?(?:[?#]|$)
+    """,
+    re.I | re.X,
+)
 
-def _is_job_url(url: str) -> bool:
+# Title patterns that indicate listing pages ("44 IT jobs in UAE") vs real postings.
+_LISTING_PAGE_TITLE = re.compile(
+    r"""
+    # "44 CRM Administrator Jobs in United Arab Emirates, March 2026"
+    ^\s*\d+\s+\w
+    # Pure listing title: "Systems Administrator jobs in Dubai"  (ends right after location)
+    | \bjobs?\s+in\s+[A-Za-z][A-Za-z ,]*$
+    # "Search Results", "Job Listings", "Job Board"
+    | \bsearch\s+results?\b
+    | \bjob\s+(?:listings?|board|portal|search)\b
+    | \b(?:browse|find|search)\s+jobs?\b
+    """,
+    re.I | re.X,
+)
+
+
+def _is_job_url(url: str, title: str = "") -> bool:
+    """Return False if the URL (or its title) looks like a search-results / listing page."""
     try:
         host = urlparse(url).netloc.lower().lstrip("www.")
         if host in _SKIP_DOMAINS:
+            return False
+        if _LISTING_PAGE_URL.search(url):
+            return False
+        if title and _LISTING_PAGE_TITLE.search(title.strip()):
             return False
         return True
     except Exception:
@@ -134,7 +177,9 @@ def _is_job_url(url: str) -> bool:
 
 def _parse_result(title: str, url: str, snippet: str, keyword: str, source_tag: str) -> dict | None:
     """Convert a single search result into a job dict. Returns None if it looks non-job."""
-    if not _is_job_url(url):
+    # Pass the full raw title so the listing-page title patterns can check it
+    # before any splitting (e.g. "44 IT jobs in UAE - Glassdoor" is caught here).
+    if not _is_job_url(url, title):
         return None
 
     # Split "Job Title - Company | Site" or "Title at Company"
