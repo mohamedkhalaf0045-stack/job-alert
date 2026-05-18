@@ -37,6 +37,7 @@ import websearch
 import gmail_scan
 import telegram_notify as tg
 import relevance_engine
+import url_safety
 
 # Source priority for Telegram alert ordering and enricher scoring.
 # Lower number = higher priority; LinkedIn (P1) always arrives in Telegram first.
@@ -303,30 +304,50 @@ def main() -> None:
     def _alert_new(new_jobs: list[dict]) -> None:
         """Alert Telegram (and optionally ntfy.sh) immediately for freshly-inserted jobs.
         Called right after each sync_jobs() so LinkedIn jobs reach the user's phone
-        within seconds of being found — not after waiting for all other sources to finish."""
+        within seconds of being found — not after waiting for all other sources to finish.
+        Every URL is validated by url_safety before being sent."""
         if not new_jobs:
             return
         for job in new_jobs:
-            job_url = job.get("Url", "") or job.get("url", "")
-            if not job_url or job_url in already_sent:
+            raw_url = job.get("Url", "") or job.get("url", "")
+            if not raw_url or raw_url in already_sent:
                 continue
             llm_score = job.get("llm_score")
             if llm_score is not None and llm_score < min_score:
                 continue
+
+            # ── URL safety check ─────────────────────────────────────────────
+            safe, reason = url_safety.check_url(raw_url)
+            if not safe:
+                _log(f"URL BLOCKED ({reason}): {raw_url[:120]}")
+                continue
+            if reason.startswith("unverified-domain:"):
+                _log(f"URL notice — {reason} (allowing, not in trusted list): {raw_url[:100]}")
+            # Strip tracking params before sending to user
+            clean_url = url_safety.sanitize_url(raw_url)
+            # Patch job dict so the sanitized URL is what the user receives
+            if clean_url != raw_url:
+                job = dict(job)   # shallow copy — don't mutate the original
+                key = "Url" if "Url" in job else "url"
+                job[key] = clean_url
+            job_url = clean_url
+            # ─────────────────────────────────────────────────────────────────
+
             # --- Telegram ---
             if tg_token and tg_chat:
                 ok = tg.send_job_alert(tg_token, tg_chat, job)
                 if ok:
-                    already_sent.add(job_url)
+                    already_sent.add(raw_url)    # track original URL for dedup
+                    already_sent.add(job_url)    # also track clean URL
                     try:
-                        db.mark_telegram_sent(supabase_url, supabase_key, job_url)
+                        db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
                     except Exception:
                         pass
                     time.sleep(0.3)
             # --- ntfy.sh push notification (optional, high-score jobs only) ---
             if ntfy_url and (llm_score is None or llm_score >= 7):
                 try:
-                    title  = job.get("Title") or job.get("title") or "New Job"
+                    title   = job.get("Title") or job.get("title") or "New Job"
                     company = job.get("Company") or job.get("company") or ""
                     score_tag = f" [{llm_score}/10]" if llm_score is not None else ""
                     import requests as _req
@@ -658,9 +679,9 @@ def main() -> None:
         # This pass is a safety net for any jobs that slipped through (score merge, etc.)
 
         for job in all_new_jobs:
-            job_url = job.get("Url", "")
+            raw_url = job.get("Url", "")
 
-            if job_url in already_sent:
+            if raw_url in already_sent:
                 skipped_sent += 1
                 continue
 
@@ -673,12 +694,23 @@ def main() -> None:
                 _log(f"Telegram: skipped pre-scored low-score job ({llm_score}/{min_score}) — {job.get('Title', '?')}")
                 continue
 
+            # URL safety check
+            safe, reason = url_safety.check_url(raw_url)
+            if not safe:
+                _log(f"Telegram: URL BLOCKED ({reason}): {raw_url[:100]}")
+                skipped_sent += 1
+                continue
+            clean_url = url_safety.sanitize_url(raw_url)
+            if clean_url != raw_url:
+                job = dict(job)
+                job["Url"] = clean_url
+
             ok = tg.send_job_alert(tg_token, tg_chat, job)
             if ok:
                 sent_count += 1
-                already_sent.add(job_url)   # keep local set in sync for re-alert dedup
+                already_sent.add(raw_url)
                 try:
-                    db.mark_telegram_sent(supabase_url, supabase_key, job_url)
+                    db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
                 except Exception:
                     pass
                 time.sleep(0.3)  # avoid Telegram flood limits
@@ -707,19 +739,28 @@ def main() -> None:
                 _log(f"Re-alert: {len(catchup)} unnotified job(s) found in DB — sending now")
                 catchup_sent = 0
                 for job in catchup:
-                    job_url = job.get("url", "")
-                    if not job_url or job_url in already_sent:
+                    raw_url = job.get("url", "")
+                    if not raw_url or raw_url in already_sent:
                         continue
                     llm_score = job.get("llm_score")
                     if llm_score is not None and llm_score < min_score:
                         _log(f"Re-alert: skip low-score ({llm_score}/{min_score}) — {job.get('title','?')}")
                         continue
+                    # URL safety check
+                    safe, reason = url_safety.check_url(raw_url)
+                    if not safe:
+                        _log(f"Re-alert: URL BLOCKED ({reason}): {raw_url[:100]}")
+                        continue
+                    clean_url = url_safety.sanitize_url(raw_url)
+                    if clean_url != raw_url:
+                        job = dict(job)
+                        job["url"] = clean_url
                     ok = tg.send_job_alert(tg_token, tg_chat, job)
                     if ok:
                         catchup_sent += 1
-                        already_sent.add(job_url)
+                        already_sent.add(raw_url)
                         try:
-                            db.mark_telegram_sent(supabase_url, supabase_key, job_url)
+                            db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
                         except Exception:
                             pass
                         time.sleep(0.3)

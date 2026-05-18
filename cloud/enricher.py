@@ -608,7 +608,7 @@ def main() -> None:
         _log("ERROR: Set SUPABASE_URL and SUPABASE_KEY env vars or fill them in settings.json.")
         sys.exit(1)
 
-    _vlog(f"LinkedIn cookie: {'present (' + str(len(cookie)) + ' chars)' if cookie else 'EMPTY — LinkedIn profile fetches will hit login wall'}")
+    _vlog(f"LinkedIn cookie: {'present' if cookie else 'EMPTY — LinkedIn profile fetches will hit login wall'}")
 
     # Read config overrides from Supabase bot_state
     model     = db.get_config(supabase_url, supabase_key, "setting_ollama_model", "") or args.model
