@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 # --- local modules (same cloud/ folder) ---
 import db
 import linkedin as li_scraper
+import bayt as bayt_scraper
 import indeed as indeed_scraper
 import adzuna as adzuna_scraper
 import websearch
@@ -39,11 +40,12 @@ import relevance_engine
 # Lower number = higher priority; LinkedIn (P1) always arrives in Telegram first.
 _SOURCE_PRIORITY: dict[str, int] = {
     "LinkedIn": 1,
-    "Indeed":   2,
-    "Gmail":    3,
-    "Adzuna":   4,
+    "Bayt":     2,   # UAE's #1 job board — second only to LinkedIn
+    "Indeed":   3,
+    "Gmail":    4,
+    "Adzuna":   5,
 }
-# Web search sources (Web/Tavily, Web/Brave, Web/Google, Web/Bing) → priority 5.
+# Web search sources (Web/Tavily, Web/Brave, Web/Google, Web/Bing) → priority 6.
 
 
 def _env(name: str, default: str = "") -> str:
@@ -85,6 +87,7 @@ def main() -> None:
     cookie_header  = _env("LINKEDIN_COOKIE")
     hide_applied   = _env_bool("HIDE_APPLIED", default=False)
     search_li      = _env_bool("SEARCH_LINKEDIN", default=True)
+    search_bayt    = _env_bool("SEARCH_BAYT",    default=True)
     search_indeed  = _env_bool("SEARCH_INDEED", default=False)
     search_adzuna  = _env_bool("SEARCH_ADZUNA",  default=False)
     adzuna_app_id  = _env("ADZUNA_APP_ID")
@@ -129,6 +132,11 @@ def main() -> None:
             max_hours = int(setting_hours)
         if setting_li:
             search_li = setting_li.lower() not in ("false", "0", "no", "off")
+
+        setting_bayt = db.get_config(supabase_url, supabase_key, "setting_search_bayt", "")
+        if setting_bayt:
+            search_bayt = setting_bayt.lower() not in ("false", "0", "no", "off")
+
         if setting_indeed:
             search_indeed = setting_indeed.lower() not in ("false", "0", "no", "off")
         if setting_cookie:
@@ -305,6 +313,33 @@ def main() -> None:
                 all_new_jobs.extend(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"LinkedIn error for '{keyword}': {exc}")
+
+        # --- Bayt ---
+        if search_bayt:
+            try:
+                bayt_jobs = bayt_scraper.scrape_bayt(
+                    keyword=keyword,
+                    location=location,
+                )
+                bayt_jobs, bt_age_dropped = _age_filter(bayt_jobs, f"Bayt '{keyword}'")
+                if bt_age_dropped:
+                    _log(f"Bayt '{keyword}': dropped {bt_age_dropped} stale job(s) (>{max_hours}h old)")
+                bayt_jobs, bt_loc_dropped = _loc_filter(bayt_jobs)
+                if bt_loc_dropped:
+                    _log(f"Bayt '{keyword}': dropped {bt_loc_dropped} job(s) outside '{location}'")
+                bayt_jobs = _nat_filter(bayt_jobs, f"Bayt '{keyword}'")
+                bayt_jobs, bt_kw_dropped = engine.filter_jobs(bayt_jobs, log_prefix=f"Bayt '{keyword}'")
+                if bt_kw_dropped:
+                    _log(f"Bayt '{keyword}': dropped {bt_kw_dropped} unrelated job(s)")
+                summary = db.sync_jobs(supabase_url, supabase_key, bayt_jobs, source="Bayt")
+                _log(
+                    f"Bayt '{keyword}': "
+                    f"inserted={summary['inserted']}, updated={summary['updated']}, "
+                    f"seen={summary['seen']}, invalid={summary['invalid']}"
+                )
+                all_new_jobs.extend(summary.get("new_jobs", []))
+            except Exception as exc:
+                _log(f"Bayt error for '{keyword}': {exc}")
 
         # --- Indeed ---
         if search_indeed:
