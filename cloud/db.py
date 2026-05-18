@@ -186,6 +186,57 @@ def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> 
         return []
 
 
+def get_unnotified_jobs(
+    supabase_url: str,
+    supabase_key: str,
+    min_age_minutes: int = 30,
+    max_age_hours: int = 48,
+    limit: int = 20,
+) -> list[dict]:
+    """Return new, unnotified jobs inserted between (max_age_hours ago) and (min_age_minutes ago).
+
+    These fell through the main notification path — Telegram was flaky, the
+    worker crashed after the DB write but before sending, or the job appeared
+    as 'seen' on every subsequent run.  Re-alerting them ensures every job that
+    made it into the DB is eventually surfaced to the user.
+    Sorted by source priority so LinkedIn catch-ups arrive first.
+    """
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        now           = datetime.now(timezone.utc)
+        cutoff_old    = (now - timedelta(hours=max_age_hours)).isoformat()
+        cutoff_recent = (now - timedelta(minutes=min_age_minutes)).isoformat()
+        result = (
+            sb.table("jobs")
+            .select(
+                "job_id,title,company,location,url,source,"
+                "date_posted,date_collected,llm_score,llm_summary"
+            )
+            .eq("status", "new")
+            .is_("telegram_sent_at", "null")
+            .gt("date_collected", cutoff_old)
+            .lt("date_collected", cutoff_recent)
+            .order("date_collected", desc=False)   # oldest first
+            .limit(limit)
+            .execute()
+        )
+        rows = result.data or []
+        _SRC_RANK = {"LinkedIn": 1, "Indeed": 2, "Gmail": 3, "Adzuna": 4}
+
+        def _rank(row: dict) -> int:
+            src = row.get("source") or ""
+            for prefix, rank in _SRC_RANK.items():
+                if src.startswith(prefix):
+                    return rank
+            return 5
+
+        rows.sort(key=_rank)
+        return rows
+    except Exception as exc:
+        print(f"[DB] get_unnotified_jobs error: {exc}")
+        return []
+
+
 def update_cover_letter(supabase_url: str, supabase_key: str,
                           job_id: str, draft: str) -> None:
     """Phase 5: persist a generated cover-letter draft. Strips NUL bytes.

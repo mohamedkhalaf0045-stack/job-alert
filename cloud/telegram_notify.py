@@ -11,14 +11,14 @@ import requests
 
 
 def format_message(job: dict) -> str:
-    source = job.get("Source") or "LinkedIn"
-    parts = [
-        f"New {source} job",
-        job.get("Title", ""),
-        job.get("Company", ""),
-        job.get("Location", ""),
-    ]
-    posted = job.get("PostedText") or job.get("PostedDate") or ""
+    # Accept both capitalized (worker in-memory dicts) and lowercase (DB row dicts)
+    source   = job.get("Source")   or job.get("source")   or "LinkedIn"
+    title    = job.get("Title")    or job.get("title")    or ""
+    company  = job.get("Company")  or job.get("company")  or ""
+    location = job.get("Location") or job.get("location") or ""
+    url      = job.get("Url")      or job.get("url")      or ""
+    parts = [f"New {source} job", title, company, location]
+    posted = job.get("PostedText") or job.get("PostedDate") or job.get("date_posted") or ""
     if posted:
         parts.append(f"Posted: {posted}")
     score = job.get("llm_score")
@@ -28,7 +28,7 @@ def format_message(job: dict) -> str:
         if summary:
             score_line += f" — {summary}"
         parts.append(score_line)
-    parts.append(job.get("Url", ""))
+    parts.append(url)
     return "\n".join(p for p in parts if p)
 
 

@@ -515,6 +515,7 @@ def main() -> None:
             ok = tg.send_job_alert(tg_token, tg_chat, job)
             if ok:
                 sent_count += 1
+                already_sent.add(job_url)   # keep local set in sync for re-alert dedup
                 try:
                     db.mark_telegram_sent(supabase_url, supabase_key, job_url)
                 except Exception:
@@ -528,6 +529,48 @@ def main() -> None:
         if skipped_low_score:
             _log(f"Telegram: suppressed {skipped_low_score} pre-scored low-score job(s) (score < {min_score}).")
         _log(f"Telegram: sent {sent_count}/{len(all_new_jobs)} alert(s).")
+
+        # --- Re-alert scan: catch jobs that entered the DB but were never notified ---
+        # Covers: Telegram failure mid-run, worker crash after DB write, LinkedIn API
+        # returning a job on run N but not again (so it never appears in all_new_jobs again).
+        # Window: collected between (max_hours*2 ago) and (30 min ago) — recent enough
+        # to still be relevant, old enough to not race with the current run's inserts.
+        try:
+            catchup = db.get_unnotified_jobs(
+                supabase_url, supabase_key,
+                min_age_minutes=30,
+                max_age_hours=max_hours * 2,
+                limit=20,
+            )
+            if catchup:
+                _log(f"Re-alert: {len(catchup)} unnotified job(s) found in DB — sending now")
+                catchup_sent = 0
+                for job in catchup:
+                    job_url = job.get("url", "")
+                    if not job_url or job_url in already_sent:
+                        continue
+                    llm_score = job.get("llm_score")
+                    if llm_score is not None and llm_score < min_score:
+                        _log(f"Re-alert: skip low-score ({llm_score}/{min_score}) — {job.get('title','?')}")
+                        continue
+                    ok = tg.send_job_alert(tg_token, tg_chat, job)
+                    if ok:
+                        catchup_sent += 1
+                        already_sent.add(job_url)
+                        try:
+                            db.mark_telegram_sent(supabase_url, supabase_key, job_url)
+                        except Exception:
+                            pass
+                        time.sleep(0.3)
+                    else:
+                        _log(f"Re-alert: failed to send — {job.get('title','?')}")
+                if catchup_sent:
+                    _log(f"Re-alert: sent {catchup_sent} late-find notification(s)")
+            else:
+                _log("Re-alert: all caught up — no unnotified jobs in DB")
+        except Exception as exc:
+            _log(f"Re-alert scan error (non-fatal): {exc}")
+
     else:
         _log("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing). Skipping alerts.")
 
