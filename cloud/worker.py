@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 import db
 import linkedin as li_scraper
 import bayt as bayt_scraper
+import gulftalent as gt_scraper
+import naukri_gulf as naukri_scraper
 import indeed as indeed_scraper
 import adzuna as adzuna_scraper
 import websearch
@@ -39,13 +41,15 @@ import relevance_engine
 # Source priority for Telegram alert ordering and enricher scoring.
 # Lower number = higher priority; LinkedIn (P1) always arrives in Telegram first.
 _SOURCE_PRIORITY: dict[str, int] = {
-    "LinkedIn": 1,
-    "Bayt":     2,   # UAE's #1 job board — second only to LinkedIn
-    "Indeed":   3,
-    "Gmail":    4,
-    "Adzuna":   5,
+    "LinkedIn":   1,
+    "Bayt":       2,   # UAE's #1 job board
+    "GulfTalent": 3,
+    "NaukriGulf": 4,
+    "Indeed":     5,
+    "Gmail":      6,
+    "Adzuna":     7,
 }
-# Web search sources (Web/Tavily, Web/Brave, Web/Google, Web/Bing) → priority 6.
+# Web search sources (Web/Tavily, Web/Brave, Web/Google, Web/Bing) → priority 8.
 
 
 def _env(name: str, default: str = "") -> str:
@@ -86,9 +90,11 @@ def main() -> None:
     li_geo_id     = _env("LINKEDIN_GEOID", "")       # e.g. "104305776" for UAE
     cookie_header  = _env("LINKEDIN_COOKIE")
     hide_applied   = _env_bool("HIDE_APPLIED", default=False)
-    search_li      = _env_bool("SEARCH_LINKEDIN", default=True)
-    search_bayt    = _env_bool("SEARCH_BAYT",    default=True)
-    search_indeed  = _env_bool("SEARCH_INDEED", default=False)
+    search_li         = _env_bool("SEARCH_LINKEDIN",    default=True)
+    search_bayt       = _env_bool("SEARCH_BAYT",        default=True)
+    search_gulftalent = _env_bool("SEARCH_GULFTALENT",  default=True)
+    search_naukri     = _env_bool("SEARCH_NAUKRIGULF",  default=True)
+    search_indeed     = _env_bool("SEARCH_INDEED",      default=False)
     search_adzuna  = _env_bool("SEARCH_ADZUNA",  default=False)
     adzuna_app_id  = _env("ADZUNA_APP_ID")
     adzuna_app_key = _env("ADZUNA_APP_KEY")
@@ -136,6 +142,14 @@ def main() -> None:
         setting_bayt = db.get_config(supabase_url, supabase_key, "setting_search_bayt", "")
         if setting_bayt:
             search_bayt = setting_bayt.lower() not in ("false", "0", "no", "off")
+
+        setting_gt = db.get_config(supabase_url, supabase_key, "setting_search_gulftalent", "")
+        if setting_gt:
+            search_gulftalent = setting_gt.lower() not in ("false", "0", "no", "off")
+
+        setting_naukri = db.get_config(supabase_url, supabase_key, "setting_search_naukrigulf", "")
+        if setting_naukri:
+            search_naukri = setting_naukri.lower() not in ("false", "0", "no", "off")
 
         if setting_indeed:
             search_indeed = setting_indeed.lower() not in ("false", "0", "no", "off")
@@ -275,6 +289,60 @@ def main() -> None:
 
     all_new_jobs: list[dict] = []
 
+    # Load already-notified URLs BEFORE scanning starts so per-source instant
+    # alerts (below) never double-send a URL that was notified in a previous run.
+    already_sent: set[str] = set()
+    if tg_token and tg_chat:
+        try:
+            already_sent = db.get_telegram_sent_urls(supabase_url, supabase_key)
+        except Exception:
+            pass
+
+    ntfy_url = db.get_config(supabase_url, supabase_key, "setting_ntfy_url", "")
+
+    def _alert_new(new_jobs: list[dict]) -> None:
+        """Alert Telegram (and optionally ntfy.sh) immediately for freshly-inserted jobs.
+        Called right after each sync_jobs() so LinkedIn jobs reach the user's phone
+        within seconds of being found — not after waiting for all other sources to finish."""
+        if not new_jobs:
+            return
+        for job in new_jobs:
+            job_url = job.get("Url", "") or job.get("url", "")
+            if not job_url or job_url in already_sent:
+                continue
+            llm_score = job.get("llm_score")
+            if llm_score is not None and llm_score < min_score:
+                continue
+            # --- Telegram ---
+            if tg_token and tg_chat:
+                ok = tg.send_job_alert(tg_token, tg_chat, job)
+                if ok:
+                    already_sent.add(job_url)
+                    try:
+                        db.mark_telegram_sent(supabase_url, supabase_key, job_url)
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+            # --- ntfy.sh push notification (optional, high-score jobs only) ---
+            if ntfy_url and (llm_score is None or llm_score >= 7):
+                try:
+                    title  = job.get("Title") or job.get("title") or "New Job"
+                    company = job.get("Company") or job.get("company") or ""
+                    score_tag = f" [{llm_score}/10]" if llm_score is not None else ""
+                    import requests as _req
+                    _req.post(
+                        ntfy_url,
+                        data=f"{title}{score_tag} @ {company}\n{job_url}".encode("utf-8"),
+                        headers={
+                            "Title": f"Job Alert{score_tag}",
+                            "Priority": "high" if (llm_score or 0) >= 8 else "default",
+                            "Tags": "briefcase",
+                        },
+                        timeout=8,
+                    )
+                except Exception:
+                    pass
+
     for idx, keyword in enumerate(keywords):
         if idx > 0:
             jitter = 2.0 + (idx * 0.5)
@@ -311,6 +379,7 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
+                _alert_new(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"LinkedIn error for '{keyword}': {exc}")
 
@@ -338,8 +407,65 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
+                _alert_new(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"Bayt error for '{keyword}': {exc}")
+
+        # --- GulfTalent ---
+        if search_gulftalent:
+            try:
+                gt_jobs = gt_scraper.scrape_gulftalent(
+                    keyword=keyword,
+                    location=location,
+                )
+                gt_jobs, gt_age_dropped = _age_filter(gt_jobs, f"GulfTalent '{keyword}'")
+                if gt_age_dropped:
+                    _log(f"GulfTalent '{keyword}': dropped {gt_age_dropped} stale job(s)")
+                gt_jobs, gt_loc_dropped = _loc_filter(gt_jobs)
+                if gt_loc_dropped:
+                    _log(f"GulfTalent '{keyword}': dropped {gt_loc_dropped} job(s) outside '{location}'")
+                gt_jobs = _nat_filter(gt_jobs, f"GulfTalent '{keyword}'")
+                gt_jobs, gt_kw_dropped = engine.filter_jobs(gt_jobs, log_prefix=f"GulfTalent '{keyword}'")
+                if gt_kw_dropped:
+                    _log(f"GulfTalent '{keyword}': dropped {gt_kw_dropped} unrelated job(s)")
+                summary = db.sync_jobs(supabase_url, supabase_key, gt_jobs, source="GulfTalent")
+                _log(
+                    f"GulfTalent '{keyword}': "
+                    f"inserted={summary['inserted']}, updated={summary['updated']}, "
+                    f"seen={summary['seen']}, invalid={summary['invalid']}"
+                )
+                all_new_jobs.extend(summary.get("new_jobs", []))
+                _alert_new(summary.get("new_jobs", []))
+            except Exception as exc:
+                _log(f"GulfTalent error for '{keyword}': {exc}")
+
+        # --- NaukriGulf ---
+        if search_naukri:
+            try:
+                naukri_jobs = naukri_scraper.scrape_naukri_gulf(
+                    keyword=keyword,
+                    location=location,
+                )
+                naukri_jobs, nk_age_dropped = _age_filter(naukri_jobs, f"NaukriGulf '{keyword}'")
+                if nk_age_dropped:
+                    _log(f"NaukriGulf '{keyword}': dropped {nk_age_dropped} stale job(s)")
+                naukri_jobs, nk_loc_dropped = _loc_filter(naukri_jobs)
+                if nk_loc_dropped:
+                    _log(f"NaukriGulf '{keyword}': dropped {nk_loc_dropped} job(s) outside '{location}'")
+                naukri_jobs = _nat_filter(naukri_jobs, f"NaukriGulf '{keyword}'")
+                naukri_jobs, nk_kw_dropped = engine.filter_jobs(naukri_jobs, log_prefix=f"NaukriGulf '{keyword}'")
+                if nk_kw_dropped:
+                    _log(f"NaukriGulf '{keyword}': dropped {nk_kw_dropped} unrelated job(s)")
+                summary = db.sync_jobs(supabase_url, supabase_key, naukri_jobs, source="NaukriGulf")
+                _log(
+                    f"NaukriGulf '{keyword}': "
+                    f"inserted={summary['inserted']}, updated={summary['updated']}, "
+                    f"seen={summary['seen']}, invalid={summary['invalid']}"
+                )
+                all_new_jobs.extend(summary.get("new_jobs", []))
+                _alert_new(summary.get("new_jobs", []))
+            except Exception as exc:
+                _log(f"NaukriGulf error for '{keyword}': {exc}")
 
         # --- Indeed ---
         if search_indeed:
@@ -366,6 +492,7 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
+                _alert_new(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"Indeed error for '{keyword}': {exc}")
 
@@ -395,6 +522,7 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
+                _alert_new(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"Adzuna error for '{keyword}': {exc}")
         elif search_adzuna and not (adzuna_app_id and adzuna_app_key):
@@ -432,6 +560,7 @@ def main() -> None:
                         f"seen={summary['seen']}, invalid={summary['invalid']}"
                     )
                     all_new_jobs.extend(summary.get("new_jobs", []))
+                    _alert_new(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"WebSearch error for '{keyword}': {exc}")
 
@@ -466,6 +595,7 @@ def main() -> None:
                         f"seen={summary['seen']}, invalid={summary['invalid']}"
                     )
                     all_new_jobs.extend(summary.get("new_jobs", []))
+                    _alert_new(summary.get("new_jobs", []))
         except Exception as exc:
             _log(f"Gmail scan error: {exc}")
     elif not gmail_email:
@@ -524,12 +654,8 @@ def main() -> None:
         sent_count = 0
         skipped_sent = 0
         skipped_low_score = 0
-        # Load already-notified URLs so we never double-send (e.g. if worker
-        # retried after a crash, or enricher already sent a score alert)
-        try:
-            already_sent = db.get_telegram_sent_urls(supabase_url, supabase_key)
-        except Exception:
-            already_sent = set()
+        # already_sent was loaded before the scan loop and updated live by _alert_new().
+        # This pass is a safety net for any jobs that slipped through (score merge, etc.)
 
         for job in all_new_jobs:
             job_url = job.get("Url", "")
