@@ -194,17 +194,22 @@ def main() -> None:
                 pass
 
     # ── 3. Recent job collection ───────────────────────────────────────────
+    # Use a 25-hour window regardless of MAX_RUN_HOURS.  The workflow-run
+    # check (step 2b) already catches "scraper hasn't run recently"; this
+    # check catches "scraper runs but consistently fetches nothing at all"
+    # (cookie expired, API banned, etc.).  A 3-hour window caused false
+    # alarms on quiet market days when all found jobs were already in DB.
     if sb_ok:
-        recent = count_recent_jobs(supabase_url, supabase_key, hours=max_run_hours + 1)
+        recent = count_recent_jobs(supabase_url, supabase_key, hours=25)
         if recent == -1:
             issues.append("Could not count recent jobs from Supabase")
         elif recent == 0:
             issues.append(
-                f"<b>0 jobs</b> collected in the last {max_run_hours + 1}h — "
-                f"scraper may be broken or rate-limited"
+                "<b>0 jobs</b> collected in the last 25h — "
+                "scraper may be broken, cookie expired, or rate-limited"
             )
         else:
-            ok_msgs.append(f"Jobs collected (last {max_run_hours + 1}h): {recent}")
+            ok_msgs.append(f"Jobs collected (last 25h): {recent}")
 
     # ── Send Telegram ──────────────────────────────────────────────────────
     if issues:
