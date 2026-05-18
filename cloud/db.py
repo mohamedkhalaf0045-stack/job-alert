@@ -154,16 +154,33 @@ def mark_telegram_sent(supabase_url: str, supabase_key: str, url: str) -> None:
 def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> list[dict]:
     sb = _get_client(supabase_url, supabase_key)
     try:
+        # Fetch more rows than requested, then re-sort by source priority so the
+        # enricher always scores LinkedIn jobs first (P1), then Indeed (P2),
+        # Gmail (P3), Adzuna (P4), and Web sources last (P5).
+        fetch_limit = min(limit * 4, 200)
         result = (
             sb.table("jobs")
             .select("job_id,title,company,location,url,source,telegram_sent_at,date_posted,date_collected")
             .is_("llm_score", "null")
             .eq("status", "new")
             .order("date_collected", desc=True)
-            .limit(limit)
+            .limit(fetch_limit)
             .execute()
         )
-        return result.data or []
+        rows = result.data or []
+
+        # Re-sort by source priority in Python
+        _SRC_RANK = {"LinkedIn": 1, "Indeed": 2, "Gmail": 3, "Adzuna": 4}
+
+        def _rank(row: dict) -> int:
+            src = row.get("source") or ""
+            for prefix, rank in _SRC_RANK.items():
+                if src.startswith(prefix):
+                    return rank
+            return 5  # Web/Tavily, Web/Brave, Web/Google, Web/Bing, etc.
+
+        rows.sort(key=_rank)
+        return rows[:limit]
     except Exception as exc:
         print(f"[DB] get_unscored_jobs error: {exc}")
         return []

@@ -35,6 +35,16 @@ import gmail_scan
 import telegram_notify as tg
 import relevance_engine
 
+# Source priority for Telegram alert ordering and enricher scoring.
+# Lower number = higher priority; LinkedIn (P1) always arrives in Telegram first.
+_SOURCE_PRIORITY: dict[str, int] = {
+    "LinkedIn": 1,
+    "Indeed":   2,
+    "Gmail":    3,
+    "Adzuna":   4,
+}
+# Web search sources (Web/Tavily, Web/Brave, Web/Google, Web/Bing) → priority 5.
+
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip().lstrip('﻿')
@@ -444,6 +454,26 @@ def main() -> None:
                 _log(f"Merged LLM scores for {len(score_map)} job(s).")
         except Exception as exc:
             _log(f"Score merge error (non-fatal): {exc}")
+
+    # Sort new jobs by source priority: LinkedIn P1 → Indeed P2 → Gmail P3 → Adzuna P4 → Web P5.
+    # This ensures the most reliable source (LinkedIn) always arrives first in Telegram,
+    # regardless of which source happened to finish scanning first.
+    if len(all_new_jobs) > 1:
+        def _src_rank(job: dict) -> int:
+            src = job.get("Source", "")
+            for prefix, rank in _SOURCE_PRIORITY.items():
+                if src.startswith(prefix):
+                    return rank
+            return 5  # Web/Tavily, Web/Brave, Web/Google, Web/Bing
+        all_new_jobs.sort(key=_src_rank)
+        _log(
+            f"Alert order (top {min(5, len(all_new_jobs))}): "
+            + " → ".join(
+                f"{j.get('Source','?').split('/')[0]}:{j.get('Title','?')[:25]}"
+                for j in all_new_jobs[:5]
+            )
+            + ("..." if len(all_new_jobs) > 5 else "")
+        )
 
     # --- Send Telegram alerts ---
     # Worker sends a basic "new job" alert for every new relevant job immediately.
