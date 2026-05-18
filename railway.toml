@@ -1,0 +1,9 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+# Runs the persistent 2-minute loop runner instead of a one-shot script.
+# Railway keeps this process alive 24/7 — far faster than GitHub Actions' 5-min cron.
+startCommand = "pip install -r cloud/requirements.txt && python cloud/runner.py"
+restartPolicyType = "always"
+restartPolicyMaxRetries = 10
