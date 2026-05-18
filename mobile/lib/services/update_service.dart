@@ -40,7 +40,9 @@ class UpdateService {
       if (r.statusCode != 200) return null;
 
       final body   = jsonDecode(r.body) as Map<String, dynamic>;
-      final tag    = (body['tag_name'] as String? ?? '').replaceFirst('v', '');
+      final rawTag = (body['tag_name'] as String? ?? '').replaceFirst('v', '');
+      // Normalize both sides to major.minor.patch so "1.0.4-dev" == "1.0.4"
+      final tag = rawTag.split(RegExp(r'[-+]')).first;
       if (tag.isEmpty || tag == info.version) return null;
 
       // Prefer arm64-v8a (covers all modern phones), then armeabi-v7a
