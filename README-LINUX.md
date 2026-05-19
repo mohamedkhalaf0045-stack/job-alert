@@ -6,22 +6,30 @@ Telegram alerts for the best matches.
 
 ---
 
-## Quick Install
+## Quick Install (Zero Configuration)
 
 ```bash
-# 1. Clone the repo
+# 1. Clone the repo  (all credentials are already inside)
 git clone https://github.com/mohamedkhalaf0045-stack/job-alert.git
 cd job-alert
 
 # 2. Run the one-command installer
 bash linux/setup.sh
+
+# 3. Launch
+python3 linux/gui.py
 ```
+
+**No configuration needed.** The repo ships with `settings.json` containing all
+credentials (Supabase, Telegram, LinkedIn cookie). `setup.sh` reads them
+automatically and sets everything up.
 
 The installer:
 - Checks Python 3.9+ and installs `tkinter` if missing
-- Installs pip packages: `requests supabase python-dotenv`
+- Installs pip packages: `requests supabase python-dotenv pypdf`
+- Reads `settings.json` → generates `settings.env` for the background service
+- Creates the systemd timer (starts scanning every 5 minutes **immediately**)
 - Optionally installs Ollama (for AI scoring + cover letters)
-- Creates the systemd timer for auto-scanning every 5 minutes
 - Adds a desktop launcher to your GNOME/KDE app menu
 
 ---
@@ -36,19 +44,15 @@ Or find **"Job Alert"** in your GNOME Activities / KDE application launcher.
 
 ---
 
-## First-Time Setup (in the GUI)
+## First-Time Setup
 
-1. Open the **Settings** tab
-2. Paste your **Supabase URL** and **Supabase Key**
-   - Find these at: [Supabase Dashboard](https://supabase.com) → Project → Settings → API
-3. Paste your **Telegram Bot Token** and **Chat ID**
-   - Bot token: message [@BotFather](https://t.me/BotFather) on Telegram
-   - Chat ID: message [@userinfobot](https://t.me/userinfobot) on Telegram
-4. Paste your **LinkedIn Cookie** (`li_at` value)
-   - Open LinkedIn in Chrome/Firefox → F12 → Application/Storage → Cookies → copy `li_at`
-5. Set your **Keywords** (comma-separated): `IT Support, System Administrator, IT Helpdesk`
-6. Set your **Location**: `United Arab Emirates`
-7. Click **💾 Save & Sync to Cloud**
+**All credentials are pre-loaded from `settings.json`** — the GUI opens with every
+field already filled in. You can go straight to scanning jobs.
+
+If you ever need to update a credential (e.g. refresh the LinkedIn cookie):
+1. Open the **Settings** tab — all fields are pre-filled
+2. Edit the field you want to change
+3. Click **💾 Save & Sync to Cloud**
 
 Settings are saved to `~/.config/job-alert/settings.json` and synced to Supabase
 so GitHub Actions and Railway also pick them up automatically.
