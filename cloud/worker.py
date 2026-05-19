@@ -413,10 +413,37 @@ def main() -> None:
         Every URL is validated by url_safety before being sent."""
         if not new_jobs:
             return
+        from datetime import timedelta
+        _alert_cutoff = datetime.now(timezone.utc) - timedelta(hours=max_hours) if max_hours > 0 else None
         for job in new_jobs:
             raw_url = job.get("Url", "") or job.get("url", "")
             if not raw_url or raw_url in already_sent:
                 continue
+
+            # ── Age gate: never alert on jobs older than max_hours ────────────
+            # This is a second line of defence — the collection-time _age_filter
+            # passes jobs with unparseable dates through; this catches them here.
+            if _alert_cutoff:
+                posted_raw = (job.get("PostedDate") or job.get("date_collected") or "").strip()
+                if posted_raw:
+                    try:
+                        posted_dt = datetime.fromisoformat(posted_raw.replace("Z", "+00:00"))
+                        if posted_dt.tzinfo is None:
+                            posted_dt = posted_dt.replace(tzinfo=timezone.utc)
+                        if posted_dt < _alert_cutoff:
+                            title = job.get("Title") or job.get("title") or "?"
+                            _log(f"  ALERT SKIPPED (stale {posted_raw[:10]}): {title[:60]}")
+                            # Mark as sent so we don't keep re-alerting it every run
+                            try:
+                                db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
+                            except Exception:
+                                pass
+                            already_sent.add(raw_url)
+                            continue
+                    except (ValueError, TypeError):
+                        pass   # unparseable date — allow through
+            # ─────────────────────────────────────────────────────────────────
+
             llm_score = job.get("llm_score")
             if llm_score is not None and llm_score < min_score:
                 continue
