@@ -20,10 +20,38 @@ Optional (overridden by Supabase bot_state settings):
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
+
+
+def _load_settings_json() -> dict:
+    """Load settings.json from the standard locations (Linux or Windows).
+
+    Search order:
+      1. ~/.config/job-alert/settings.json   (Linux GUI)
+      2. <repo-root>/settings.json           (Windows GUI / repo root)
+
+    Values are only used as fallback defaults — env vars and Supabase
+    bot_state overrides always take precedence (see main() below).
+    """
+    candidates = [
+        Path.home() / ".config" / "job-alert" / "settings.json",
+        Path(__file__).resolve().parent.parent / "settings.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return {}
+
+
+_SETTINGS_JSON: dict = _load_settings_json()
 
 # --- local modules (same cloud/ folder) ---
 import db
@@ -53,8 +81,32 @@ _SOURCE_PRIORITY: dict[str, int] = {
 # Web search sources (Web/Tavily, Web/Brave, Web/Google, Web/Bing) → priority 8.
 
 
+# Mapping from env-var name → settings.json key (for Linux/Windows GUI fallback)
+_ENV_TO_JSON: dict[str, str] = {
+    "SUPABASE_URL":        "SupabaseUrl",
+    "SUPABASE_KEY":        "SupabaseKey",
+    "TELEGRAM_BOT_TOKEN":  "TelegramBotToken",
+    "TELEGRAM_CHAT_ID":    "TelegramChatId",
+    "LINKEDIN_COOKIE":     "LinkedInCookie",
+    "KEYWORDS":            "Keywords",
+    "LOCATION":            "Location",
+    "OLLAMA_URL":          "OllamaUrl",
+}
+
+
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip().lstrip('﻿')
+    """Read env var; fall back to settings.json value if env var is empty."""
+    val = os.environ.get(name, "").strip().lstrip("﻿")
+    if val:
+        return val
+    # Fallback: settings.json
+    json_key = _ENV_TO_JSON.get(name)
+    if json_key and json_key in _SETTINGS_JSON:
+        raw = _SETTINGS_JSON[json_key]
+        if isinstance(raw, list):
+            return ",".join(str(x) for x in raw)
+        return str(raw).strip()
+    return default
 
 
 def _env_bool(name: str, default: bool = True) -> bool:

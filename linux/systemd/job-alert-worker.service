@@ -1,0 +1,18 @@
+[Unit]
+Description=Job Alert Worker — scans LinkedIn and job boards for new openings
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%PYTHON% %REPO_ROOT%/cloud/worker.py --limit 50
+WorkingDirectory=%REPO_ROOT%
+EnvironmentFile=%h/.config/job-alert/settings.env
+StandardOutput=append:%h/.local/share/job-alert/job-alert.log
+StandardError=append:%h/.local/share/job-alert/job-alert.log
+
+# Restart policy: don't loop on failure (timer controls frequency)
+Restart=no
+
+# Timeout: allow up to 10 min for a full scan across all sources
+TimeoutStartSec=600

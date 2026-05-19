@@ -1,0 +1,14 @@
+[Unit]
+Description=Run Job Alert Worker every 5 minutes
+Requires=job-alert-worker.service
+
+[Timer]
+# First run: 2 minutes after boot (give network time to come up)
+OnBootSec=2min
+# Then every 5 minutes
+OnUnitActiveSec=5min
+# Don't stack runs if the previous one is still going
+Unit=job-alert-worker.service
+
+[Install]
+WantedBy=timers.target

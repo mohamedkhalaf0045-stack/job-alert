@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Job Alert
+GenericName=Job Alert Tool
+Comment=Monitor LinkedIn and job boards for new openings in your field
+Exec=%PYTHON% %REPO_ROOT%/linux/gui.py
+Terminal=false
+Type=Application
+Categories=Utility;Network;Office;
+Keywords=job;linkedin;career;alert;employment;
+StartupNotify=true

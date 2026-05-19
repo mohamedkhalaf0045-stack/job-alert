@@ -60,8 +60,46 @@ _DEBUG_PROMPT = False
 _LOG_TO_FILE  = True
 
 
+# ── Settings.json fallback (Linux GUI / Windows GUI) ─────────────────────────
+def _load_settings_json() -> dict:
+    """Load settings.json from ~/.config/job-alert/ or the repo root."""
+    candidates = [
+        Path.home() / ".config" / "job-alert" / "settings.json",
+        Path(__file__).resolve().parent.parent / "settings.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return {}
+
+
+_SETTINGS_JSON: dict = _load_settings_json()
+
+_ENV_TO_JSON: dict[str, str] = {
+    "SUPABASE_URL":       "SupabaseUrl",
+    "SUPABASE_KEY":       "SupabaseKey",
+    "OLLAMA_URL":         "OllamaUrl",
+    "TELEGRAM_BOT_TOKEN": "TelegramBotToken",
+    "TELEGRAM_CHAT_ID":   "TelegramChatId",
+    "LINKEDIN_COOKIE":    "LinkedInCookie",
+}
+
+
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip().lstrip("﻿")
+    """Read env var; fall back to settings.json if env var is empty."""
+    val = os.environ.get(name, "").strip().lstrip("﻿")
+    if val:
+        return val
+    json_key = _ENV_TO_JSON.get(name)
+    if json_key and json_key in _SETTINGS_JSON:
+        raw = _SETTINGS_JSON[json_key]
+        if isinstance(raw, list):
+            return ",".join(str(x) for x in raw)
+        return str(raw).strip()
+    return default
 
 
 def _log(msg: str) -> None:
@@ -83,13 +121,8 @@ def _vlog(msg: str) -> None:
 
 
 def _load_settings_json() -> dict:
-    """Read settings.json from the project root (one level above cloud/). Tolerant to missing file / BOM."""
-    settings_path = os.path.join(_DIR, "..", "settings.json")
-    try:
-        with open(settings_path, encoding="utf-8-sig") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    """Return the already-loaded settings dict (supports both Linux and Windows paths)."""
+    return _SETTINGS_JSON
 
 
 # ── Profile resolution ────────────────────────────────────────────────────────
