@@ -452,7 +452,7 @@ def ollama_score(
         r = requests.post(
             f"{ollama_url}/api/generate",
             json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
-            timeout=120,
+            timeout=300,
         )
         r.raise_for_status()
         raw = r.json().get("response", "{}")
