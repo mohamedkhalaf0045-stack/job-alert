@@ -827,21 +827,10 @@ def main() -> None:
             if draft:
                 db.update_cover_letter(supabase_url, supabase_key, job["job_id"], draft)
                 cover_letters_generated += 1
-                _log(f"          Cover letter saved ({len(draft)} chars)")
-                # Send cover letter to Telegram immediately so it arrives alongside
-                # the score alert — user can copy-paste it the moment they see the job.
-                if tg_token and tg_chat:
-                    try:
-                        import telegram_notify as _tg
-                        cl_header = f"Cover Letter Draft\n{title} @ {company}\n\n"
-                        cl_msg = cl_header + draft
-                        if len(cl_msg) > 4000:
-                            cl_msg = cl_msg[:3990] + "\n[…full draft saved in app]"
-                        _tg.send_message(tg_token, tg_chat, cl_msg)
-                        time.sleep(0.3)
-                        _log("          Cover letter sent to Telegram")
-                    except Exception as _exc:
-                        _log(f"          Cover letter Telegram send error: {_exc}")
+                _log(f"          Cover letter saved ({len(draft)} chars) — user can request it via the button in Telegram")
+                # Cover letter is NOT auto-sent. The user presses the
+                # '📝 Cover Letter' button on the job alert in Telegram,
+                # and the worker delivers it on the next run.
             else:
                 _vlog("          Cover letter generation returned empty - skipping persist")
 

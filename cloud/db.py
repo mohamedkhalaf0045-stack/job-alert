@@ -263,6 +263,27 @@ def update_cover_letter(supabase_url: str, supabase_key: str,
             print(f"[DB] update_cover_letter error for {job_id}: {exc}")
 
 
+def get_cover_letter(supabase_url: str, supabase_key: str, job_id: str) -> str:
+    """Return the stored cover_letter_draft for a job, or '' if not yet generated."""
+    if not job_id:
+        return ""
+    try:
+        sb     = _get_client(supabase_url, supabase_key)
+        result = (
+            sb.table("jobs")
+            .select("cover_letter_draft,title,company")
+            .eq("job_id", job_id)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if rows:
+            return (rows[0].get("cover_letter_draft") or "").strip()
+    except Exception as exc:
+        print(f"[DB] get_cover_letter error for {job_id}: {exc}")
+    return ""
+
+
 def get_jobs_by_status(supabase_url: str, supabase_key: str, status: str,
                         limit: int = 5) -> list[dict]:
     """Recent jobs for a given status (applied/dismissed/saved/new).

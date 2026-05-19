@@ -209,11 +209,37 @@ def main() -> None:
     geo_info = f", geoId={li_geo_id}" if li_geo_id else " (text-location fallback — set setting_linkedin_geoid for best results)"
     _log(f"Starting scan: {len(keywords)} keyword(s), location={location}{geo_info}, max_hours={max_hours}")
 
-    # --- Handle pending Telegram commands (/status etc.) ---
+    # --- Handle pending Telegram commands (/status etc.) and cover-letter button presses ---
     if tg_token and tg_chat:
         try:
             tg_offset = int(db.get_config(supabase_url, supabase_key, "telegram_offset", "0"))
             updates   = tg.get_updates(tg_token, offset=tg_offset)
+
+            # ── Cover-letter inline-button callbacks ──────────────────────────
+            for cb in tg.extract_callbacks(updates):
+                if not cb["data"].startswith("cover_"):
+                    continue
+                job_id = cb["data"][len("cover_"):]
+                cover  = db.get_cover_letter(supabase_url, supabase_key, job_id)
+                if cover:
+                    tg.answer_callback_query(
+                        tg_token, cb["callback_query_id"],
+                        text="Sending cover letter…",
+                    )
+                    tg.send_message(
+                        tg_token, cb["chat_id"],
+                        "\U0001f4dd Cover Letter Draft\n\n" + cover,
+                    )
+                    _log(f"Sent cover letter for job_id={job_id}")
+                else:
+                    tg.answer_callback_query(
+                        tg_token, cb["callback_query_id"],
+                        text="Cover letter not ready yet — run the enricher locally first.",
+                        show_alert=True,
+                    )
+                    _log(f"Cover letter requested but not in DB yet for job_id={job_id}")
+            # ─────────────────────────────────────────────────────────────────
+
             commands  = tg.extract_commands(updates)
             for cmd in commands:
                 if cmd["command"] == "/status":
@@ -233,7 +259,7 @@ def main() -> None:
                 new_offset = max(u["update_id"] for u in updates) + 1
                 db.set_config(supabase_url, supabase_key, "telegram_offset", str(new_offset))
         except Exception as exc:
-            _log(f"Telegram command poll error: {exc}")
+            _log(f"Telegram command/callback poll error: {exc}")
 
     def _loc_filter(jobs: list[dict]) -> tuple[list[dict], int]:
         """Drop jobs whose Location doesn't match the active location setting.
@@ -333,9 +359,10 @@ def main() -> None:
             job_url = clean_url
             # ─────────────────────────────────────────────────────────────────
 
-            # --- Telegram ---
+            # --- Telegram (with 📝 Cover Letter inline button) ---
             if tg_token and tg_chat:
-                ok = tg.send_job_alert(tg_token, tg_chat, job)
+                job_id = job.get("Id") or job.get("id") or ""
+                ok = tg.send_job_alert_with_button(tg_token, tg_chat, job, job_id=job_id)
                 if ok:
                     already_sent.add(raw_url)    # track original URL for dedup
                     already_sent.add(job_url)    # also track clean URL
@@ -705,7 +732,8 @@ def main() -> None:
                 job = dict(job)
                 job["Url"] = clean_url
 
-            ok = tg.send_job_alert(tg_token, tg_chat, job)
+            job_id = job.get("Id") or job.get("id") or ""
+            ok = tg.send_job_alert_with_button(tg_token, tg_chat, job, job_id=job_id)
             if ok:
                 sent_count += 1
                 already_sent.add(raw_url)
