@@ -154,13 +154,45 @@ fi
 
 # ── 7. Desktop launcher ──────────────────────────────────────
 section "Desktop launcher"
-sed "s|%REPO_ROOT%|$REPO_ROOT|g; s|%PYTHON%|$PYTHON|g" \
-    "$SCRIPT_DIR/job-alert.desktop" > "$DESKTOP_DIR/job-alert.desktop"
+
+# Build the .desktop file with real paths substituted
+DESKTOP_CONTENT=$(sed "s|%REPO_ROOT%|$REPO_ROOT|g; s|%PYTHON%|$PYTHON|g" \
+    "$SCRIPT_DIR/job-alert.desktop")
+
+# Install to app menu (~/.local/share/applications)
+echo "$DESKTOP_CONTENT" > "$DESKTOP_DIR/job-alert.desktop"
 chmod +x "$DESKTOP_DIR/job-alert.desktop"
 if command -v update-desktop-database &>/dev/null; then
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 fi
-info "Desktop launcher created — find 'Job Alert' in your app menu"
+info "App menu entry created"
+
+# Install to actual Desktop folder (visible icon on the desktop)
+REAL_DESKTOP="$HOME/Desktop"
+# Some systems use XDG_DESKTOP_DIR (e.g. non-English Ubuntu)
+if [ -f "$HOME/.config/user-dirs.dirs" ]; then
+    # shellcheck disable=SC1090
+    XDG_DESKTOP_DIR_VAL=$(grep '^XDG_DESKTOP_DIR' "$HOME/.config/user-dirs.dirs" \
+        | cut -d= -f2 | tr -d '"' | sed "s|\$HOME|$HOME|g")
+    [ -n "$XDG_DESKTOP_DIR_VAL" ] && REAL_DESKTOP="$XDG_DESKTOP_DIR_VAL"
+fi
+
+if [ -d "$REAL_DESKTOP" ]; then
+    echo "$DESKTOP_CONTENT" > "$REAL_DESKTOP/job-alert.desktop"
+    chmod +x "$REAL_DESKTOP/job-alert.desktop"
+
+    # GNOME 3+ requires marking the file as "trusted" before it shows as a
+    # clickable icon (otherwise it shows a grey question-mark).
+    if command -v gio &>/dev/null; then
+        gio set "$REAL_DESKTOP/job-alert.desktop" metadata::trusted true 2>/dev/null || true
+    fi
+
+    info "Desktop shortcut created: $REAL_DESKTOP/job-alert.desktop"
+    info "Double-click it to open Job Alert"
+else
+    warn "Desktop folder not found at $REAL_DESKTOP — shortcut skipped."
+    warn "You can still find Job Alert in your app launcher."
+fi
 
 # ── 8. Ollama (AI scoring — optional) ───────────────────────
 section "Ollama (AI scoring — optional)"
