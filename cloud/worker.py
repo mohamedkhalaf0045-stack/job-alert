@@ -216,50 +216,55 @@ def main() -> None:
             updates   = tg.get_updates(tg_token, offset=tg_offset)
 
             # ── Inline-button callbacks (Cover Letter + Tailored CV) ──────────
+            # NOTE: answerCallbackQuery must be called within 30 s of the tap
+            # to dismiss the loading indicator.  The worker runs every 5 min,
+            # so that window is almost always expired.  We call it anyway
+            # (best-effort) but always follow up with a regular send_message
+            # so the user gets a visible response regardless of timing.
             for cb in tg.extract_callbacks(updates):
                 data = cb["data"]
 
                 if data.startswith("cover_"):
                     job_id = data[len("cover_"):]
                     cover  = db.get_cover_letter(supabase_url, supabase_key, job_id)
+                    # Best-effort button acknowledgement (may be ignored after 30 s)
+                    tg.answer_callback_query(tg_token, cb["callback_query_id"])
                     if cover:
-                        tg.answer_callback_query(
-                            tg_token, cb["callback_query_id"],
-                            text="Sending cover letter…",
-                        )
                         tg.send_message(
                             tg_token, cb["chat_id"],
                             "\U0001f4dd Cover Letter Draft\n\n" + cover,
                         )
                         _log(f"Sent cover letter for job_id={job_id}")
                     else:
-                        tg.answer_callback_query(
-                            tg_token, cb["callback_query_id"],
-                            text="Cover letter not ready yet — run the enricher locally first.",
-                            show_alert=True,
+                        tg.send_message(
+                            tg_token, cb["chat_id"],
+                            "\U0001f4dd Cover letter not ready yet for this job.\n\n"
+                            "Make sure Ollama is running on your laptop, then run:\n"
+                            "python cloud/enricher.py --limit 30\n\n"
+                            "It will generate cover letters for all high-scoring jobs automatically.",
                         )
-                        _log(f"Cover letter requested but not in DB yet for job_id={job_id}")
+                        _log(f"Cover letter not in DB yet for job_id={job_id} — sent instructions")
 
                 elif data.startswith("cv_"):
                     job_id = data[len("cv_"):]
                     cv_draft = db.get_tailored_cv(supabase_url, supabase_key, job_id)
+                    # Best-effort button acknowledgement (may be ignored after 30 s)
+                    tg.answer_callback_query(tg_token, cb["callback_query_id"])
                     if cv_draft:
-                        tg.answer_callback_query(
-                            tg_token, cb["callback_query_id"],
-                            text="Sending tailored CV…",
-                        )
                         tg.send_message(
                             tg_token, cb["chat_id"],
                             "\U0001f4c4 Tailored CV Draft\n\n" + cv_draft,
                         )
                         _log(f"Sent tailored CV for job_id={job_id}")
                     else:
-                        tg.answer_callback_query(
-                            tg_token, cb["callback_query_id"],
-                            text="Tailored CV not ready yet — run the enricher locally first.",
-                            show_alert=True,
+                        tg.send_message(
+                            tg_token, cb["chat_id"],
+                            "\U0001f4c4 Tailored CV not ready yet for this job.\n\n"
+                            "Make sure Ollama is running on your laptop, then run:\n"
+                            "python cloud/enricher.py --limit 30\n\n"
+                            "It will generate tailored CVs for all high-scoring jobs automatically.",
                         )
-                        _log(f"Tailored CV requested but not in DB yet for job_id={job_id}")
+                        _log(f"Tailored CV not in DB yet for job_id={job_id} — sent instructions")
             # ─────────────────────────────────────────────────────────────────
 
             commands  = tg.extract_commands(updates)
