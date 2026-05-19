@@ -118,7 +118,12 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 def _log(msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    line = f"[{ts}] {msg}"
+    try:
+        print(line, flush=True)
+    except UnicodeEncodeError:
+        # Windows console with narrow code page (cp1252) — strip non-ASCII
+        print(line.encode("ascii", errors="replace").decode("ascii"), flush=True)
 
 
 _DEFAULT_KEYWORDS = "IT Support,IT Helpdesk,System Administrator,IT Infrastructure"
@@ -787,7 +792,7 @@ def main() -> None:
         all_new_jobs.sort(key=_src_rank)
         _log(
             f"Alert order (top {min(5, len(all_new_jobs))}): "
-            + " → ".join(
+            + " -> ".join(
                 f"{j.get('Source','?').split('/')[0]}:{j.get('Title','?')[:25]}"
                 for j in all_new_jobs[:5]
             )
