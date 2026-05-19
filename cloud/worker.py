@@ -215,29 +215,51 @@ def main() -> None:
             tg_offset = int(db.get_config(supabase_url, supabase_key, "telegram_offset", "0"))
             updates   = tg.get_updates(tg_token, offset=tg_offset)
 
-            # ── Cover-letter inline-button callbacks ──────────────────────────
+            # ── Inline-button callbacks (Cover Letter + Tailored CV) ──────────
             for cb in tg.extract_callbacks(updates):
-                if not cb["data"].startswith("cover_"):
-                    continue
-                job_id = cb["data"][len("cover_"):]
-                cover  = db.get_cover_letter(supabase_url, supabase_key, job_id)
-                if cover:
-                    tg.answer_callback_query(
-                        tg_token, cb["callback_query_id"],
-                        text="Sending cover letter…",
-                    )
-                    tg.send_message(
-                        tg_token, cb["chat_id"],
-                        "\U0001f4dd Cover Letter Draft\n\n" + cover,
-                    )
-                    _log(f"Sent cover letter for job_id={job_id}")
-                else:
-                    tg.answer_callback_query(
-                        tg_token, cb["callback_query_id"],
-                        text="Cover letter not ready yet — run the enricher locally first.",
-                        show_alert=True,
-                    )
-                    _log(f"Cover letter requested but not in DB yet for job_id={job_id}")
+                data = cb["data"]
+
+                if data.startswith("cover_"):
+                    job_id = data[len("cover_"):]
+                    cover  = db.get_cover_letter(supabase_url, supabase_key, job_id)
+                    if cover:
+                        tg.answer_callback_query(
+                            tg_token, cb["callback_query_id"],
+                            text="Sending cover letter…",
+                        )
+                        tg.send_message(
+                            tg_token, cb["chat_id"],
+                            "\U0001f4dd Cover Letter Draft\n\n" + cover,
+                        )
+                        _log(f"Sent cover letter for job_id={job_id}")
+                    else:
+                        tg.answer_callback_query(
+                            tg_token, cb["callback_query_id"],
+                            text="Cover letter not ready yet — run the enricher locally first.",
+                            show_alert=True,
+                        )
+                        _log(f"Cover letter requested but not in DB yet for job_id={job_id}")
+
+                elif data.startswith("cv_"):
+                    job_id = data[len("cv_"):]
+                    cv_draft = db.get_tailored_cv(supabase_url, supabase_key, job_id)
+                    if cv_draft:
+                        tg.answer_callback_query(
+                            tg_token, cb["callback_query_id"],
+                            text="Sending tailored CV…",
+                        )
+                        tg.send_message(
+                            tg_token, cb["chat_id"],
+                            "\U0001f4c4 Tailored CV Draft\n\n" + cv_draft,
+                        )
+                        _log(f"Sent tailored CV for job_id={job_id}")
+                    else:
+                        tg.answer_callback_query(
+                            tg_token, cb["callback_query_id"],
+                            text="Tailored CV not ready yet — run the enricher locally first.",
+                            show_alert=True,
+                        )
+                        _log(f"Tailored CV requested but not in DB yet for job_id={job_id}")
             # ─────────────────────────────────────────────────────────────────
 
             commands  = tg.extract_commands(updates)

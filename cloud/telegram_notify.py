@@ -63,18 +63,18 @@ def send_job_alert(bot_token: str, chat_id: str, job: dict) -> bool:
 
 def send_job_alert_with_button(bot_token: str, chat_id: str, job: dict,
                                 job_id: str = "") -> bool:
-    """Send a job alert with an inline '📝 Cover Letter' button.
+    """Send a job alert with inline '📝 Cover Letter' and '📄 Tailored CV' buttons.
 
-    When the user taps the button, Telegram sends a callback_query with
-    callback_data = 'cover_{job_id}'.  The worker picks it up on the next
-    run and sends the pre-generated (or freshly generated) cover letter.
+    When the user taps a button, Telegram sends a callback_query with
+    callback_data = 'cover_{job_id}' or 'cv_{job_id}'.  The worker picks it
+    up on the next run and sends the pre-generated content.
 
     Falls back to a plain text send if job_id is unavailable.
     """
     text = format_message(job)
 
     if not job_id:
-        # No ID → plain send (button would be useless without it)
+        # No ID → plain send (buttons would be useless without it)
         return send_message(bot_token, chat_id, text)
 
     if not bot_token or not chat_id:
@@ -90,7 +90,11 @@ def send_job_alert_with_button(bot_token: str, chat_id: str, job: dict,
                 {
                     "text":          "\U0001f4dd Cover Letter",   # 📝
                     "callback_data": f"cover_{job_id}",
-                }
+                },
+                {
+                    "text":          "\U0001f4c4 Tailored CV",    # 📄
+                    "callback_data": f"cv_{job_id}",
+                },
             ]]
         },
     }

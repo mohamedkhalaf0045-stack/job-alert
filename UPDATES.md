@@ -5,7 +5,7 @@
 > - Update the "Pending Tasks" section whenever something is done or added
 > - This file is the single source of truth for what exists, how it works, and what comes next
 >
-> Last updated: 2026-05-14
+> Last updated: 2026-05-18
 
 ---
 
@@ -131,6 +131,8 @@ project-root/
 │   ├── digest.py                   Daily 8am top-3 digest to Telegram
 │   ├── telegram_notify.py          Telegram message formatting + send functions
 │   ├── health_check.py             Checks if scanner is stuck, alerts if so
+│   ├── relevance_engine.py         CV-driven 5-tier job relevance classifier (Phase 9)
+│   ├── apply_executor.py           Playwright Easy Apply executor (Phase 10)
 │   ├── requirements.txt            Python deps: requests==2.32.3, supabase==2.10.0
 │   └── migrations/
 │       ├── 2026-05-13-multi-criteria.sql   Phase 2 DB columns
@@ -147,15 +149,17 @@ project-root/
 │   │   │   └── cloud_status.dart   Cloud scanner status model
 │   │   ├── services/
 │   │   │   ├── supabase_service.dart   All Supabase REST calls from Flutter
-│   │   │   ├── github_service.dart     GitHub Actions trigger + run status
+│   │   │   ├── github_service.dart     GitHub Actions trigger + run status + easy-apply dispatch
+│   │   │   ├── notification_service.dart  Local Android notifications for app updates
 │   │   │   └── update_service.dart     APK self-update via Google Drive
 │   │   ├── screens/
 │   │   │   ├── dashboard_screen.dart   Tab 1 — cloud scanner status + controls
-│   │   │   ├── jobs_screen.dart        Tab 2 — job list with filters
-│   │   │   ├── job_detail_screen.dart  Full job detail + AI breakdown + cover letter
+│   │   │   ├── jobs_screen.dart        Tab 2 — 5-tab list (All/New/Scored/Applied/Saved)
+│   │   │   ├── job_detail_screen.dart  Full job detail + AI breakdown + cover letter + Easy Apply
+│   │   │   ├── apply_preview_screen.dart  Easy Apply form — pre-filled from CV, editable
 │   │   │   └── settings_screen.dart    Tab 3 — edit keywords, location, toggles
 │   │   └── widgets/
-│   │       ├── job_card.dart       Job row widget with score badge + skills hint
+│   │       ├── job_card.dart       Job row widget with score badge + skills hint + date groups
 │   │       └── status_lamp.dart    Green/yellow/red status dot
 │   ├── android/
 │   │   └── app/
@@ -168,7 +172,8 @@ project-root/
 │   ├── job-alert.yml           Main scan — every 5 min, LinkedIn + Indeed + Adzuna
 │   ├── daily-digest.yml        Daily 8am UAE digest — top 3 jobs
 │   ├── health-check.yml        Every 3h — checks if scanner is stuck
-│   └── build-apk.yml           On tag push — build + sign + release APK
+│   ├── build-apk.yml           On tag push — build + sign + release APK
+│   └── easy-apply.yml          workflow_dispatch — runs apply_executor.py via Playwright
 │
 ├── UPDATES.md                  THIS FILE — project memory
 ├── README.md                   Public-facing instructions
@@ -521,60 +526,79 @@ python cloud/dedup.py --reprocess-all
 
 | # | Commit | What it does |
 |---|--------|-------------|
-| 1 | `cb6f5a3` | Location filter for Gmail and web search — drops jobs outside configured country before Telegram alert |
-| 2 | `6b912ef` | PowerShell GUI: right-click "Show AI breakdown" modal + "Copy cover letter" to clipboard |
-| 2 | `4af8079` | Flutter: surfaces all Phase 2–5 data (score breakdown, skills chips, cover letter card, duplicate banner) |
-| 3 | `ed97268` | Daily 8am Telegram digest of top 3 jobs (GitHub Actions cron) |
-| 4 | `21c18a6` | Compact Telegram alerts toggle (2-line format for less noise) |
-| 5 | `1b9c765` | Auto-generate cover letter drafts for jobs scoring >= 7 (second Ollama call) |
-| 6 | `115bac8` | Active learning: inject user's applied/dismissed history as few-shot examples |
-| 7 | `ab4be94` | Enricher skips scoring and Telegram alert for duplicate jobs |
-| 8 | `42b7eda` | Cross-source deduplication via nomic-embed-text embeddings (cosine >= 0.92) |
-| 9 | `05cb0f8` | Telegram alert format updated with emoji, sub-scores, matched/missing skills |
-| 10 | `156fa00` | Multi-criteria LLM scoring: 4 axes + matched/missing/flags + 3 few-shot examples |
-| 11 | `6aa4288` | AI lamp in PS status bar (green/yellow/red) + Run-EnrichmentHealthCheck.ps1 |
-| 12 | `4e88b05` | Auto-trigger enricher after each worker scan (fire-and-forget, PID guard) |
-| 13 | `5a665df` | Enricher: LINKEDIN_COOKIE env var, 24h profile cache, UTF-8 stdout fix |
-| 14 | `bf4f70e` | Indeed: switch to RSS feed; GUI settings sync to Supabase |
-| 15 | `816bc7c` | Fix 0-jobs scraping: better headers + resilient CSS fallbacks for LinkedIn |
-| 16 | `e0b2644` | Hide console window via Win32 at PS script startup |
-| 17 | `d9cfecc` | Suppress black PS console when launching GUI |
-| 18 | `3d65bb4` | Auto-scan on startup + Telegram status column in job list |
-| 19 | `a71e155` | Debug logging for LinkedIn HTML size and li count |
-| 20 | `1644e1c` | Per-page progress logging to keep activity log alive |
-| 21 | `31d176b` | Fix Gmail parser bugs found during live email test |
-| 22 | `158a743` | Send Telegram score alert from enricher after local scoring |
-| 23 | `fc8d56d` | Add Gmail job alert scanner (IMAP — reads job alert emails) |
-| 24 | `b1e7966` | Fix duplicate Telegram alerts by tracking only newly inserted jobs |
-| 25 | `ec7cb53` | Web deep search via Tavily → Brave → Google → Bing cascade (Level 3) |
-| 26 | `bc770f5` | Remove Jooble (API defunct) — Adzuna only for aggregators |
-| 27 | `079da34` | Add Jooble + Adzuna as Level 3 job aggregators |
-| 28 | `01a606e` | Re-enable Indeed via HTTP-only scraping (no Playwright) |
-| 29 | `d401405` | Add contents:write permission so workflow can create GitHub Releases |
-| 30 | `2d9aee1` | Add MainActivity.kt + Android scaffold with correct package name |
-| 31 | `c9039d7` | GitHub Releases APK distribution + signed CI build workflow |
-| 32 | `7571849` | Scan every 5 min; skip Playwright install when Indeed disabled |
-| 33 | `e2dd5a9` | Health alert timestamps in local timezone |
-| 34 | `aa26399` | Fix LinkedIn 429 rate-limiting (slower polling, random delays) |
-| 35 | `b71a841` | Cloud worker reads Supabase settings before requiring env vars |
-| 36 | `b1afbce` | Flutter: add WidgetsFlutterBinding.ensureInitialized + crash guard |
-| 37 | `bb8742d` | Flutter: self-update via Google Drive APK download |
-| 38 | `bcba032` | Flutter: timezone auto-detect + local time in job dates |
-| 39 | `5e1d3a3` | Fix: encode cutoff timestamp as Z suffix in health_check query |
-| 40 | `000b26b` | Pass LinkedIn cookie to enricher for profile URL access |
-| 41 | `3fc8d2f` | Show "Settings saved [OK]" feedback in GUI |
-| 42 | `4ac5eb4` | Refresh Score column from Supabase after enrichment |
-| 43 | `add11fd` | Fix default Ollama model name to llama3.1:latest |
-| 44 | `3fb3410` | Add CV PDF + LinkedIn profile URL as scoring profile sources |
-| 45 | `14f24ba` | Add LLM job scoring with local Ollama enrichment (Phase 1 baseline) |
-| 46 | `8e3f637` | Add health check workflow + Supabase settings override in worker |
-| 47 | `d7678ac` | Add /status Telegram command + cloud status lamp in Flutter |
-| 48 | `38919b2` | Switch to Supabase REST API (HTTPS) — fixes IPv4/IPv6 issue on Actions |
-| 49 | `637799d` | **Initial commit** — LinkedIn job alert app with cloud worker |
+| 1 | `ef652f9` | Drop stale web-search jobs that slip past freshness filter — final safety net after all other age checks |
+| 2 | `6baccf7` | Easy Apply (Phase 10) — Flutter ApplyPreviewScreen pre-fills CV answers, confirm dialog, saves to Supabase, triggers easy-apply.yml via GitHub Actions; cloud/apply_executor.py runs Playwright on LinkedIn |
+| 3 | `ac253ef` | Relevance engine: block generic-role false positives (Packaging Coordinator, Accountant, etc.) that matched CV domain terms |
+| 4 | `bee1e03` | Flutter: add GitHub PAT setting field; fix "No GitHub token configured" error when triggering workflows |
+| 5 | `c5a7b9d` | Restore immediate Telegram alerts (enricher was gating all alerts); add f_TPR time filter to PS1 scraper |
+| 6 | `01fdb44` | 3-layer stale job notification guard — max_hours enforced in scraper, pre-DB filter, and Telegram gate |
+| 7 | `e9f4db2` | LinkedIn: use geoId=101452733 for accurate UAE results; raise page limit from 25 to 40 |
+| 8 | `91a8db4` | Phase 9 — CV-driven relevance engine (cloud/relevance_engine.py): 5-tier classifier replaces all hardcoded regex across worker + enricher; min_score Telegram gate reads setting_llm_min_score from Supabase; Flutter job list gains 5 tabs + date group headers |
+| 9 | `d88687e` | Revert geoId — param caused wrong-country results, dropped all UAE jobs |
+| 10 | `cec94a0` | LinkedIn: accept jobs with no parseable date when f_TPR filter is active |
+| 11 | `a4990d1` | LinkedIn guest API URL: add f_TPR time filter + geoId |
+| 12 | `17f37ca` | Flutter: enable core library desugaring to fix flutter_local_notifications Android build |
+| 13 | `3108ba3` | Bump Flutter app version to 1.0.2+3 |
+| 14 | `b547c09` | Flutter: local Android notification when app update is available — new NotificationService, _updateNotified flag prevents duplicates |
+| 15 | `bd23d3f` | UI/UX polish — dashboard "Last run" → "Status" with red error tooltip; Flutter status lamp 64→96px; Windows GUI card drop shadows |
+| 16 | `084f025` | Windows GUI: Gmail search controls — checkbox + email + app-password textboxes in Automation card; syncs to Supabase bot_state |
+| 17 | `0fda718` | Windows GUI: initialize timer/job vars to null; stop all timers on FormClosing to prevent crashes on exit |
+| 18 | `8e5fe28` | Pass max_hours to web search APIs as native freshness filter (not just post-filter) |
+| 19 | `7622554` | Filter old/wrong-country jobs before DB insert — covers LinkedIn, Indeed, Adzuna, web search |
+| 20 | `cb6f5a3` | Location filter for Gmail and web search — drops jobs outside configured country before Telegram alert |
+| 21 | `6b912ef` | PowerShell GUI: right-click "Show AI breakdown" modal + "Copy cover letter" to clipboard |
+| 22 | `4af8079` | Flutter: surfaces all Phase 2–5 data (score breakdown, skills chips, cover letter card, duplicate banner) |
+| 23 | `ed97268` | Daily 8am Telegram digest of top 3 jobs (GitHub Actions cron) |
+| 24 | `21c18a6` | Compact Telegram alerts toggle (2-line format for less noise) |
+| 25 | `1b9c765` | Auto-generate cover letter drafts for jobs scoring >= 7 (second Ollama call) |
+| 26 | `115bac8` | Active learning: inject user's applied/dismissed history as few-shot examples |
+| 27 | `ab4be94` | Enricher skips scoring and Telegram alert for duplicate jobs |
+| 28 | `42b7eda` | Cross-source deduplication via nomic-embed-text embeddings (cosine >= 0.92) |
+| 29 | `05cb0f8` | Telegram alert format updated with emoji, sub-scores, matched/missing skills |
+| 30 | `156fa00` | Multi-criteria LLM scoring: 4 axes + matched/missing/flags + 3 few-shot examples |
+| 31 | `6aa4288` | AI lamp in PS status bar (green/yellow/red) + Run-EnrichmentHealthCheck.ps1 |
+| 32 | `4e88b05` | Auto-trigger enricher after each worker scan (fire-and-forget, PID guard) |
+| 33 | `5a665df` | Enricher: LINKEDIN_COOKIE env var, 24h profile cache, UTF-8 stdout fix |
+| 34 | `bf4f70e` | Indeed: switch to RSS feed; GUI settings sync to Supabase |
+| 35 | `816bc7c` | Fix 0-jobs scraping: better headers + resilient CSS fallbacks for LinkedIn |
+| 36 | `e0b2644` | Hide console window via Win32 at PS script startup |
+| 37 | `d9cfecc` | Suppress black PS console when launching GUI |
+| 38 | `3d65bb4` | Auto-scan on startup + Telegram status column in job list |
+| 39 | `a71e155` | Debug logging for LinkedIn HTML size and li count |
+| 40 | `1644e1c` | Per-page progress logging to keep activity log alive |
+| 41 | `31d176b` | Fix Gmail parser bugs found during live email test |
+| 42 | `158a743` | Send Telegram score alert from enricher after local scoring |
+| 43 | `fc8d56d` | Add Gmail job alert scanner (IMAP — reads job alert emails) |
+| 44 | `b1e7966` | Fix duplicate Telegram alerts by tracking only newly inserted jobs |
+| 45 | `ec7cb53` | Web deep search via Tavily → Brave → Google → Bing cascade (Level 3) |
+| 46 | `bc770f5` | Remove Jooble (API defunct) — Adzuna only for aggregators |
+| 47 | `079da34` | Add Jooble + Adzuna as Level 3 job aggregators |
+| 48 | `01a606e` | Re-enable Indeed via HTTP-only scraping (no Playwright) |
+| 49 | `d401405` | Add contents:write permission so workflow can create GitHub Releases |
+| 50 | `2d9aee1` | Add MainActivity.kt + Android scaffold with correct package name |
+| 51 | `c9039d7` | GitHub Releases APK distribution + signed CI build workflow |
+| 52 | `7571849` | Scan every 5 min; skip Playwright install when Indeed disabled |
+| 53 | `e2dd5a9` | Health alert timestamps in local timezone |
+| 54 | `aa26399` | Fix LinkedIn 429 rate-limiting (slower polling, random delays) |
+| 55 | `b71a841` | Cloud worker reads Supabase settings before requiring env vars |
+| 56 | `b1afbce` | Flutter: add WidgetsFlutterBinding.ensureInitialized + crash guard |
+| 57 | `bb8742d` | Flutter: self-update via Google Drive APK download |
+| 58 | `bcba032` | Flutter: timezone auto-detect + local time in job dates |
+| 59 | `5e1d3a3` | Fix: encode cutoff timestamp as Z suffix in health_check query |
+| 60 | `000b26b` | Pass LinkedIn cookie to enricher for profile URL access |
+| 61 | `3fc8d2f` | Show "Settings saved [OK]" feedback in GUI |
+| 62 | `4ac5eb4` | Refresh Score column from Supabase after enrichment |
+| 63 | `add11fd` | Fix default Ollama model name to llama3.1:latest |
+| 64 | `3fb3410` | Add CV PDF + LinkedIn profile URL as scoring profile sources |
+| 65 | `14f24ba` | Add LLM job scoring with local Ollama enrichment (Phase 1 baseline) |
+| 66 | `8e3f637` | Add health check workflow + Supabase settings override in worker |
+| 67 | `d7678ac` | Add /status Telegram command + cloud status lamp in Flutter |
+| 68 | `38919b2` | Switch to Supabase REST API (HTTPS) — fixes IPv4/IPv6 issue on Actions |
+| 69 | `637799d` | **Initial commit** — LinkedIn job alert app with cloud worker |
 
 ---
 
-## 8. Smart AI Enhancement Phases (2026-05-06 → 2026-05-14)
+## 8. Smart AI Enhancement Phases (2026-05-06 → 2026-05-18)
 
 ### Phase 1 — Make AI Scoring Actually Work
 **Problem:** AI scores never appeared because:
@@ -716,6 +740,83 @@ No DB schema changes — all new data uses existing `bot_state` table via `db.ge
 
 ---
 
+### Phase 8 — Gmail GUI + UI Polish + Local Notifications
+**Work done around 2026-05-14 (the finishing touches missed from the Phase 7 write-up):**
+
+- **Gmail search controls in Windows GUI** — new checkbox + email + app-password textboxes in the Automation card. Settings sync to Supabase `bot_state` so `cloud/worker.py` picks them up without a restart.
+- **Windows GUI fixes** — timer/job variables initialised to null; all timers properly stopped on `FormClosing` to prevent crashes on exit; card drop-shadows added.
+- **Flutter UI polish** — dashboard "Last run" label renamed to "Status", errors shown in red with a tooltip for the full message; status lamp enlarged from 64→96px; job count chips gain rounded corners + background colours; settings sections get subtle background tints.
+- **Local Android notification** — new `NotificationService`: shows a high-priority notification when an app update is found; tapping it navigates to the Cloud tab. `_updateNotified` flag prevents duplicate alerts per session. Requests `POST_NOTIFICATIONS` permission on Android 13+.
+- **Age enforcement tightened** — `max_hours` passed as a native freshness parameter to web-search APIs; stale/wrong-country jobs filtered pre-DB-insert across all five sources; 3-layer guard (scraper → pre-insert → Telegram gate) prevents old job notifications.
+
+New file: `mobile/lib/services/notification_service.dart`
+
+---
+
+### Phase 9 — CV-Driven Relevance Engine
+**Problem:** Hardcoded `_IT_DOMAIN_TERMS` / `_NON_IT_TITLE_REJECT` regexes were scattered
+across `worker.py` and `enricher.py`. They needed manual updates whenever a new false-positive
+appeared (e.g. "Packaging Coordinator", "Teacher-English" slipping through).
+
+**Solution:** New `cloud/relevance_engine.py` — a 5-tier classifier driven entirely by the
+structured CV profile already stored in Supabase. No hardcoded role lists.
+
+```
+T1  Any search keyword found in title (whole-word)           → ACCEPT
+T2  Any CV job-title word found in title                     → ACCEPT
+T3  Any CV skill word found in title                         → ACCEPT
+T5* Hard-reject — title is clearly a non-target-field role   → REJECT  (evaluated before T4)
+T4  Any CV domain-term found in title                        → ACCEPT
+--  No tier matched                                          → REJECT
+```
+
+`cv_analyzer.py` gains `generate_domain_terms()` — derives filter words from CV skills and job
+titles; stored as `cv_domain_terms` in `bot_state` automatically on every CV analysis.
+
+`worker.py` removes all old helpers and calls `RelevanceEngine.from_supabase()` uniformly across
+all five sources (LinkedIn, Indeed, Adzuna, Web, Gmail).
+
+**Telegram gate:** `worker.py` reads `setting_llm_min_score` from Supabase; skips Telegram
+alert for unscored jobs (deferred to enricher) and suppresses pre-scored jobs below min_score.
+
+**`enricher.py`:** removes `_ENRICHER_NON_IT_TITLE`; uses `engine.is_relevant()` as a
+pre-LLM gate. Irrelevant jobs get a structured rejection reason written to the Supabase
+`llm_summary` field.
+
+**Flutter jobs screen:** gains 5 tabs (All / New / Scored / Applied / Saved), date group headers,
+smart sort (score DESC, then date DESC), enlarged score badge, and a summary chip on job cards.
+
+New file: `cloud/relevance_engine.py`
+
+---
+
+### Phase 10 — Easy Apply
+**What it does:** Lets you fill in your application answers on your phone, review them, then
+trigger LinkedIn Easy Apply from GitHub Actions — without touching a laptop.
+
+**Flutter (`mobile/`):**
+- New `ApplyPreviewScreen` — loads CV profile from Supabase and pre-fills all answer fields
+  (name, email, phone, city, years experience, job title, skills, work authorisation, notice
+  period, salary expectation, why-interested statement). Every field is editable.
+- "Confirm & Apply" button shows a confirmation dialog, then saves the answer package to
+  Supabase (`apply_req_{job_id}`) and dispatches `easy-apply.yml` via `GitHubService`.
+- "Easy Apply" teal button added to `JobDetailScreen`.
+- `SupabaseService` gains: `getCvProfile()`, `saveApplyRequest()`, `getApplyRequest()`.
+- `GitHubService` gains: `triggerEasyApply(jobId)`.
+
+**Cloud:**
+- `cloud/apply_executor.py` — Playwright executor: reads confirmed answers from Supabase,
+  opens the job URL with the LinkedIn cookie, clicks Easy Apply, steps through every form
+  page (phone, city, years, skills, notice, salary, why-interested, work-auth radios),
+  submits, and writes result back to Supabase (`status: done / failed`).
+- `.github/workflows/easy-apply.yml` — `workflow_dispatch` trigger accepting `job_id` input;
+  installs Playwright + Chromium, runs `apply_executor.py`.
+
+New files: `cloud/apply_executor.py`, `mobile/lib/screens/apply_preview_screen.dart`,
+`.github/workflows/easy-apply.yml`
+
+---
+
 ## 9. All Bugs Encountered and Fixed
 
 | Bug | Root cause | Fix |
@@ -742,13 +843,19 @@ No DB schema changes — all new data uses existing `bot_state` table via `db.ge
 | GitHub Release workflow failed | Missing `contents: write` permission | Added `permissions: contents: write` to workflow |
 | Flutter couldn't compile Android | Missing `MainActivity.kt` file | Added manually with correct package `com.khalaf.jobalert` |
 | Supabase connection failed on GitHub Actions | IPv6 unreachable; direct PostgreSQL tried ipv6 | Switched from direct PG connection to PostgREST (HTTPS) |
+| Non-IT jobs slipping through (Teacher-English, Packaging Coordinator) | Hardcoded `_IT_DOMAIN_TERMS` too broad; "teacher" and "coordinator" matched generic domain words | Phase 9: replaced all hardcoded filters with `RelevanceEngine` T5 hard-reject tier, evaluated before the domain-term catch-all |
+| LinkedIn geoId caused wrong-country results | geoId=101452733 returned jobs from wrong countries in some query combinations | Reverted to plain `location=United+Arab+Emirates` query param; kept f_TPR time filter |
+| score-1 jobs being Telegrammed when min_score=6 | `worker.py` alerted all newly-inserted jobs regardless of score | Added `setting_llm_min_score` gate: unscored jobs deferred to enricher; pre-scored jobs below threshold suppressed |
+| Stale jobs still appearing in Telegram alerts | Age check only in scraper; jobs re-inserted from cache could bypass it | Added 3-layer guard: native API freshness param + pre-DB-insert date check + Telegram send gate |
+| flutter_local_notifications build failed on Android | Requires Java 8+ desugaring; not enabled by default | Added `coreLibraryDesugaringEnabled = true` to `build.gradle.kts` |
+| Windows GUI crashed on close if scan was running | Timer callbacks fired after form disposed; null reference on job list | Initialised timer/job vars to null; stop all timers in `FormClosing` event handler |
 
 ---
 
 ## 10. Pending Tasks
 
 ### Must Do Soon
-- [ ] **Build fresh Android APK** — current APK on phone is stale (pre all Flutter fixes)
+- [ ] **Build fresh Android APK** — current APK on phone is stale (Easy Apply, 5-tab list, local notifications not on phone yet)
   ```powershell
   cd mobile
   flutter build apk --release
@@ -757,10 +864,7 @@ No DB schema changes — all new data uses existing `bot_state` table via `db.ge
   # Or copy to phone manually
   ```
 
-- [ ] **Push all commits to GitHub** — multiple commits sitting locally, cloud not updated
-  ```powershell
-  git push
-  ```
+- [x] **Push all commits to GitHub** — done; branch is up to date with origin/main as of 2026-05-18
 
 - [ ] **Run CV analysis for the first time** — open the app, click Browse PDF, pick your CV,
   the Analyze CV button auto-triggers. Or run manually:

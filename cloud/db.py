@@ -263,6 +263,47 @@ def update_cover_letter(supabase_url: str, supabase_key: str,
             print(f"[DB] update_cover_letter error for {job_id}: {exc}")
 
 
+def update_tailored_cv(supabase_url: str, supabase_key: str,
+                        job_id: str, draft: str) -> None:
+    """Persist a tailored CV draft for a specific job. Strips NUL bytes."""
+    if not job_id or not draft:
+        return
+    sb    = _get_client(supabase_url, supabase_key)
+    clean = draft.replace("\x00", "")
+    try:
+        sb.table("jobs").update({
+            "tailored_cv_draft":        clean[:8000],
+            "tailored_cv_generated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("job_id", job_id).execute()
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "could not find" in msg or "does not exist" in msg or "pgrst204" in msg:
+            print("[DB] tailored_cv_draft column missing — run cloud/migrations/2026-05-19-tailored-cv.sql")
+        else:
+            print(f"[DB] update_tailored_cv error for {job_id}: {exc}")
+
+
+def get_tailored_cv(supabase_url: str, supabase_key: str, job_id: str) -> str:
+    """Return the stored tailored_cv_draft for a job, or '' if not yet generated."""
+    if not job_id:
+        return ""
+    try:
+        sb     = _get_client(supabase_url, supabase_key)
+        result = (
+            sb.table("jobs")
+            .select("tailored_cv_draft,title,company")
+            .eq("job_id", job_id)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if rows:
+            return (rows[0].get("tailored_cv_draft") or "").strip()
+    except Exception as exc:
+        print(f"[DB] get_tailored_cv error for {job_id}: {exc}")
+    return ""
+
+
 def get_cover_letter(supabase_url: str, supabase_key: str, job_id: str) -> str:
     """Return the stored cover_letter_draft for a job, or '' if not yet generated."""
     if not job_id:

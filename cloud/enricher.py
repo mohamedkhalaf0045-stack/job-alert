@@ -558,6 +558,80 @@ def generate_cover_letter(job: dict, description: str, profile: str,
         return ""
 
 
+# ── Tailored CV generation ────────────────────────────────────────────────────
+
+DEFAULT_TAILORED_CV_THRESHOLD = 7   # only generate for jobs scoring >= this
+DEFAULT_TAILORED_CV_PER_RUN   = 3   # cap per run so a backfill doesn't take forever
+
+
+def generate_tailored_cv(job: dict, description: str, profile: str,
+                          model: str, ollama_url: str,
+                          breakdown: dict | None = None) -> str:
+    """Generate a CV rewritten and reordered for this specific job.
+
+    The CV is NOT invented — every section comes from the candidate's profile.
+    The LLM reorders, emphasises, and rewrites bullet points so the most
+    relevant experience appears first and directly addresses what this job needs.
+
+    Returns plain text (no markdown). Empty string on failure.
+    Max ~600 words so it fits comfortably as a Telegram file.
+    """
+    desc_excerpt = (description or "")[:2500] or "(no description available)"
+    breakdown    = breakdown or {}
+    matched      = ", ".join(breakdown.get("matched_skills") or [])
+    missing      = ", ".join(breakdown.get("missing_skills") or [])
+
+    prompt = (
+        "Rewrite the candidate's CV tailored specifically for this job.\n"
+        "RULES:\n"
+        "  1. Do NOT invent skills, experience, or qualifications not in the profile.\n"
+        "  2. DO reorder content: most relevant skills and experience come first.\n"
+        "  3. Professional Summary MUST name this company and role explicitly.\n"
+        "  4. Every bullet point in Experience should echo language from the job description.\n"
+        "  5. Plain text only — no markdown, no asterisks, no bullet symbols.\n"
+        "     Use dashes (-) for list items.\n"
+        "  6. Max 600 words total.\n\n"
+        "OUTPUT FORMAT (use these exact section headers):\n"
+        "PROFESSIONAL SUMMARY\n"
+        "<2-3 sentences opening that directly addresses what this job requires>\n\n"
+        "CORE SKILLS\n"
+        "<most relevant skills for THIS job listed first, comma-separated>\n\n"
+        "PROFESSIONAL EXPERIENCE\n"
+        "<same jobs from the profile, bullet points rewritten to match the role>\n\n"
+        "EDUCATION & CERTIFICATIONS\n"
+        "<from profile, no changes>\n\n"
+        f"CANDIDATE PROFILE:\n{profile}\n\n"
+        f"TARGET JOB: {job.get('title', '')} at {job.get('company', '')}\n"
+        f"LOCATION:   {job.get('location', '')}\n"
+    )
+    if matched:
+        prompt += f"MATCHED SKILLS (lead with these): {matched}\n"
+    if missing:
+        prompt += f"GAPS (acknowledge briefly, pivot to strengths): {missing}\n"
+    prompt += f"\nJOB DESCRIPTION:\n{desc_excerpt}\n"
+
+    try:
+        r = requests.post(
+            f"{ollama_url}/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=180,
+        )
+        r.raise_for_status()
+        text = (r.json().get("response") or "").strip()
+        # Strip leading preamble the model sometimes adds
+        text = re.sub(
+            r"^\s*(here\s+is|here'?s|below\s+is|the\s+following\s+is)\b[^\n]{0,160}:\s*\n+",
+            "", text, count=1, flags=re.IGNORECASE,
+        ).strip()
+        return text[:8000]
+    except requests.exceptions.ConnectionError:
+        _log("          Tailored CV: Ollama unreachable")
+        return ""
+    except Exception as exc:
+        _log(f"          Tailored CV error: {exc}")
+        return ""
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -582,6 +656,10 @@ def main() -> None:
                         help=f"Generate cover letter for jobs scoring >= this (default {DEFAULT_COVER_LETTER_THRESHOLD}, 0=disable)")
     parser.add_argument("--cover-letter-max-per-run", type=int, default=DEFAULT_COVER_LETTER_PER_RUN,
                         help=f"Cap cover-letter generations per run (default {DEFAULT_COVER_LETTER_PER_RUN})")
+    parser.add_argument("--tailored-cv-threshold", type=int, default=DEFAULT_TAILORED_CV_THRESHOLD,
+                        help=f"Generate tailored CV for jobs scoring >= this (default {DEFAULT_TAILORED_CV_THRESHOLD}, 0=disable)")
+    parser.add_argument("--tailored-cv-max-per-run", type=int, default=DEFAULT_TAILORED_CV_PER_RUN,
+                        help=f"Cap tailored-CV generations per run (default {DEFAULT_TAILORED_CV_PER_RUN})")
     parser.add_argument("--analyze-cv", action="store_true",
                         help="Analyze CV and store structured profile to Supabase, then exit")
     args = parser.parse_args()
@@ -707,7 +785,7 @@ def main() -> None:
 
     _log(f"Found {len(jobs)} unscored job(s). Scoring...")
 
-    scored = dismissed = failed = cover_letters_generated = 0
+    scored = dismissed = failed = cover_letters_generated = tailored_cvs_generated = 0
 
     for i, job in enumerate(jobs, 1):
         title   = job.get("title", "?")
@@ -834,6 +912,23 @@ def main() -> None:
             else:
                 _vlog("          Cover letter generation returned empty - skipping persist")
 
+        # Phase 5b: generate tailored CV draft for high-scoring jobs.
+        # Throttled per run so a backfill doesn't take forever (~60s per draft).
+        if (args.tailored_cv_threshold > 0
+                and score >= args.tailored_cv_threshold
+                and tailored_cvs_generated < args.tailored_cv_max_per_run):
+            _log(f"          Generating tailored CV (score {score} >= {args.tailored_cv_threshold})...")
+            cv_draft = generate_tailored_cv(job, description, profile, model, ollama,
+                                            breakdown=breakdown)
+            if cv_draft:
+                db.update_tailored_cv(supabase_url, supabase_key, job["job_id"], cv_draft)
+                tailored_cvs_generated += 1
+                _log(f"          Tailored CV saved ({len(cv_draft)} chars) — tap "\U0001f4c4 Tailored CV" button in Telegram")
+                # NOT auto-sent. User taps '📄 Tailored CV' button in Telegram
+                # and the worker delivers it on the next run.
+            else:
+                _vlog("          Tailored CV generation returned empty — skipping persist")
+
         # Send Telegram score notification for kept jobs (richer format with breakdown).
         # Skip if worker.py already sent a basic alert for this job.
         if score >= min_score and tg_token and tg_chat:
@@ -877,7 +972,7 @@ def main() -> None:
         if i < len(jobs):
             time.sleep(0.5)  # small pause between Ollama calls
 
-    _log(f"Done. Scored={scored}, Auto-dismissed={dismissed}, Failed={failed}, CoverLetters={cover_letters_generated}")
+    _log(f"Done. Scored={scored}, Auto-dismissed={dismissed}, Failed={failed}, CoverLetters={cover_letters_generated}, TailoredCVs={tailored_cvs_generated}")
 
     if args.health_check:
         if scored + dismissed > 0:
