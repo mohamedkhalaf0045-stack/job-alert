@@ -5,7 +5,7 @@
 > - Update the "Pending Tasks" section whenever something is done or added
 > - This file is the single source of truth for what exists, how it works, and what comes next
 >
-> Last updated: 2026-05-18
+> Last updated: 2026-05-19
 
 ---
 
@@ -121,23 +121,30 @@ project-root/
 │   ├── worker.py                   GitHub Actions entry point — orchestrates all scrapers
 │   ├── db.py                       Supabase REST API client (all DB operations)
 │   ├── linkedin.py                 LinkedIn scraper (HTTP, no browser)
+│   ├── bayt.py                     Bayt.com scraper (UAE #1 job board, priority 2)
+│   ├── gulftalent.py               GulfTalent.com scraper (UAE, priority 3)
+│   ├── naukri_gulf.py              NaukriGulf.com scraper (UAE/MENA, priority 4)
 │   ├── indeed.py                   Indeed RSS feed scraper
 │   ├── adzuna.py                   Adzuna job API client
 │   ├── websearch.py                Web deep search (Tavily → Brave → Google → Bing)
 │   ├── gmail_scan.py               Gmail IMAP scanner (reads job alert emails)
-│   ├── enricher.py                 Local Ollama AI scoring + cover letter drafts
+│   ├── enricher.py                 Local Ollama: scoring + cover letter + tailored CV
 │   ├── dedup.py                    Cross-source duplicate detection (embeddings)
-│   ├── preferences.py              Active learning — few-shot from user history
+│   ├── preferences.py              Active learning -- few-shot from user history
 │   ├── digest.py                   Daily 8am top-3 digest to Telegram
-│   ├── telegram_notify.py          Telegram message formatting + send functions
+│   ├── telegram_notify.py          Telegram formatting + send + inline buttons
 │   ├── health_check.py             Checks if scanner is stuck, alerts if so
 │   ├── relevance_engine.py         CV-driven 5-tier job relevance classifier (Phase 9)
+│   ├── cv_analyzer.py              AI CV parsing → structured profile in Supabase
 │   ├── apply_executor.py           Playwright Easy Apply executor (Phase 10)
+│   ├── url_safety.py               URL safety check + tracking-param stripper
+│   ├── runner.py                   Railway persistent loop runner (2-min interval)
 │   ├── requirements.txt            Python deps: requests==2.32.3, supabase==2.10.0
 │   └── migrations/
 │       ├── 2026-05-13-multi-criteria.sql   Phase 2 DB columns
 │       ├── 2026-05-14-dedup.sql            Phase 3 DB columns
-│       └── 2026-05-15-cover-letter.sql     Phase 5 DB column
+│       ├── 2026-05-15-cover-letter.sql     Phase 5 DB column
+│       └── 2026-05-19-tailored-cv.sql      Tailored CV columns (⚠️ run this!)
 │
 ├── mobile/                         Flutter Android/iOS app
 │   ├── lib/
@@ -215,7 +222,11 @@ CREATE TABLE jobs (
 
   -- Cover letter (Phase 5)
   cover_letter_draft        TEXT,
-  cover_letter_generated_at TIMESTAMPTZ
+  cover_letter_generated_at TIMESTAMPTZ,
+
+  -- Tailored CV per job (2026-05-19) -- run migrations/2026-05-19-tailored-cv.sql
+  tailored_cv_draft         TEXT,
+  tailored_cv_generated_at  TIMESTAMPTZ
 );
 ```
 
@@ -251,9 +262,10 @@ CREATE POLICY anon_full_access_bot_state
 
 ### Migration SQL files (run in order in Supabase SQL editor)
 ```
-cloud/migrations/2026-05-13-multi-criteria.sql   — Phase 2 columns
-cloud/migrations/2026-05-14-dedup.sql            — Phase 3 columns + indexes
-cloud/migrations/2026-05-15-cover-letter.sql     — Phase 5 column
+cloud/migrations/2026-05-13-multi-criteria.sql   -- Phase 2 columns
+cloud/migrations/2026-05-14-dedup.sql            -- Phase 3 columns + indexes
+cloud/migrations/2026-05-15-cover-letter.sql     -- Phase 5 column
+cloud/migrations/2026-05-19-tailored-cv.sql      -- Tailored CV columns (⚠️ not yet run!)
 ```
 
 ---
@@ -315,7 +327,9 @@ CREATE TABLE jobs (
   duplicate_of_url  TEXT,
   dedup_checked_at  TIMESTAMPTZ,
   cover_letter_draft        TEXT,
-  cover_letter_generated_at TIMESTAMPTZ
+  cover_letter_generated_at TIMESTAMPTZ,
+  tailored_cv_draft         TEXT,
+  tailored_cv_generated_at  TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS jobs_status_idx        ON jobs (status);
@@ -526,7 +540,17 @@ python cloud/dedup.py --reprocess-all
 
 | # | Commit | What it does |
 |---|--------|-------------|
-| 1 | `ef652f9` | Drop stale web-search jobs that slip past freshness filter — final safety net after all other age checks |
+| 1 | `79ba2cc` | Tailored CV per job: enricher generates a role-specific CV draft (score >= 7); two inline buttons in Telegram: "📝 Cover Letter" + "📄 Tailored CV"; worker handles cv_ callbacks |
+| 2 | `988fae8` | Cover Letter button: every Telegram alert now has an inline "📝 Cover Letter" button; worker handles cover_ callbacks on-demand (not auto-sent) |
+| 3 | `5d348ea` | URL safety checker: validates every link before Telegram send (HTTPS only, no IP/shortener/bad-TLD, 40+ trusted-domain whitelist); strips UTM/tracking params |
+| 4 | `9e24414` | Railway deployment: cloud/runner.py loops every 2 min; railway.toml configures build + start command |
+| 5 | `f6f8928` | (pre-button) Enricher auto-sent cover letter to Telegram — later changed to button UX |
+| 6 | `0124d84` | Per-source instant alerts: _alert_new() called after each sync_jobs() so LinkedIn jobs reach phone in seconds; GulfTalent + NaukriGulf scrapers added; ntfy.sh push for score >= 7 |
+| 7 | `70bb5bc` | Bayt.com scraper: UAE's #1 job board added as priority 2 source |
+| 8 | `3184609` | Web search listing-page fix: reject aggregator/listing URLs (Glassdoor SRCH, Indeed /q-l-jobs, etc.) — only individual job postings allowed |
+| 9 | `2451224` | APK infinite update loop fix: normalize version tag by stripping -dev/-beta suffix before comparison |
+| 10 | `76173ab` | Re-alert scan catches jobs that entered DB but were never notified |
+| 11 | `ef652f9` | Drop stale web-search jobs that slip past freshness filter — final safety net after all other age checks |
 | 2 | `6baccf7` | Easy Apply (Phase 10) — Flutter ApplyPreviewScreen pre-fills CV answers, confirm dialog, saves to Supabase, triggers easy-apply.yml via GitHub Actions; cloud/apply_executor.py runs Playwright on LinkedIn |
 | 3 | `ac253ef` | Relevance engine: block generic-role false positives (Packaging Coordinator, Accountant, etc.) that matched CV domain terms |
 | 4 | `bee1e03` | Flutter: add GitHub PAT setting field; fix "No GitHub token configured" error when triggering workflows |
@@ -817,6 +841,101 @@ New files: `cloud/apply_executor.py`, `mobile/lib/screens/apply_preview_screen.d
 
 ---
 
+### Phase 11 — New UAE Sources + Instant Per-Source Alerts
+**Goal:** Get matching jobs before anyone else.
+
+**New scrapers:**
+- `cloud/bayt.py` — Bayt.com (UAE's #1 job board). Priority 2 after LinkedIn.
+- `cloud/gulftalent.py` — GulfTalent.com. Priority 3. BeautifulSoup4 HTML parsing with fallback.
+- `cloud/naukri_gulf.py` — NaukriGulf.com. Priority 4. Slug-based pagination.
+
+**Instant alerts:** `_alert_new()` closure in `worker.py` is called immediately after each
+`sync_jobs()` call — not at the end of the full scan. LinkedIn jobs reach the phone within
+seconds of being found, not minutes.
+
+**Source priority ordering:** LinkedIn(1) → Bayt(2) → GulfTalent(3) → NaukriGulf(4) →
+Indeed(5) → Gmail(6) → Adzuna(7) → Web(8).
+
+**ntfy.sh push:** Optionally sends a native phone notification (not Telegram) for jobs
+scoring >= 7. Set `setting_ntfy_url` in Supabase `bot_state` to enable.
+Example value: `https://ntfy.sh/your-topic-name`
+
+---
+
+### Phase 12 — URL Safety Layer
+**Goal:** Never accidentally send a phishing or malicious link to the user's phone.
+
+**New file: `cloud/url_safety.py`**
+- `check_url(url) → (bool, reason)`: 9 rules — HTTPS only, no bare IPs, no URL shorteners,
+  no suspicious TLDs (.ru/.cn/etc.), no executable extensions, max 2000 chars, trusted-domain
+  whitelist (40+ ATS + job boards).
+- `sanitize_url(url) → str`: strips `utm_*`, `fbclid`, `gclid`, `trk`, `_ga` tracking params.
+
+Every Telegram link goes through `url_safety.check_url()` before send. Sanitized URL
+(not the raw scraped URL) is what the user sees and clicks.
+
+---
+
+### Phase 13 — Cover Letter On-Demand Button
+**Goal:** User asked for a button, not an auto-sent wall of text.
+
+Every job alert in Telegram now has an inline `[📝 Cover Letter]` button.
+When the user taps it, the worker picks up the `cover_{job_id}` callback on the next run
+and sends the pre-generated cover letter draft.
+
+`telegram_notify.py` — `send_job_alert_with_button()` sends inline keyboard with the button.
+`worker.py` — polls `getUpdates` at run start, handles `cover_*` callbacks.
+`answer_callback_query()` called within the run to dismiss the loading spinner on the button.
+
+---
+
+### Phase 14 — Railway Deployment (2-Minute Scanning)
+**Goal:** GitHub Actions minimum cron = 5 min. Railway runs a persistent process.
+
+**New files:**
+- `cloud/runner.py` — infinite loop calling `worker.py` every 2 min (`SCAN_INTERVAL_SECONDS`, default 120).
+- `railway.toml` — build: nixpacks, start: `pip install -r cloud/requirements.txt && python cloud/runner.py`.
+
+Deploy: connect the repo to Railway, set the same 3 GitHub Actions secrets as env vars.
+Cost: Railway free tier covers ~500 hours/month (enough for 24/7 with hobby plan).
+
+---
+
+### Phase 15 — Web Search Listing-Page Fix
+**Goal:** Web search was returning Glassdoor/Indeed listing pages (100 jobs per page) as if
+they were individual job postings.
+
+**Fix in `cloud/websearch.py`:**
+- `_LISTING_PAGE_URL` regex: matches Glassdoor `SRCH_*`, Indeed `/q-*-l-*-jobs.html`,
+  `/jobs/search`, `/job-search`, generic `?keywords=` query strings.
+- `_LISTING_PAGE_TITLE` regex: matches "247 jobs in Dubai", "Search Results", "Job Board".
+- `_is_job_url(url, title)`: returns False for listing pages. Only individual job postings pass.
+
+---
+
+### Phase 16 — Tailored CV Per Job
+**Goal:** For each high-scoring job, rewrite the user's CV to match that specific role's
+language and requirements — making it past ATS screening.
+
+**How it works:**
+- `enricher.py` calls `generate_tailored_cv()` for jobs scoring >= 7 (capped at 3/run).
+- Prompt rules: no invented content, reorder sections by relevance, name company and role
+  in summary, echo job description language in bullet points, plain text, max 600 words.
+- Output sections: PROFESSIONAL SUMMARY, CORE SKILLS, PROFESSIONAL EXPERIENCE,
+  EDUCATION & CERTIFICATIONS.
+- Saved to `jobs.tailored_cv_draft` in Supabase.
+
+**Telegram delivery:**
+Every alert now has TWO inline buttons:
+```
+[📝 Cover Letter]  [📄 Tailored CV]
+```
+Tap either → delivered to Telegram on next worker run.
+
+**Migration required:** Run `cloud/migrations/2026-05-19-tailored-cv.sql` in Supabase SQL Editor.
+
+---
+
 ## 9. All Bugs Encountered and Fixed
 
 | Bug | Root cause | Fix |
@@ -849,45 +968,85 @@ New files: `cloud/apply_executor.py`, `mobile/lib/screens/apply_preview_screen.d
 | Stale jobs still appearing in Telegram alerts | Age check only in scraper; jobs re-inserted from cache could bypass it | Added 3-layer guard: native API freshness param + pre-DB-insert date check + Telegram send gate |
 | flutter_local_notifications build failed on Android | Requires Java 8+ desugaring; not enabled by default | Added `coreLibraryDesugaringEnabled = true` to `build.gradle.kts` |
 | Windows GUI crashed on close if scan was running | Timer callbacks fired after form disposed; null reference on job list | Initialised timer/job vars to null; stop all timers in `FormClosing` event handler |
+| APK infinite update loop | `tag_name = "v1.0.4-dev"` → version "1.0.4-dev" never matched app version "1.0.4" → always triggered update | Strip suffix with `.split(RegExp(r'[-+]')).first` in `update_service.dart` |
+| Web search returning listing pages (100 jobs per page) | Glassdoor/Indeed search URLs passed `_is_job_url()` because it only checked host, not URL path pattern | Added `_LISTING_PAGE_URL` + `_LISTING_PAGE_TITLE` regex to `websearch.py`; both URL and page title are checked |
+| Double Telegram alerts on some jobs | `already_sent` set was initialized inside the scan loop, not before it | Moved initialization before the keyword loop so all per-source instant alerts share the same dedup set |
 
 ---
 
 ## 10. Pending Tasks
 
+### ⚠️ Must Do Now (one-time manual steps)
+
+- [ ] **Run tailored CV migration** — paste into Supabase → SQL Editor → Run:
+  ```sql
+  ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tailored_cv_draft        text;
+  ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tailored_cv_generated_at timestamptz;
+  ```
+  File: `cloud/migrations/2026-05-19-tailored-cv.sql`
+
+- [ ] **Enable ntfy.sh push notifications (optional)** — for instant native phone alerts on
+  score >= 7 jobs. In Supabase → Table Editor → bot_state → insert:
+  ```
+  key:   setting_ntfy_url
+  value: https://ntfy.sh/YOUR-TOPIC-NAME
+  ```
+  Install the free `ntfy` app on your phone and subscribe to YOUR-TOPIC-NAME.
+
+- [ ] **Set max_hours to 72** — in mobile app Settings, change "Max hours" from 5 to 72.
+  (5h misses jobs posted while you sleep; 72h = 3 days coverage.)
+
 ### Must Do Soon
-- [ ] **Build fresh Android APK** — current APK on phone is stale (Easy Apply, 5-tab list, local notifications not on phone yet)
+
+- [ ] **Build fresh Android APK** — tailored CV button, two-button alerts, and all new sources
+  not on phone yet:
   ```powershell
   cd mobile
   flutter build apk --release
   # Output: build\app\outputs\flutter-apk\app-release.apk
   # Install: adb install build\app\outputs\flutter-apk\app-release.apk
-  # Or copy to phone manually
   ```
+  Or push a tag: `git tag v1.0.6 && git push origin v1.0.6` → CI builds + releases APK.
 
-- [x] **Push all commits to GitHub** — done; branch is up to date with origin/main as of 2026-05-18
+- [x] **Push all commits to GitHub** — done; main is at `79ba2cc` as of 2026-05-19
 
-- [ ] **Run CV analysis for the first time** — open the app, click Browse PDF, pick your CV,
-  the Analyze CV button auto-triggers. Or run manually:
+- [ ] **Run CV analysis for the first time** — open the Windows app, click Browse PDF,
+  pick your CV. The Analyze CV button auto-triggers. Or manually:
   ```powershell
   python cloud/cv_analyzer.py --cv "C:\path\to\your\cv.pdf"
   python cloud/cv_analyzer.py --show   # verify what was extracted
   ```
 
 ### Should Do
-- [ ] **Bulk generate cover letters for existing jobs** — ~60 jobs with `llm_score >= 7` have none
-  - Need to add `--force-cover-letters` flag to `cloud/enricher.py`
-  - Or run: `python cloud/enricher.py --limit 100` (picks up ones missing cover letters)
 
-- [ ] **Reduce Phase 4 cache TTL** — currently 6h; after marking applied/dismissed, takes up to 6h to affect scoring
-  - In `cloud/preferences.py` → change `CACHE_TTL_HOURS = 6` to `CACHE_TTL_HOURS = 1`
+- [ ] **Bulk generate tailored CVs for existing high-score jobs**:
+  ```powershell
+  python cloud/enricher.py --limit 50 --tailored-cv-threshold 7 --tailored-cv-max-per-run 20
+  ```
+
+- [ ] **Bulk generate cover letters for existing jobs** (~60 jobs with score >= 7 have none):
+  ```powershell
+  python cloud/enricher.py --limit 100 --cover-letter-threshold 7 --cover-letter-max-per-run 20
+  ```
+
+- [ ] **Reduce Phase 4 cache TTL** — in `cloud/preferences.py` change `CACHE_TTL_HOURS = 6`
+  to `CACHE_TTL_HOURS = 1` so applied/dismissed history takes effect faster.
 
 ### Nice to Have
-- [ ] **`/cover {job_id}` Telegram command** — serve cover letter on demand from `telegram_linkedin_ai_assistant.py`
-- [ ] **Indeed scraping fix** — RSS feed is unreliable; consider Adzuna API or Google Jobs RSS as full replacement
-- [ ] **"Similar to N jobs you applied to" badge** — Phase 4 cosmetic: show in Flutter job detail how many applied jobs match this one by embedding similarity
-- [ ] **Salary extraction** — parse salary ranges from descriptions; add `salary_min`/`salary_max` columns
-- [ ] **Score history chart** — Flutter dashboard tab showing match quality trend over days
-- [ ] **Settings UI toggle for compact alerts** — currently set manually in `settings.json`
+
+- [ ] **Deploy to Railway** — break the 5-min GitHub Actions limit; get 2-min scanning.
+  Connect repo to Railway.app, set env vars: `SUPABASE_URL`, `SUPABASE_KEY`,
+  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `LINKEDIN_COOKIE`, `KEYWORDS`, `LOCATION`.
+  Start command is already in `railway.toml`.
+
+- [ ] **Indeed scraping fix** — RSS feed is unreliable; Adzuna API is the better fallback.
+
+- [ ] **Tailored CV in Flutter app** — `job_detail_screen.dart` currently shows cover letter card;
+  add a second card for the tailored CV draft with a copy button.
+
+- [ ] **Salary extraction** — parse salary ranges from descriptions; add `salary_min`/`salary_max`.
+
+- [ ] **Score history chart** — Flutter dashboard trend over days.
 
 ---
 
