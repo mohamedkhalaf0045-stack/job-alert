@@ -923,7 +923,7 @@ def main() -> None:
             if cv_draft:
                 db.update_tailored_cv(supabase_url, supabase_key, job["job_id"], cv_draft)
                 tailored_cvs_generated += 1
-                _log(f"          Tailored CV saved ({len(cv_draft)} chars) — tap "\U0001f4c4 Tailored CV" button in Telegram")
+                _log(f"          Tailored CV saved ({len(cv_draft)} chars) — tap the Tailored CV button in Telegram")
                 # NOT auto-sent. User taps '📄 Tailored CV' button in Telegram
                 # and the worker delivers it on the next run.
             else:
