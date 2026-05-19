@@ -231,6 +231,80 @@ def format_score_alert(job: dict, breakdown: dict, compact: bool = False) -> str
     return "\n".join(p for p in parts if p)
 
 
+def send_score_update(bot_token: str, chat_id: str, job: dict, breakdown: dict,
+                       job_id: str = "") -> bool:
+    """Send a concise score UPDATE for a job already alerted by the worker.
+
+    Used by the enricher when a job was sent to Telegram before Ollama scored it.
+    Shows the score, matched/missing skills, and Cover Letter / Tailored CV buttons.
+
+    Format:
+        📊 Score: 7/10 — IT Support Engineer @ Company
+        ✅ Matched: Active Directory, Exchange Online
+        ❌ Missing: CCNA, Fortinet
+        🔗 https://...
+    """
+    score   = breakdown.get("overall_score", "?")
+    title   = (job.get("title")   or job.get("Title")   or "Unknown Title").strip()
+    company = (job.get("company") or job.get("Company") or "").strip()
+    url     = (job.get("url")     or job.get("Url")     or "").strip()
+
+    # Score emoji
+    try:
+        s = int(score)
+        if s >= 8:   star = "🌟"
+        elif s >= 6: star = "✅"
+        elif s >= 4: star = "🔵"
+        else:        star = "⚪"
+    except (ValueError, TypeError):
+        star = "📊"
+
+    lines = [f"{star} Score: {score}/10 — {title} @ {company}"]
+
+    matched = breakdown.get("matched_skills") or []
+    missing = breakdown.get("missing_skills") or []
+    if matched:
+        lines.append("Matched: " + ", ".join(matched[:5]))
+    if missing:
+        lines.append("Missing: " + ", ".join(missing[:4]))
+
+    flags = breakdown.get("red_flags") or []
+    if flags:
+        lines.append("Note: " + flags[0][:80])
+
+    if url:
+        lines.append(url)
+
+    text = "\n".join(lines)
+
+    if not job_id:
+        return send_message(bot_token, chat_id, text)
+
+    api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id":                  chat_id,
+        "text":                     text,
+        "disable_web_page_preview": True,
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "\U0001f4dd Cover Letter", "callback_data": f"cover_{job_id}"},
+                {"text": "\U0001f4c4 Tailored CV",  "callback_data": f"cv_{job_id}"},
+            ]]
+        },
+    }
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(api_url, json=payload, timeout=15)
+            if resp.status_code == 200:
+                return True
+            print(f"[Telegram] score_update HTTP {resp.status_code}: {resp.text[:200]}")
+        except requests.RequestException as exc:
+            print(f"[Telegram] score_update attempt {attempt} failed: {exc}")
+        if attempt < 3:
+            time.sleep(attempt)
+    return False
+
+
 def send_score_alert(bot_token: str, chat_id: str, job: dict, breakdown: dict,
                       compact: bool = False) -> bool:
     """Phase 2: send a multi-criteria score alert to Telegram.

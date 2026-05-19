@@ -995,7 +995,18 @@ def main() -> None:
                     except Exception as exc:
                         _log(f"          Telegram score alert error: {exc}")
             else:
-                _log(f"          Telegram: skipped (already notified by worker)")
+                # Job was already alerted by worker (no score then).
+                # Send a brief score-update message so the user sees the rating.
+                try:
+                    import telegram_notify as tg_mod
+                    job_id = job.get("job_id") or ""
+                    ok = tg_mod.send_score_update(tg_token, tg_chat, job, breakdown, job_id=job_id)
+                    if ok:
+                        _log(f"          Telegram: score update sent ({score}/10)")
+                    else:
+                        _log(f"          Telegram: score update failed — will retry next run")
+                except Exception as exc:
+                    _log(f"          Telegram: score update error: {exc}")
 
         if score < min_score:
             dismissed += 1
