@@ -513,11 +513,21 @@ def main() -> None:
                 except Exception:
                     pass
 
+    # Circuit-breaker: track consecutive failures per source.
+    # If a source returns 0 results (blocked/timeout) on 2 keywords in a row,
+    # disable it for the rest of this run so we don't waste time on dead sources.
+    _source_fails: dict[str, int] = {
+        "bayt": 0, "gulftalent": 0, "naukri": 0,
+        "indeed": 0, "adzuna": 0, "web": 0,
+    }
+    _FAIL_THRESHOLD = 2   # disable after this many consecutive zero-result attempts
+
     for idx, keyword in enumerate(keywords):
         if idx > 0:
-            jitter = 2.0 + (idx * 0.5)
-            _log(f"Waiting {jitter:.1f}s before next keyword to avoid rate limits...")
-            time.sleep(jitter)
+            # Fixed 1.5 s between keywords (was 2.0 + 0.5*idx → up to 7 s).
+            # LinkedIn rate-limits per session, not per-IP, so a short fixed
+            # delay is enough without growing linearly with keyword count.
+            time.sleep(1.5)
 
         _log(f"Scanning keyword: '{keyword}'")
 
@@ -554,7 +564,7 @@ def main() -> None:
                 _log(f"LinkedIn error for '{keyword}': {exc}")
 
         # --- Bayt ---
-        if search_bayt:
+        if search_bayt and _source_fails["bayt"] < _FAIL_THRESHOLD:
             try:
                 bayt_jobs = bayt_scraper.scrape_bayt(
                     keyword=keyword,
@@ -578,11 +588,18 @@ def main() -> None:
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
                 _alert_new(summary.get("new_jobs", []))
+                if summary["seen"] == 0 and summary["inserted"] == 0:
+                    _source_fails["bayt"] += 1
+                else:
+                    _source_fails["bayt"] = 0
             except Exception as exc:
                 _log(f"Bayt error for '{keyword}': {exc}")
+                _source_fails["bayt"] += 1
+        elif search_bayt:
+            _log(f"Bayt: skipped (blocked on previous keywords)")
 
         # --- GulfTalent ---
-        if search_gulftalent:
+        if search_gulftalent and _source_fails["gulftalent"] < _FAIL_THRESHOLD:
             try:
                 gt_jobs = gt_scraper.scrape_gulftalent(
                     keyword=keyword,
@@ -606,11 +623,18 @@ def main() -> None:
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
                 _alert_new(summary.get("new_jobs", []))
+                if summary["seen"] == 0 and summary["inserted"] == 0:
+                    _source_fails["gulftalent"] += 1
+                else:
+                    _source_fails["gulftalent"] = 0
             except Exception as exc:
                 _log(f"GulfTalent error for '{keyword}': {exc}")
+                _source_fails["gulftalent"] += 1
+        elif search_gulftalent:
+            _log(f"GulfTalent: skipped (blocked on previous keywords)")
 
         # --- NaukriGulf ---
-        if search_naukri:
+        if search_naukri and _source_fails["naukri"] < _FAIL_THRESHOLD:
             try:
                 naukri_jobs = naukri_scraper.scrape_naukri_gulf(
                     keyword=keyword,
@@ -634,11 +658,18 @@ def main() -> None:
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
                 _alert_new(summary.get("new_jobs", []))
+                if summary["seen"] == 0 and summary["inserted"] == 0:
+                    _source_fails["naukri"] += 1
+                else:
+                    _source_fails["naukri"] = 0
             except Exception as exc:
                 _log(f"NaukriGulf error for '{keyword}': {exc}")
+                _source_fails["naukri"] += 1
+        elif search_naukri:
+            _log(f"NaukriGulf: skipped (blocked/timeout on previous keywords)")
 
         # --- Indeed ---
-        if search_indeed:
+        if search_indeed and _source_fails["indeed"] < _FAIL_THRESHOLD:
             try:
                 indeed_jobs = indeed_scraper.scrape_indeed(
                     keyword=keyword,
@@ -663,11 +694,18 @@ def main() -> None:
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
                 _alert_new(summary.get("new_jobs", []))
+                if summary["seen"] == 0 and summary["inserted"] == 0:
+                    _source_fails["indeed"] += 1
+                else:
+                    _source_fails["indeed"] = 0
             except Exception as exc:
                 _log(f"Indeed error for '{keyword}': {exc}")
+                _source_fails["indeed"] += 1
+        elif search_indeed:
+            _log(f"Indeed: skipped (blocked on previous keywords)")
 
         # --- Adzuna ---
-        if search_adzuna and adzuna_app_id and adzuna_app_key:
+        if search_adzuna and adzuna_app_id and adzuna_app_key and _source_fails["adzuna"] < _FAIL_THRESHOLD:
             try:
                 adzuna_jobs = adzuna_scraper.scrape_adzuna(
                     keyword=keyword,
@@ -693,13 +731,20 @@ def main() -> None:
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
                 _alert_new(summary.get("new_jobs", []))
+                if summary["seen"] == 0 and summary["inserted"] == 0:
+                    _source_fails["adzuna"] += 1
+                else:
+                    _source_fails["adzuna"] = 0
             except Exception as exc:
                 _log(f"Adzuna error for '{keyword}': {exc}")
+                _source_fails["adzuna"] += 1
         elif search_adzuna and not (adzuna_app_id and adzuna_app_key):
             _log("Adzuna skipped — ADZUNA_APP_ID or ADZUNA_APP_KEY not set")
+        elif search_adzuna:
+            _log(f"Adzuna: skipped (blocked on previous keywords)")
 
         # --- Web search (Tavily → Brave → Google → Bing cascade) ---
-        if search_web:
+        if search_web and _source_fails["web"] < _FAIL_THRESHOLD:
             try:
                 web_jobs = websearch.search_jobs(
                     keyword=keyword,
@@ -731,8 +776,15 @@ def main() -> None:
                     )
                     all_new_jobs.extend(summary.get("new_jobs", []))
                     _alert_new(summary.get("new_jobs", []))
+                if not web_jobs:
+                    _source_fails["web"] += 1
+                else:
+                    _source_fails["web"] = 0
             except Exception as exc:
                 _log(f"WebSearch error for '{keyword}': {exc}")
+                _source_fails["web"] += 1
+        elif search_web:
+            _log(f"WebSearch: skipped (all providers exhausted on previous keywords)")
 
     # --- Gmail job alert emails ---
     if search_gmail:
