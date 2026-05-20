@@ -974,8 +974,8 @@ def main() -> None:
 
         # Send Telegram score notification for kept jobs (richer format with breakdown).
         # Skip if worker.py already sent a basic alert for this job.
+        already_sent = bool(job.get("telegram_sent_at"))
         if score >= min_score and tg_token and tg_chat:
-            already_sent = bool(job.get("telegram_sent_at"))
             if not already_sent:
                 # Staleness gate — don't alert for jobs posted outside the freshness window.
                 # Catches old jobs that leaked through LinkedIn's f_TPR filter or were
@@ -1017,6 +1017,24 @@ def main() -> None:
                         _log(f"          Telegram: score update failed — will retry next run")
                 except Exception as exc:
                     _log(f"          Telegram: score update error: {exc}")
+
+        elif wrong_field and already_sent and tg_token and tg_chat:
+            # Worker sent the initial alert before enrichment ran.
+            # Now that enricher knows it's the wrong field, send a brief
+            # dismissal notice so the user knows to ignore that earlier message.
+            _title   = (job.get("title") or job.get("Title") or "").strip()
+            _company = (job.get("company") or job.get("Company") or "").strip()
+            _reason  = next(
+                (f for f in (breakdown.get("red_flags") or []) if "wrong field" in f.lower()),
+                "Wrong field — not IT",
+            )
+            _dismiss_text = f"❌ Dismissed: {_title} @ {_company}\n{_reason}"
+            try:
+                import telegram_notify as tg_mod
+                tg_mod.send_message(tg_token, tg_chat, _dismiss_text)
+                _log(f"          Telegram: dismissal notice sent — {_reason}")
+            except Exception as exc:
+                _log(f"          Telegram: dismissal notice error: {exc}")
 
         if score < min_score:
             dismissed += 1

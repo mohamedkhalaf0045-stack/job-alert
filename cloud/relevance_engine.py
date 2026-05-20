@@ -110,6 +110,12 @@ _HARD_REJECT = re.compile(
     # ── HR / recruitment ──────────────────────────────────────────────────────
     r"human\s+resources|hr\s+(manager|executive|specialist|officer|director)|"
     r"recruitment\s+(consultant|manager|executive)|recruiter|talent\s+acquisition|"
+    # ── Aviation / aerospace ──────────────────────────────────────────────────
+    r"aeronautical|aerospace\s+engineer(ing)?|"
+    r"aviation\s+(manager|specialist|officer|coordinator|planner|operations)|"
+    r"flight\s+(operations\s+specialist|dispatcher|planner|operations\s+officer)|"
+    r"aircraft\s+(maintenance|engineer|technician)|"
+    r"airline\s+(operations|coordinator|manager)|"
     # ── Healthcare / hospitality / transport ──────────────────────────────────
     r"nurse|nursing|doctor|physician|medical\s+(officer|representative)|pharmacist|"
     r"chef|cook|barista|waiter|waitress|driver|delivery\s+(driver|rider)|"
