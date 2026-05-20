@@ -911,6 +911,16 @@ def main() -> None:
             _log("          Ollama unreachable - stopping enrichment")
             break
 
+        # Auto-dismiss if LLM itself says "Wrong field" — score is irrelevant
+        # when the model explicitly flags the job as the wrong profession.
+        wrong_field = any(
+            "wrong field" in (flag or "").lower()
+            for flag in (breakdown.get("red_flags") or [])
+        )
+        if wrong_field and score < 8:
+            # Override: treat as dismissed regardless of numeric score
+            score = min(score, min_score - 1)
+
         verdict = "KEEP" if score >= min_score else "DISMISS"
         _log(f"          Score: {score}/10  [{verdict}]  S={breakdown.get('skills_match','?')} E={breakdown.get('experience_match','?')} L={breakdown.get('location_match','?')} Sr={breakdown.get('seniority_match','?')}")
         if breakdown.get("matched_skills"):
