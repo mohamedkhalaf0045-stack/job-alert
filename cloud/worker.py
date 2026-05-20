@@ -45,7 +45,7 @@ def _load_settings_json() -> dict:
     for p in candidates:
         if p.exists():
             try:
-                return json.loads(p.read_text(encoding="utf-8"))
+                return json.loads(p.read_text(encoding="utf-8-sig"))
             except Exception:
                 pass
     return {}
@@ -91,6 +91,7 @@ _ENV_TO_JSON: dict[str, str] = {
     "KEYWORDS":            "Keywords",
     "LOCATION":            "Location",
     "OLLAMA_URL":          "OllamaUrl",
+    "LLM_MIN_SCORE":       "MinAiScore",   # settings.json key for minimum score threshold
 }
 
 

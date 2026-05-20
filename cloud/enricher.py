@@ -62,7 +62,10 @@ _LOG_TO_FILE  = True
 
 # ── Settings.json fallback (Linux GUI / Windows GUI) ─────────────────────────
 def _load_settings_json() -> dict:
-    """Load settings.json from ~/.config/job-alert/ or the repo root."""
+    """Load settings.json from ~/.config/job-alert/ or the repo root.
+
+    Uses utf-8-sig so a Windows-written BOM is transparently stripped.
+    """
     candidates = [
         Path.home() / ".config" / "job-alert" / "settings.json",
         Path(__file__).resolve().parent.parent / "settings.json",
@@ -70,7 +73,7 @@ def _load_settings_json() -> dict:
     for p in candidates:
         if p.exists():
             try:
-                return json.loads(p.read_text(encoding="utf-8"))
+                return json.loads(p.read_text(encoding="utf-8-sig"))
             except Exception:
                 pass
     return {}
@@ -85,6 +88,7 @@ _ENV_TO_JSON: dict[str, str] = {
     "TELEGRAM_BOT_TOKEN": "TelegramBotToken",
     "TELEGRAM_CHAT_ID":   "TelegramChatId",
     "LINKEDIN_COOKIE":    "LinkedInCookie",
+    "LLM_MIN_SCORE":      "MinAiScore",   # settings.json key for minimum score threshold
 }
 
 
@@ -385,6 +389,17 @@ EXAMPLE 3 (completely wrong field — sales/marketing):
            "red_flags": ["Wrong field — marketing, not IT"],
            "reasoning": "Not an IT role. Location match cannot compensate for a complete field mismatch."}
 
+EXAMPLE 3a (completely wrong field — construction/site engineering):
+  Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking / O365.
+  Job: "Site Engineer" at ALEC Holdings. Manages construction site, procurement, QA/QC, health & safety.
+  FIELD CHECK: Construction site management — NOT an IT/technology role.
+  Microsoft Office (Word/Excel) is used on every job — it does NOT make this an IT role.
+  Output: {"skills_match": 0, "experience_match": 0, "location_match": 9, "seniority_match": 0, "overall_score": 1,
+           "matched_skills": [],
+           "missing_skills": ["Construction project management","Site coordination","Procurement","QA/QC"],
+           "red_flags": ["Wrong field — construction site engineering, not IT","Generic office tools are not IT skills"],
+           "reasoning": "Construction site management role. Word/Excel does not make this an IT position."}
+
 EXAMPLE 3b (completely wrong field — compliance/finance/legal):
   Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking.
   Job: "Head Financial Crime Compliance (Crypto)" at Revolut, UAE.
@@ -429,10 +444,18 @@ def ollama_score(
         "You are a job-fit scorer for an IT professional. Rate how well this job matches the candidate.\n"
         "Output STRICT JSON only — no markdown, no prose outside the JSON.\n\n"
         "=== CRITICAL RULE — FIELD DOMAIN CHECK ===\n"
-        "BEFORE scoring, decide: is this job in the IT / technology / engineering field?\n"
-        "Non-IT fields include: real estate, property sales, marketing, HR, finance, accounting,\n"
-        "hospitality, medical, legal, logistics, retail sales, and any role where the primary\n"
-        "activity is NOT technology-related.\n"
+        "BEFORE scoring, decide: is this job in the IT / technology field?\n"
+        "Non-IT fields include (but are not limited to):\n"
+        "  real estate, property sales, marketing, HR, finance, accounting,\n"
+        "  hospitality, medical/healthcare, legal, logistics, retail sales,\n"
+        "  construction, civil/structural/site/mechanical engineering,\n"
+        "  oil & gas operations, aeronautical/aviation operations,\n"
+        "  and any role where the PRIMARY activity is NOT technology-related.\n"
+        "IMPORTANT — generic office tools are NOT IT skills:\n"
+        "  Microsoft Word, Excel, PowerPoint, Outlook are used in every office job.\n"
+        "  Do NOT count them as matched_skills or use them to justify skills_match > 1.\n"
+        "  Only count explicitly IT tools: Windows Server, Active Directory, Azure, Intune,\n"
+        "  Exchange, SQL Server, PowerShell, networking gear, SIEM tools, etc.\n"
         "If the job is NOT in IT/technology:\n"
         "  - Set skills_match=0, experience_match=0, seniority_match=0\n"
         "  - Set overall_score to 0 or 1 (max 1, regardless of location match)\n"
@@ -724,10 +747,13 @@ def main() -> None:
     # Read config overrides from Supabase bot_state
     model     = db.get_config(supabase_url, supabase_key, "setting_ollama_model", "") or args.model
     ollama    = db.get_config(supabase_url, supabase_key, "setting_ollama_url",   "") or args.ollama
+    # Priority: Supabase bot_state > settings.json MinAiScore > CLI --min-score > hardcoded default (4)
+    _settings_min = _SETTINGS_JSON.get("MinAiScore")
+    _fallback_min = int(_settings_min) if _settings_min is not None else args.min_score
     try:
-        min_score = int(db.get_config(supabase_url, supabase_key, "setting_llm_min_score", "") or args.min_score)
+        min_score = int(db.get_config(supabase_url, supabase_key, "setting_llm_min_score", "") or _fallback_min)
     except ValueError:
-        min_score = args.min_score
+        min_score = _fallback_min
 
     # --analyze-cv: one-shot CV analysis, store to Supabase, then exit
     if args.analyze_cv:
