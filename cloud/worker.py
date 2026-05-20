@@ -383,7 +383,7 @@ def main() -> None:
                 # dropped when the worker runs past midnight UTC.
                 # Treat date-only as end-of-day (23:59:59) to be conservative.
                 if len(raw) == 10 and "T" not in raw:
-                    dt = dt.replace(hour=23, minute=59, second=59)
+                    dt = dt.replace(hour=23, minute=59)
                 if dt < cutoff:
                     dropped += 1
                     _log(
