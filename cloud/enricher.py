@@ -412,6 +412,19 @@ EXAMPLE 3b (completely wrong field — compliance/finance/legal):
            "red_flags": ["Wrong field — financial compliance, not IT","Crypto context is regulatory, not technical"],
            "reasoning": "Financial crime compliance is a legal/regulatory role. No technical IT skills required."}
 
+EXAMPLE 3c (IT role AT a non-IT company — NOT wrong field):
+  Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking / O365.
+  Job: "Information Technology Specialist" at H&R Real Estate Brokerage.
+       Manages company IT infrastructure, AD, network, helpdesk tickets.
+  FIELD CHECK: The EMPLOYER is a real estate company, but the JOB is IT work.
+  Every company needs IT staff. An IT Specialist at a real estate firm is STILL an IT role.
+  Do NOT flag as wrong field just because the employer's industry is non-IT.
+  Output: {"skills_match": 8, "experience_match": 7, "location_match": 9, "seniority_match": 7, "overall_score": 7,
+           "matched_skills": ["Active Directory","Windows Server","Networking","O365","Helpdesk"],
+           "missing_skills": [],
+           "red_flags": [],
+           "reasoning": "IT role at a real estate firm — employer industry is irrelevant, job duties are core IT support."}
+
 EXAMPLE 4a (different IT specialisation — NOT wrong field, just skill gap):
   Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking.
   Job: "Database Administrator (DBA)" at nx. Requires Oracle/SQL Server DBA skills, backup, performance tuning.
@@ -462,11 +475,24 @@ def ollama_score(
         "  Software Developer, Data Engineer, ERP Administrator, SCADA/OT (industrial IT),\n"
         "  IT Procurement, IT Project Manager — any role where the PRIMARY work is with technology.\n"
         "\n"
+        "EMPLOYER INDUSTRY RULE (CRITICAL):\n"
+        "  The employer's industry does NOT determine the field — only the JOB DUTIES do.\n"
+        "  An IT Support / IT Specialist / System Admin role at a real estate company, bank,\n"
+        "  hospital, hotel, airline, or law firm is STILL an IT role. Every company needs IT staff.\n"
+        "  Only flag 'Wrong field' when the actual WORK the person does is non-IT\n"
+        "  (e.g. selling properties, performing surgery, managing a construction site).\n"
+        "\n"
         "Non-IT roles (flag as 'Wrong field — <field>, not IT'):\n"
-        "  real estate, property sales, marketing, HR/recruitment, finance, accounting,\n"
-        "  hospitality, medical/healthcare, legal, logistics, retail sales,\n"
-        "  construction/civil/structural/site engineering (buildings, not servers),\n"
-        "  oil & gas operations (drilling/field work), aeronautical/aviation operations.\n"
+        "  Real Estate SALES Agent / Property Consultant / Leasing Consultant (the job is selling property),\n"
+        "  Marketing Executive / SEO Specialist / Brand Manager (the job is marketing),\n"
+        "  HR Recruiter / People & Culture Manager (the job is human resources),\n"
+        "  Finance / Accounting / Audit roles (the job is financial work),\n"
+        "  Hospitality / Guest Relations / Cabin Crew (the job is customer-facing service),\n"
+        "  Medical / Healthcare / Clinical roles (the job is patient care),\n"
+        "  Legal / Compliance / Paralegal (the job is legal work),\n"
+        "  Retail Sales / Key Account Executive (the job is selling products),\n"
+        "  Construction / Civil / Site Engineer (buildings, not servers),\n"
+        "  Oil & Gas field operations (drilling, field work), Aeronautical / Aviation operations.\n"
         "\n"
         "IMPORTANT — generic office tools are NOT IT skills:\n"
         "  Microsoft Word, Excel, PowerPoint, Outlook are used in every office job.\n"
