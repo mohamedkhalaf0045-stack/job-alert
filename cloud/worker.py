@@ -933,7 +933,7 @@ def main() -> None:
         try:
             catchup = db.get_unnotified_jobs(
                 supabase_url, supabase_key,
-                min_age_minutes=30,
+                min_age_minutes=5,   # was 30 — retry stuck jobs after just 5 min
                 max_age_hours=max_hours * 2,
                 limit=20,
             )
