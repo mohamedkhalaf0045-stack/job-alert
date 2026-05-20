@@ -412,7 +412,17 @@ EXAMPLE 3b (completely wrong field — compliance/finance/legal):
            "red_flags": ["Wrong field — financial compliance, not IT","Crypto context is regulatory, not technical"],
            "reasoning": "Financial crime compliance is a legal/regulatory role. No technical IT skills required."}
 
-EXAMPLE 4 (borderline IT-adjacent, partial fit):
+EXAMPLE 4a (different IT specialisation — NOT wrong field, just skill gap):
+  Candidate: IT Support Engineer, 4 years UAE, Windows Server / AD / networking.
+  Job: "Database Administrator (DBA)" at nx. Requires Oracle/SQL Server DBA skills, backup, performance tuning.
+  FIELD CHECK: DBA is IT/technology — do NOT flag as wrong field. It is a different IT specialisation.
+  Output: {"skills_match": 3, "experience_match": 5, "location_match": 10, "seniority_match": 6, "overall_score": 5,
+           "matched_skills": ["SQL Server","Windows Server"],
+           "missing_skills": ["Oracle DBA","Database performance tuning","Backup & recovery","RMAN"],
+           "red_flags": ["Requires dedicated DBA experience — significant skill gap"],
+           "reasoning": "DBA is an IT role; candidate has foundational IT background but lacks database administration depth."}
+
+EXAMPLE 4b (borderline IT-adjacent, partial fit):
   Candidate: IT Support Engineer, 4 years UAE, no cloud cert yet.
   Job: "Cloud Infrastructure Engineer (AWS), Abu Dhabi". Requires AWS cert, Linux, scripting.
   Output: {"skills_match": 5, "experience_match": 6, "location_match": 9, "seniority_match": 7, "overall_score": 6,
@@ -445,18 +455,26 @@ def ollama_score(
         "Output STRICT JSON only — no markdown, no prose outside the JSON.\n\n"
         "=== CRITICAL RULE — FIELD DOMAIN CHECK ===\n"
         "BEFORE scoring, decide: is this job in the IT / technology field?\n"
-        "Non-IT fields include (but are not limited to):\n"
-        "  real estate, property sales, marketing, HR, finance, accounting,\n"
+        "\n"
+        "IT roles include ALL of these (do NOT flag as wrong field):\n"
+        "  IT Support, System Administrator, Network Engineer, Database Administrator (DBA),\n"
+        "  DevOps, Cloud Engineer, Security Engineer, Pre-Sales Engineer at a tech/IT company,\n"
+        "  Software Developer, Data Engineer, ERP Administrator, SCADA/OT (industrial IT),\n"
+        "  IT Procurement, IT Project Manager — any role where the PRIMARY work is with technology.\n"
+        "\n"
+        "Non-IT roles (flag as 'Wrong field — <field>, not IT'):\n"
+        "  real estate, property sales, marketing, HR/recruitment, finance, accounting,\n"
         "  hospitality, medical/healthcare, legal, logistics, retail sales,\n"
-        "  construction, civil/structural/site/mechanical engineering,\n"
-        "  oil & gas operations, aeronautical/aviation operations,\n"
-        "  and any role where the PRIMARY activity is NOT technology-related.\n"
+        "  construction/civil/structural/site engineering (buildings, not servers),\n"
+        "  oil & gas operations (drilling/field work), aeronautical/aviation operations.\n"
+        "\n"
         "IMPORTANT — generic office tools are NOT IT skills:\n"
         "  Microsoft Word, Excel, PowerPoint, Outlook are used in every office job.\n"
-        "  Do NOT count them as matched_skills or use them to justify skills_match > 1.\n"
+        "  Do NOT list them as matched_skills or use them to raise skills_match above 1.\n"
         "  Only count explicitly IT tools: Windows Server, Active Directory, Azure, Intune,\n"
         "  Exchange, SQL Server, PowerShell, networking gear, SIEM tools, etc.\n"
-        "If the job is NOT in IT/technology:\n"
+        "\n"
+        "If the job is truly NOT in IT/technology:\n"
         "  - Set skills_match=0, experience_match=0, seniority_match=0\n"
         "  - Set overall_score to 0 or 1 (max 1, regardless of location match)\n"
         "  - Add 'Wrong field — <field>, not IT' as the first red_flag\n"
@@ -1043,24 +1061,6 @@ def main() -> None:
                         _log(f"          Telegram: score update failed — will retry next run")
                 except Exception as exc:
                     _log(f"          Telegram: score update error: {exc}")
-
-        elif wrong_field and already_sent and tg_token and tg_chat:
-            # Worker sent the initial alert before enrichment ran.
-            # Now that enricher knows it's the wrong field, send a brief
-            # dismissal notice so the user knows to ignore that earlier message.
-            _title   = (job.get("title") or job.get("Title") or "").strip()
-            _company = (job.get("company") or job.get("Company") or "").strip()
-            _reason  = next(
-                (f for f in (breakdown.get("red_flags") or []) if "wrong field" in f.lower()),
-                "Wrong field — not IT",
-            )
-            _dismiss_text = f"❌ Dismissed: {_title} @ {_company}\n{_reason}"
-            try:
-                import telegram_notify as tg_mod
-                tg_mod.send_message(tg_token, tg_chat, _dismiss_text)
-                _log(f"          Telegram: dismissal notice sent — {_reason}")
-            except Exception as exc:
-                _log(f"          Telegram: dismissal notice error: {exc}")
 
         if score < min_score:
             dismissed += 1
