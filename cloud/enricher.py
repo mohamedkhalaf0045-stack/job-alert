@@ -1029,6 +1029,9 @@ def main() -> None:
                 if date_posted:
                     try:
                         posted_dt = datetime.fromisoformat(date_posted.replace("Z", "+00:00"))
+                        # Date-only → treat as end-of-day (same fix as worker.py _age_filter)
+                        if len(date_posted) == 10 and "T" not in date_posted:
+                            posted_dt = posted_dt.replace(hour=23, minute=59, second=59)
                         hours_old = (datetime.now(timezone.utc) - posted_dt).total_seconds() / 3600
                         if hours_old > max_notification_hours:
                             is_stale = True

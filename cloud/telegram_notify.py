@@ -45,7 +45,7 @@ def send_message(bot_token: str, chat_id: str, text: str) -> bool:
 
     for attempt in range(1, 4):
         try:
-            resp = requests.post(url, json=payload, timeout=15)
+            resp = requests.post(url, json=payload, timeout=30)
             if resp.status_code == 200:
                 return True
             print(f"[Telegram] HTTP {resp.status_code}: {resp.text[:200]}")
@@ -101,7 +101,7 @@ def send_job_alert_with_button(bot_token: str, chat_id: str, job: dict,
 
     for attempt in range(1, 4):
         try:
-            resp = requests.post(api_url, json=payload, timeout=15)
+            resp = requests.post(api_url, json=payload, timeout=30)
             if resp.status_code == 200:
                 return True
             print(f"[Telegram] send_with_button HTTP {resp.status_code}: {resp.text[:200]}")
@@ -294,7 +294,7 @@ def send_score_update(bot_token: str, chat_id: str, job: dict, breakdown: dict,
     }
     for attempt in range(1, 4):
         try:
-            resp = requests.post(api_url, json=payload, timeout=15)
+            resp = requests.post(api_url, json=payload, timeout=30)
             if resp.status_code == 200:
                 return True
             print(f"[Telegram] score_update HTTP {resp.status_code}: {resp.text[:200]}")
@@ -326,7 +326,7 @@ def send_summary(bot_token: str, chat_id: str, jobs: list[dict], label: str = ""
 def get_updates(bot_token: str, offset: int = 0, limit: int = 20) -> list[dict]:
     url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
     try:
-        resp = requests.get(url, params={"offset": offset, "limit": limit, "timeout": 0}, timeout=15)
+        resp = requests.get(url, params={"offset": offset, "limit": limit, "timeout": 0}, timeout=30)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("ok"):

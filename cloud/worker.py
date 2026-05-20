@@ -378,6 +378,12 @@ def main() -> None:
                 dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
+                # Date-only strings (e.g. "2026-05-19") have no time component.
+                # Parsing them as midnight UTC causes valid same-day jobs to be
+                # dropped when the worker runs past midnight UTC.
+                # Treat date-only as end-of-day (23:59:59) to be conservative.
+                if len(raw) == 10 and "T" not in raw:
+                    dt = dt.replace(hour=23, minute=59, second=59)
                 if dt < cutoff:
                     dropped += 1
                     _log(
@@ -436,6 +442,10 @@ def main() -> None:
                         posted_dt = datetime.fromisoformat(posted_raw.replace("Z", "+00:00"))
                         if posted_dt.tzinfo is None:
                             posted_dt = posted_dt.replace(tzinfo=timezone.utc)
+                        # Date-only (no time) → treat as end-of-day so same-day
+                        # jobs aren't silently skipped when the clock passes midnight UTC.
+                        if len(posted_raw) == 10 and "T" not in posted_raw:
+                            posted_dt = posted_dt.replace(hour=23, minute=59, second=59)
                         if posted_dt < _alert_cutoff:
                             title = job.get("Title") or job.get("title") or "?"
                             _log(f"  ALERT SKIPPED (stale {posted_raw[:10]}): {title[:60]}")
