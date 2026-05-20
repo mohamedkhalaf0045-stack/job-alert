@@ -94,11 +94,15 @@ _HARD_REJECT = re.compile(
     r"real[\s\-]estate|property\s+(consultant|agent|manager|broker|developer)|"
     # ── Sales / marketing ─────────────────────────────────────────────────────
     r"sales\s+(executive|manager|representative|agent|associate|officer)|"
+    r"inside\s+sales|account\s+director|"   # inside sales engineer, senior account director
     r"marketing\s+(manager|executive|specialist|coordinator|analyst)|"
     r"digital\s+marketing|social\s+media(\s+(manager|specialist|executive))?|"
     # ── Finance / accounting ──────────────────────────────────────────────────
     r"accountant|accounting\s+(manager|officer)|"
     r"finance\s+manager|financial\s+(advisor|consultant|controller|analyst\s+(?!systems))|"
+    # ── Design / creative (non-IT) ───────────────────────────────────────────
+    r"interior\s+design(er|ing)?|graphic\s+design(er)?|fashion\s+design(er)?|"
+    r"industrial\s+design(er)?(?!\s+automation)|"  # exclude "industrial automation"
     # ── Non-IT engineering disciplines ───────────────────────────────────────
     # NOTE: "engineer" alone is intentionally absent — it appears in IT titles.
     # Only hard-reject when a non-IT qualifier is present.
@@ -106,7 +110,15 @@ _HARD_REJECT = re.compile(
     r"structural\s+engineer(ing)?|process\s+engineer(ing)?|petroleum\s+engineer(ing)?|"
     r"chemical\s+engineer(ing)?|piping\s+engineer|instrument\s+engineer|"
     r"oil\s+(and|&)\s+gas\s+engineer|subsea\s+engineer|"
+    r"planning\s+engineer|"           # civil/construction planning (Mott MacDonald etc.)
     r"pmc\s+engineer|engineering\s+manager|"  # PMC = Project Mgmt Consultant (O&G)
+    # ── Industrial / non-IT technician roles ─────────────────────────────────
+    r"electrical\s+(and\s+|&\s+)?automation\s+technician|"
+    r"hvac\s+technician|electromechanical\s+technician|"
+    # ── Blockchain / crypto dev (not IT support/ops) ─────────────────────────
+    r"blockchain\s+(developer|engineer|architect|specialist)|"
+    r"(software|senior|lead)\s+\w+\s+engineer,\s*blockchain|"  # "Software Engineer, Blockchain"
+    r"smart\s+contract\s+developer|web3\s+(developer|engineer)|"
     # ── HR / recruitment ──────────────────────────────────────────────────────
     r"human\s+resources|hr\s+(manager|executive|specialist|officer|director)|"
     r"recruitment\s+(consultant|manager|executive)|recruiter|talent\s+acquisition|"
