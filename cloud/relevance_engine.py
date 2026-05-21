@@ -108,13 +108,19 @@ _HARD_REJECT = re.compile(
     # Only hard-reject when a non-IT qualifier is present.
     r"civil\s+engineer(ing)?|mechanical\s+engineer(ing)?|electrical\s+engineer(ing)?|"
     r"structural\s+engineer(ing)?|process\s+engineer(ing)?|petroleum\s+engineer(ing)?|"
-    r"chemical\s+engineer(ing)?|piping\s+engineer|instrument\s+engineer|"
+    r"chemical\s+engineer(ing)?|piping\s+engineer|instrument(ation)?\s+engineer|"
     r"oil\s+(and|&)\s+gas\s+engineer|subsea\s+engineer|"
+    r"commissioning\s+engineer|"      # industrial plant/equipment commissioning
     r"planning\s+engineer|"           # civil/construction planning (Mott MacDonald etc.)
     r"pmc\s+engineer|engineering\s+manager|"  # PMC = Project Mgmt Consultant (O&G)
     # ── Industrial / non-IT technician roles ─────────────────────────────────
     r"electrical\s+(and\s+|&\s+)?automation\s+technician|"
     r"hvac\s+technician|electromechanical\s+technician|"
+    r"biomedical\s+(engineer|sales\s+engineer)|"
+    # ── Writing / training / HR specialist ───────────────────────────────────
+    r"technical\s+writer|content\s+writer|copywriter|"
+    r"onboarding\s+specialist|"       # HR role, not IT
+    r"customer\s+support\s+(assistant|specialist|coordinator|executive)|"
     # ── Blockchain / crypto dev (not IT support/ops) ─────────────────────────
     r"blockchain\s+(developer|engineer|architect|specialist)|"
     r"(software|senior|lead)\s+\w+\s+engineer,\s*blockchain|"  # "Software Engineer, Blockchain"
@@ -354,6 +360,15 @@ class RelevanceEngine:
         title_lower = title.lower()
         title_words = set(re.split(r"\W+", title_lower)) - {""}
 
+        # T5 — hard-reject FIRST, before any positive tier.
+        # MUST run before T1/T2/T3 so a broad word like "engineer" or "technician"
+        # in CV job-title words cannot rescue a non-IT role
+        # (e.g. "Graduate Process Engineer" was passing T2 on "engineer").
+        m = _HARD_REJECT.search(title_lower)
+        if m:
+            fragment = m.group(0)[:40].lower()
+            return False, f"T5:hard_reject({fragment})"
+
         # T1 — any keyword word appears as a whole word in the title
         for kw_word in self.keyword_words:
             if re.search(r"\b" + re.escape(kw_word) + r"\b", title_lower):
@@ -370,12 +385,6 @@ class RelevanceEngine:
         if matches:
             sample = next(iter(matches))
             return True, f"T3:skill_word({sample})"
-
-        # T5 — hard-reject before T4 to prevent domain-term false positives
-        m = _HARD_REJECT.search(title_lower)
-        if m:
-            fragment = m.group(0)[:40].lower()
-            return False, f"T5:hard_reject({fragment})"
 
         # T4 — CV domain-term catch-all
         # Strip generic role words (coordinator, controller, inspector, …) so that
