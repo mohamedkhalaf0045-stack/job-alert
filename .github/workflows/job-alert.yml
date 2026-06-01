@@ -32,6 +32,9 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r cloud/requirements.txt
 
+      - name: Install Playwright Chromium (for Indeed scraper)
+        run: python -m playwright install --with-deps chromium
+
       - name: Run job alert worker
         run: python cloud/worker.py
         env:
