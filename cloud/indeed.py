@@ -256,8 +256,16 @@ def scrape_indeed(keyword: str, location: str, max_hours: int = 72) -> list[dict
 
             # ── Page 1 ───────────────────────────────────────────────────────
             try:
-                page.goto(url, timeout=45_000)
-                page.wait_for_load_state("networkidle", timeout=30_000)
+                # Wait for DOM, not network-idle: Indeed keeps long-lived
+                # analytics/websocket connections open, so "networkidle" never
+                # settles on datacenter IPs (GitHub Actions) and times out.
+                page.goto(url, timeout=45_000, wait_until="domcontentloaded")
+                # Wait for actual job cards to render (or time out gracefully if
+                # the result set is empty or the page is a block/captcha screen).
+                try:
+                    page.wait_for_selector("[data-jk]", timeout=20_000)
+                except Exception:
+                    print("[Indeed] No job cards appeared (empty results or blocked)")
             except Exception as exc:
                 print(f"[Indeed] Page load error: {exc}")
                 browser.close()
@@ -274,8 +282,11 @@ def scrape_indeed(keyword: str, location: str, max_hours: int = 72) -> list[dict
                 url2 = _search_url(keyword, location, start=10, fromage=fromage)
                 try:
                     time.sleep(2.0)   # polite inter-page delay
-                    page.goto(url2, timeout=45_000)
-                    page.wait_for_load_state("networkidle", timeout=30_000)
+                    page.goto(url2, timeout=45_000, wait_until="domcontentloaded")
+                    try:
+                        page.wait_for_selector("[data-jk]", timeout=20_000)
+                    except Exception:
+                        pass
                     page2_jobs = _scrape_page(keyword, location, domain, page, max_hours)
                     # Deduplicate against page 1
                     seen_ids = {j["Id"] for j in all_jobs}
