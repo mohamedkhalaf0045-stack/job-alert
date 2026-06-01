@@ -1081,6 +1081,51 @@ in <1s — so the pipeline is both more accurate and faster than before.
 
 ---
 
+### Phase 21 — Monitoring & Control Dashboard (2026-06-01)
+**Goal:** Real-time visibility and full control over the whole pipeline — logs,
+process status, and one-click actions — from the web and the Windows GUI.
+
+**New file: `cloud/dashboard.py`** — a zero-dependency (stdlib-only) local web
+server + single-page dashboard. Run `python cloud/dashboard.py` → opens
+`http://127.0.0.1:8765` (binds to localhost only, so Supabase/GitHub creds never
+leave the machine). It reads credentials from the same `settings.json`.
+
+Monitoring (auto-refresh every 4s):
+- **Worker health** — local heartbeat (`worker_last_run`), GitHub Actions last
+  run + conclusion + age, LinkedIn cookie health (`linkedin_zero_streak`).
+- **Job stats** — total / scored / backlog / sent / collected-today /
+  applied / dismissed, plus a breakdown by source.
+- **AI scoring** — Groq key present?, prefer-cloud on?, model, live enricher
+  process state, backlog size.
+- **Live logs** — tails `worker.log`, `enricher.log`, and dashboard-launched
+  run logs, streaming.
+- **Recent cloud runs** — last GitHub Actions runs with status + links.
+
+Full control (write):
+- ▶ **Trigger Cloud Scan** — GitHub `workflow_dispatch` of job-alert.yml.
+- 🤖 **Run Enricher** — launches `enricher.py --prefer-cloud --limit N` to clear
+  the backlog via Groq; output tailed live.
+- 🖥️ **Run Local Scan** — runs `cloud/worker.py` once.
+- 💾 **Settings** — edit keywords / min-score / max-hours / prefer-cloud,
+  saved straight to Supabase `bot_state`.
+- **Jobs table** — filter (all/new/scored/backlog/applied/dismissed) and mark
+  jobs applied/dismissed inline.
+
+REST endpoints: `/api/status`, `/api/logs`, `/api/jobs`, `/api/scan`,
+`/api/enrich`, `/api/worker`, `/api/settings`, `/api/job`.
+
+**Windows GUI integration (`linkedin-job-alert.ps1`):** a **"Monitoring
+Dashboard"** button added to the header bar. It starts the dashboard server
+(hidden) if not already running, then opens the browser — idempotent (re-uses
+the running server via a localhost TCP check). The GUI is a flat 2752-line
+WinForms form with no TabControl, so a launch-button into the richer web
+dashboard is safer and better for real-time monitoring than retrofitting a
+native tab.
+
+**Also:** `Open-Dashboard.bat` — double-click launcher.
+
+---
+
 ## 9. All Bugs Encountered and Fixed
 
 | Bug | Root cause | Fix |

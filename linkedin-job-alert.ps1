@@ -1729,6 +1729,33 @@ $headerTitle.Location  = New-Object System.Drawing.Point(18, 13)
 $headerTitle.AutoSize  = $true
 [void]$headerPanel.Controls.Add($headerTitle)
 
+# ── Monitoring dashboard launcher (real-time logs + full control in browser) ──
+$dashButton = New-Btn "Monitoring Dashboard" 940 11 200 30 "accent"
+$dashButton.Add_Click({
+    $dashPath = Join-Path $script:AppRoot "cloud\dashboard.py"
+    if (-not (Test-Path -LiteralPath $dashPath)) {
+        [System.Windows.Forms.MessageBox]::Show("dashboard.py not found at:`n$dashPath",
+            "Monitoring Dashboard") | Out-Null
+        return
+    }
+    # Re-use the server if it's already listening; otherwise start it hidden.
+    $running = $false
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $tcp.Connect("127.0.0.1", 8765)
+        $running = $true
+        $tcp.Close()
+    } catch { }
+    if (-not $running) {
+        Start-Process -FilePath "python" `
+            -ArgumentList @($dashPath, "--no-browser") `
+            -WorkingDirectory $script:AppRoot -WindowStyle Hidden
+        Start-Sleep -Milliseconds 1300
+    }
+    Start-Process "http://127.0.0.1:8765"
+})
+[void]$headerPanel.Controls.Add($dashButton)
+
 # ── Search Settings card ──────────────────────────────────────────────────────
 $searchCard = New-Card -X 10 -Y 60 -W 555 -H 220 -Title "SEARCH SETTINGS"
 
