@@ -58,9 +58,20 @@ info "tkinter available"
 
 # ── 3. Python packages ───────────────────────────────────────
 section "Python packages"
-pip3 install --quiet --upgrade requests supabase python-dotenv pypdf 2>/dev/null || \
-    pip install --quiet --upgrade requests supabase python-dotenv pypdf
-info "requests, supabase, python-dotenv, pypdf installed"
+pip3 install --quiet --upgrade requests supabase python-dotenv pypdf playwright 2>/dev/null || \
+    pip install --quiet --upgrade requests supabase python-dotenv pypdf playwright
+info "requests, supabase, python-dotenv, pypdf, playwright installed"
+
+# Install Playwright's Chromium browser (needed by the Indeed scraper)
+section "Playwright Chromium browser"
+if "$PYTHON" -m playwright install chromium 2>/dev/null; then
+    # Also install the OS-level shared libraries Chromium needs on Ubuntu
+    "$PYTHON" -m playwright install-deps chromium 2>/dev/null || true
+    info "Playwright Chromium installed — Indeed scraper enabled"
+else
+    warn "Playwright Chromium install failed — Indeed scraping will be skipped."
+    warn "Re-run manually: python3 -m playwright install chromium"
+fi
 
 # ── 4. Create directories ────────────────────────────────────
 section "Directories"

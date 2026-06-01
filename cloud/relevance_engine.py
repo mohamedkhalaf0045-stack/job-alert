@@ -51,6 +51,52 @@ _STOPWORDS = frozenset({
 })
 
 
+# ── Keyword-word blocklist (T1 guard) ─────────────────────────────────────────
+#
+# These words are too generic to use as standalone T1 signals even when they
+# appear inside a keyword phrase.  Examples:
+#   "Endpoint Management Engineer" → "management" would match "Waste Management"
+#   "Technical Services Engineer"  → "services" matched aviation roles via T1
+# The remaining IT-specific words from each phrase still make it through T1.
+# T5 (hard-reject) is the primary guard; this is defence-in-depth.
+
+_KEYWORD_WORD_BLOCKLIST = frozenset({
+    # Seniority / level words — not field indicators
+    "senior",       # "Senior Business Development Manager" matched on this
+    "junior",       # "Junior Marketing Executive" matched on this
+    "lead",         # "Lead Accountant", "Lead Chef" etc. would match
+    # Generic role-type words — appear in too many non-IT disciplines
+    "engineer",     # 17 false positives: Project Engineer, Maintenance Engineer, Dental Service Eng…
+    "specialist",   # 5 false positives: QHSES Specialist, Sustainability Specialist, Internship Spec…
+    "help",         # "help your business clients escape brutal interest rates" scored 9/10 via T1
+    "management",   # waste / property / brand / fleet management
+    "services",     # "Technical Services" matched aviation roles; too broad alone
+    "admin",        # "Female Admin", "HR Admin", "Sales Admin" — IT roles already
+                    # caught by "administrator", "it", "system", "network" etc.
+})
+
+
+# ── IT-core terms (always merged into cv_domain_terms) ────────────────────────
+#
+# These acronyms/terms are so specific to IT/security operations that they
+# should ALWAYS trigger T4 acceptance, regardless of what cv_domain_terms was
+# loaded from Supabase.  Whole-word matching (via set intersection against
+# title_words) is safe — "soc" never appears as a standalone token in non-IT titles.
+#
+# Roles covered:
+#   SOC Analyst / Engineer       Security Operations Center
+#   NOC Engineer / Analyst       Network Operations Center
+#   CSIRT Engineer               Computer Security Incident Response Team
+#   GSOC Analyst                 Global Security Operations Center
+
+_IT_CORE_TERMS = frozenset({
+    "soc",    # Security Operations Center
+    "noc",    # Network Operations Center
+    "csirt",  # Computer Security Incident Response Team
+    "gsoc",   # Global SOC
+})
+
+
 # ── Generic role words (T4 guard) ─────────────────────────────────────────────
 #
 # These words appear in both IT and non-IT job titles, so they are too ambiguous
@@ -82,6 +128,44 @@ _GENERIC_ROLE_WORDS = frozenset({
 })
 
 
+# ── Skill vocabulary regex (T_DESC — description matching) ───────────────────
+#
+# Highly specific IT terms extracted from the user's full skill taxonomy.
+# Used to accept jobs whose title misses all positive tiers but whose
+# description clearly shows IT relevance (e.g. a vague title like
+# "Systems Specialist" paired with a description mentioning "Intune" or "Veeam").
+# Only fires when a non-empty description is passed to is_relevant().
+#
+# Single-word terms use \b anchors; multi-word phrases use a flexible [\s\-]+ joiner.
+
+_SKILL_VOCAB_RE = re.compile(
+    r"\b("
+    # Identity & access management
+    r"entra|intune|autopilot|okta|saml|ldap|rbac|iam|sso|mfa|pam|"
+    # Microsoft 365 & collaboration
+    r"sharepoint|purview|ediscovery|o365|m365|"
+    r"exchange[\s\-]online|microsoft[\s\-]365|"
+    # Endpoint & device management
+    r"bitlocker|sccm|mecm|wsus|mdm|mam|uem|"
+    r"microsoft[\s\-]defender|windows[\s\-]autopilot|"
+    # Infrastructure
+    r"vsphere|esxi|vmware|hyper[\s\-]v|veeam|zabbix|nagios|"
+    r"active[\s\-]directory|azure[\s\-]ad|"
+    # Networking & security
+    r"fortinet|fortigate|forticlient|palo[\s\-]alto|ipsec|ospf|bgp|vlan|"
+    # Scripting & automation
+    r"powershell|power[\s\-]automate|"
+    # Cloud platforms
+    r"azure|terraform|kubernetes|"
+    # Security
+    r"zero[\s\-]trust|conditional[\s\-]access|dlp|"
+    # Service management platforms
+    r"servicenow|freshdesk|jira[\s\-]service"
+    r")\b",
+    re.I,
+)
+
+
 # ── Hard-reject patterns (T5) ─────────────────────────────────────────────────
 #
 # Titles that are unambiguously outside the IT/technology domain, regardless
@@ -94,12 +178,20 @@ _HARD_REJECT = re.compile(
     r"real[\s\-]estate|property\s+(consultant|agent|manager|broker|developer)|"
     # ── Sales / marketing ─────────────────────────────────────────────────────
     r"sales\s+(executive|manager|representative|agent|associate|officer)|"
-    r"inside\s+sales|account\s+director|"   # inside sales engineer, senior account director
+    r"inside\s+sales|account\s+director|account\s+(manager|executive)|"
+    r"client\s+(manager|director|executive)|"
+    r"business\s+development\s+(manager|executive|director|specialist|officer|representative)|"
+    r"go[\s\-]to[\s\-]market|gtm\s+(manager|lead|engineer|specialist)|"
+    r"sales\s+enablement|institutional\s+salesperson|"
+    r"sales\s+(intern|internship)|commercial\s+sales\s+(intern|internship)|"
     r"marketing\s+(manager|executive|specialist|coordinator|analyst)|"
     r"digital\s+marketing|social\s+media(\s+(manager|specialist|executive))?|"
+    r"(creative|brand)\s+(strategist|manager|director|designer)|"
+    r"cro\s+(manager|specialist|analyst)|"    # conversion-rate optimisation
     # ── Finance / accounting ──────────────────────────────────────────────────
     r"accountant|accounting\s+(manager|officer)|"
-    r"finance\s+manager|financial\s+(advisor|consultant|controller|analyst\s+(?!systems))|"
+    r"finance\s+(manager|administrator|officer)|financial\s+(advisor|consultant|controller|analyst\s+(?!systems))|"
+    r"risk\s+operations|"
     # ── Design / creative (non-IT) ───────────────────────────────────────────
     r"interior\s+design(er|ing)?|graphic\s+design(er)?|fashion\s+design(er)?|"
     r"industrial\s+design(er)?(?!\s+automation)|"  # exclude "industrial automation"
@@ -111,16 +203,47 @@ _HARD_REJECT = re.compile(
     r"chemical\s+engineer(ing)?|piping\s+engineer|instrument(ation)?\s+engineer|"
     r"oil\s+(and|&)\s+gas\s+engineer|subsea\s+engineer|"
     r"commissioning\s+engineer|"      # industrial plant/equipment commissioning
-    r"planning\s+engineer|"           # civil/construction planning (Mott MacDonald etc.)
-    r"pmc\s+engineer|engineering\s+manager|"  # PMC = Project Mgmt Consultant (O&G)
-    # ── Industrial / non-IT technician roles ─────────────────────────────────
+    r"planning\s+engineer|"           # civil/construction planning
+    r"project\s+engineer|graduate\s+project\s+engineer|"   # construction/civil project engineers
+    r"pmc\s+engineer|engineering\s+manager|"
+    r"relay\s+(and\s+)?control\s+panel|"   # electrical panel manufacturing
+    r"instrumentation\s+((and|&)\s+)?control\s+system|"  # I&C engineering
+    r"occ\s+engineer|rail\s+communications?\s+(systems?\s+)?(engineer|expert|specialist)|"
+    r"land\s+surveyor|resident\s+engineer|"
+    r"maintenance\s+(engineer|technician)(?!\s*(support|server|it|system|network|cloud|cyber))|"
+    r"electro[\s\-]mechanical\s+(inspector|technician)|"
+    # ── Industrial / non-IT technician & physical trades ─────────────────────
+    r"automotive\s+(technician|mechanic|engineer)|"
+    r"(elevator|escalator)s?\s+(technician|engineer|mechanic)|"
     r"electrical\s+(and\s+|&\s+)?automation\s+technician|"
     r"hvac\s+technician|electromechanical\s+technician|"
-    r"biomedical\s+(engineer|sales\s+engineer)|"
+    r"biomedical\s+(engineer|sales\s+engineer|tutor|specialist)|"
+    # ── HSE / sustainability / physical inspection ────────────────────────────
+    r"qhses|hse\s+assurance|"
+    r"sustainability\s+(specialist|manager|engineer|officer|lead|expert|coordinator)|"
+    r"associate\s+qhses|"
     # ── Writing / training / HR specialist ───────────────────────────────────
     r"technical\s+writer|content\s+writer|copywriter|"
     r"onboarding\s+specialist|"       # HR role, not IT
     r"customer\s+support\s+(assistant|specialist|coordinator|executive)|"
+    r"customer\s+(sales\s+)?service\s+support|"
+    # ── Legal ─────────────────────────────────────────────────────────────────
+    r"legal\s+(counsel|consultant|manager|officer|advisor)|"
+    # ── Software / web development (not IT support/ops) ─────────────────────
+    # The user is an IT support/sysadmin — software developer roles are out of scope.
+    # Negative lookahead preserves IT-adjacent titles like "Software Systems Engineer",
+    # "Software Asset Management", "Cloud Platform Engineer", "Security Software Engineer".
+    r"software\s+(developer|programmer)|"
+    r"software\s+engineer(?!\s+(?:systems?|cloud|platform|security|network|infrastructure|it\b|asset|devops))|"
+    r"(full[\s\-]?stack|front[\s\-]?end|back[\s\-]?end)\s+(developer|engineer)|"
+    r"web\s+(developer|designer)|mobile\s+(developer|engineer)|"
+    r"(android|ios|flutter|react\s+native)\s+developer|"
+    # ── Consulting / management engagement roles ──────────────────────────────
+    # "Engagement Manager" = management consulting role; "TMT" = sector label
+    r"engagement\s+manager|"
+    r"management\s+consultant(?!\s+it)|"   # IT management consulting is OK
+    r"strategy\s+(manager|consultant|director)|"
+    r"associate\s+(consultant|director)(?!\s+(it|technology|systems))|"
     # ── Blockchain / crypto dev (not IT support/ops) ─────────────────────────
     r"blockchain\s+(developer|engineer|architect|specialist)|"
     r"(software|senior|lead)\s+\w+\s+engineer,\s*blockchain|"  # "Software Engineer, Blockchain"
@@ -132,8 +255,9 @@ _HARD_REJECT = re.compile(
     r"aeronautical|aerospace\s+engineer(ing)?|"
     r"aviation\s+(manager|specialist|officer|coordinator|planner|operations)|"
     r"flight\s+(operations\s+specialist|dispatcher|planner|operations\s+officer)|"
-    r"aircraft\s+(maintenance|engineer|technician)|"
+    r"aircraft\s+(maintenance|systems|engineer|technician|avionics|structures|components|safety|performance)|"
     r"airline\s+(operations|coordinator|manager)|"
+    r"avionics\s+(engineer|technician|specialist)|"
     # ── Healthcare / hospitality / transport ──────────────────────────────────
     r"nurse|nursing|doctor|physician|medical\s+(officer|representative)|pharmacist|"
     r"chef|cook|barista|waiter|waitress|driver|delivery\s+(driver|rider)|"
@@ -155,7 +279,7 @@ _HARD_REJECT = re.compile(
     # ── Compliance / legal / financial crime ──────────────────────────────────
     r"compliance\s+(manager|officer|head|director|analyst)|"
     r"financial\s+crime|aml\s+(analyst|officer|manager)|anti[\s\-]money\s+laundering|"
-    r"kyc\s+(analyst|officer|manager)|legal\s+(counsel|manager|officer|advisor)|"
+    r"kyc\s+(analyst|officer|manager)|"
     r"risk\s+(manager|officer|director)|"  # "risk analyst" excluded — can be IT security
     r"head\s+of\s+(compliance|legal|risk|finance|marketing|sales|hr)"
     r")\b",
@@ -208,11 +332,35 @@ def _fallback_domain_terms(keywords: list[str]) -> frozenset[str]:
     if any(w in kw_lower for w in ("support", "helpdesk", "sysadmin", "administrator",
                                     "infrastructure", "technician")):
         return frozenset({
-            "it", "tech", "technical", "support", "system", "network", "server",
-            "sysadmin", "admin", "administrator", "software", "hardware", "cloud",
-            "cyber", "security", "helpdesk", "desktop", "infrastructure", "database",
-            "analyst", "programmer", "devops", "linux", "windows", "azure", "aws",
-            "technician", "developer", "architect", "technology", "ict",
+            # Core IT identifiers
+            "it", "tech", "technical", "ict", "technology",
+            # Role words  (no "analyst" — business/data/clinical analysts are not IT sysadmin)
+            # (no "technician" — automotive/elevator technicians would pass via T4)
+            "sysadmin", "admin", "administrator",
+            "architect", "devops", "helpdesk", "support",
+            # Infrastructure
+            "system", "server", "network", "infrastructure", "database",
+            "hardware", "software", "linux", "windows", "desktop",
+            # Cloud & identity
+            "cloud", "azure", "aws", "gcp", "hybrid",
+            "identity", "access", "entra", "intune", "directory",
+            # Collaboration & M365
+            "exchange", "sharepoint", "teams", "collaboration", "workplace",
+            # Endpoint management
+            "endpoint", "autopilot", "mdm", "deployment",
+            # Security (SOC = Security Operations Center, NOC = Network Ops Center)
+            "cyber", "security", "firewall", "vpn", "compliance",
+            "soc", "noc", "csirt", "gsoc",
+            # Networking
+            "cisco", "fortinet", "routing", "switching",
+            # Backup & continuity
+            "backup", "recovery", "veeam", "continuity",
+            # Monitoring & operations
+            "monitoring", "zabbix",
+            # Automation & scripting
+            "powershell", "scripting", "automation",
+            # Virtualization
+            "virtualization", "vmware", "hypervisor",
         })
 
     # Software engineering / Development
@@ -280,12 +428,22 @@ class RelevanceEngine:
         for kw in keywords:
             for word in re.split(r"\W+", kw.lower()):
                 word = re.sub(r"[^a-z0-9+#]", "", word)
-                if len(word) >= 2:
+                if len(word) >= 2 and word not in _KEYWORD_WORD_BLOCKLIST:
                     self.keyword_words.add(word)
 
         self.cv_skill_words     = cv_skill_words       # from cv_skills CSV
-        self.cv_domain_terms    = cv_domain_terms      # from cv_domain_terms CSV (or fallback)
-        self.cv_job_title_words = cv_job_title_words   # from cv_job_titles CSV
+        # Merge in IT-core terms so that roles like "SOC Analyst" / "NOC Engineer"
+        # always pass T4, even when the user's CV-derived domain terms don't include
+        # security-operations acronyms.
+        # Also strip the same generic words that are blocked from T1/T2 — "senior",
+        # "engineer", "specialist", etc. end up in cv_domain_terms when the CV analyzer
+        # extracts words from job titles like "Senior IT Support Engineer".  Without this
+        # strip, T4 would fire on "Senior BIM Engineer" via "senior" or "engineer".
+        self.cv_domain_terms    = (cv_domain_terms - _KEYWORD_WORD_BLOCKLIST) | _IT_CORE_TERMS
+        # Strip blocklist words from CV job-title words so that seniority/generic words
+        # (e.g. "senior", "engineer", "specialist" from "Senior Onsite Engineer") cannot
+        # accept non-IT titles via T2 alone.  IT roles are already caught by T1/T3/T4.
+        self.cv_job_title_words = cv_job_title_words - _KEYWORD_WORD_BLOCKLIST
 
     @classmethod
     def from_supabase(
@@ -396,6 +554,14 @@ class RelevanceEngine:
         if real_matches:
             sample = next(iter(real_matches))
             return True, f"T4:domain_term({sample})"
+
+        # T_DESC — description contains a highly specific IT skill term.
+        # Only activates when a non-empty description is supplied (enricher flow).
+        # Catches roles where the title is ambiguous but the description is clearly IT.
+        if description:
+            desc_m = _SKILL_VOCAB_RE.search(description)
+            if desc_m:
+                return True, f"T_DESC:skill_vocab({desc_m.group(0)[:30].lower()})"
 
         return False, "REJECT:no_match"
 
