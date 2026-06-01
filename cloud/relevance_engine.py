@@ -73,7 +73,28 @@ _KEYWORD_WORD_BLOCKLIST = frozenset({
     "services",     # "Technical Services" matched aviation roles; too broad alone
     "admin",        # "Female Admin", "HR Admin", "Sales Admin" — IT roles already
                     # caught by "administrator", "it", "system", "network" etc.
+    "desk",         # "Housekeeping Desk", "Front Desk", "Reception Desk" — from the
+                    # "IT Help Desk" keyword. Genuine IT desk roles are caught by the
+                    # _IT_TITLE_PHRASES check below ("help desk"/"service desk") and
+                    # by "helpdesk"/"it"/"support".
 })
+
+
+# ── IT-specific title phrases (positive multi-word signal) ────────────────────
+#
+# Multi-word phrases that are unambiguously IT even when no single keyword word
+# matches.  Checked as an ACCEPT tier right after T5.  This rescues genuine
+# service-desk / help-desk roles that lost their standalone "desk" T1 match when
+# "desk" was added to the blocklist — without re-admitting "Housekeeping Desk",
+# "Front Desk", "Reception Desk" (none of which contain these compounds).
+
+_IT_TITLE_PHRASES = re.compile(
+    r"\b("
+    r"help\s*desk|service\s*desk|support\s*desk|it\s*desk|"
+    r"service\s+desk\s+analyst|desktop\s+support"
+    r")\b",
+    re.I,
+)
 
 
 # ── IT-core terms (always merged into cv_domain_terms) ────────────────────────
@@ -261,6 +282,15 @@ _HARD_REJECT = re.compile(
     # ── Healthcare / hospitality / transport ──────────────────────────────────
     r"nurse|nursing|doctor|physician|medical\s+(officer|representative)|pharmacist|"
     r"chef|cook|barista|waiter|waitress|driver|delivery\s+(driver|rider)|"
+    # ── Hospitality / hotel (not IT) ──────────────────────────────────────────
+    # Must precede the T1P "service desk" phrase check — a hotel "Guest Service
+    # Desk" is hospitality, not an IT service desk.
+    r"housekeeping|concierge|valet|bell\s*(boy|man|hop)|room\s+service|butler|hostess|"
+    r"guest\s+(service|services|relation|relations|experience)|"
+    r"front\s+desk\s+(agent|associate|receptionist|clerk|coordinator|supervisor|manager)|"
+    r"front\s+office\s+(agent|associate|coordinator|supervisor|manager)|"
+    r"reservations?\s+(agent|officer|executive|coordinator)|cabin\s+crew|"
+    r"spa\s+(therapist|receptionist)|"
     # ── Supply chain / procurement / physical coordination ───────────────────
     r"procurement\s+(manager|officer)|supply\s+chain\s+(manager|coordinator)|"
     r"logistics\s+(coordinator|manager)|"
@@ -526,6 +556,12 @@ class RelevanceEngine:
         if m:
             fragment = m.group(0)[:40].lower()
             return False, f"T5:hard_reject({fragment})"
+
+        # T1P — IT-specific multi-word phrase (help desk / service desk / desktop support).
+        # Rescues genuine IT desk roles that lost their standalone "desk" T1 match.
+        pm = _IT_TITLE_PHRASES.search(title_lower)
+        if pm:
+            return True, f"T1P:it_phrase({pm.group(0).strip()})"
 
         # T1 — any keyword word appears as a whole word in the title
         for kw_word in self.keyword_words:
