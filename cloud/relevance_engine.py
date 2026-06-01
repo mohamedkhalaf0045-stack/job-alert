@@ -97,6 +97,89 @@ _IT_TITLE_PHRASES = re.compile(
 )
 
 
+# ── Position-name (phrase) matching ───────────────────────────────────────────
+#
+# The title gate matches FULL POSITION NAMES, not single words.  A title
+# qualifies only when it contains ALL the significant words of at least one
+# position phrase — so "desk" alone never matches, but "IT Help Desk",
+# "Service Desk", "System Administrator" etc. do.  This replaces the old
+# word-by-word T1–T4 tiers that let "Housekeeping Desk" through on "desk".
+
+# Seniority / level tokens are dropped from phrase requirements — they are not
+# field indicators and would otherwise over-constrain (e.g. requiring "senior").
+_SENIORITY_NOISE = frozenset({
+    "senior", "junior", "lead", "sr", "jr", "mid", "principal", "staff",
+    "level", "l1", "l2", "l3", "i", "ii", "iii", "trainee", "intern", "graduate",
+})
+
+# Normalise singular/plural and common variants so "Systems"≈"System",
+# "Admin"≈"Administrator", etc.  Applied to both keyword phrases and job titles.
+_TOKEN_NORMALIZE = {
+    "systems": "system",
+    "admin": "administrator", "admins": "administrator", "administrators": "administrator",
+    "engineers": "engineer", "engineering": "engineer",
+    "networks": "network", "networking": "network",
+    "technologies": "technology",
+    "specialists": "specialist",
+    "analysts": "analyst",
+    "technicians": "technician",
+    "operations": "operation",
+    "services": "service",
+}
+
+# A few single tokens that stand for a two-word position — expanded on the title
+# side so e.g. "Sysadmin" satisfies the "system administrator" phrase.
+_TOKEN_EXPAND = {
+    "sysadmin": ("system", "administrator"),
+    "helpdesk": ("help", "desk"),
+    "m365": ("microsoft", "365"),
+    "o365": ("microsoft", "365"),
+}
+
+# Built-in canonical IT-support / sysadmin / infrastructure position names.
+# These give good recall (so "Network Administrator", "Cloud Engineer", etc. are
+# caught even if not in the user's keyword list) while staying strictly
+# position-based — never single generic words.
+_BUILTIN_POSITIONS: tuple[str, ...] = (
+    "it support", "it support engineer", "it support specialist", "it support technician",
+    "it support analyst", "it technician", "it administrator", "it engineer",
+    "it officer", "it analyst", "it coordinator", "it executive",
+    "it help desk", "help desk", "service desk", "desktop support", "technical support",
+    "technical support engineer", "technical support specialist",
+    "system administrator", "system engineer", "systems engineer",
+    "network administrator", "network engineer", "network security",
+    "security administrator", "security engineer", "security analyst",
+    "soc analyst", "noc engineer", "information security",
+    "cloud administrator", "cloud engineer", "cloud architect",
+    "infrastructure engineer", "infrastructure administrator", "infrastructure specialist",
+    "devops engineer", "windows administrator", "linux administrator",
+    "server administrator", "database administrator",
+    "endpoint engineer", "endpoint administrator", "endpoint management",
+    "microsoft 365 administrator", "azure administrator", "azure engineer",
+    "identity engineer", "collaboration engineer",
+    "workplace technology", "digital workplace", "end user computing", "end user support",
+    "it manager", "it support manager", "infrastructure manager",
+)
+
+
+def _phrase_token_set(text: str) -> frozenset[str]:
+    """Return the set of significant, normalised tokens for a phrase or title.
+
+    Drops stopwords + seniority/level noise; normalises plurals/variants;
+    expands single tokens that stand for two words (sysadmin → system+administrator).
+    """
+    out: set[str] = set()
+    for raw in re.split(r"\W+", text.lower()):
+        tok = re.sub(r"[^a-z0-9+#]", "", raw)
+        if not tok or tok in _STOPWORDS or tok in _SENIORITY_NOISE:
+            continue
+        if tok in _TOKEN_EXPAND:
+            out.update(_TOKEN_EXPAND[tok])
+            continue
+        out.add(_TOKEN_NORMALIZE.get(tok, tok))
+    return frozenset(out)
+
+
 # ── IT-core terms (always merged into cv_domain_terms) ────────────────────────
 #
 # These acronyms/terms are so specific to IT/security operations that they
@@ -451,7 +534,11 @@ class RelevanceEngine:
         cv_skill_words: set[str],
         cv_domain_terms: set[str],
         cv_job_title_words: set[str],
+        cv_job_titles: list[str] | None = None,
     ) -> None:
+        # Raw CV job-title strings (e.g. ["IT Systems Administrator", "Senior Onsite Engineer"])
+        # used to derive position phrases.  Optional — empty when not supplied.
+        self._cv_titles_raw: list[str] = list(cv_job_titles or [])
         # Build the set of individual words from every keyword phrase.
         # e.g. ["IT Support", "System Administrator"] → {"it","support","system","administrator"}
         self.keyword_words: set[str] = set()
@@ -474,6 +561,23 @@ class RelevanceEngine:
         # (e.g. "senior", "engineer", "specialist" from "Senior Onsite Engineer") cannot
         # accept non-IT titles via T2 alone.  IT roles are already caught by T1/T3/T4.
         self.cv_job_title_words = cv_job_title_words - _KEYWORD_WORD_BLOCKLIST
+
+        # ── Position phrases (the title gate) ─────────────────────────────────
+        # A title matches only when it contains ALL significant words of one of
+        # these phrases.  Built from: the user's keyword/position list + the
+        # built-in canonical IT positions + the user's own CV job titles.
+        # Single-word phrases (e.g. bare "IT") are kept but flagged so we don't
+        # accept a job on one generic word alone unless it's a genuine IT token.
+        # Every phrase must have >= 2 significant words — a job is NEVER accepted
+        # on a single generic word (the user's explicit rule: "not word by word").
+        # A bare keyword like "IT" therefore contributes no phrase; "IT X" roles
+        # are still covered by the 2-word built-in positions ("it support", etc.).
+        phrases: set[frozenset[str]] = set()
+        for src in list(keywords) + list(_BUILTIN_POSITIONS) + list(self._cv_titles_raw):
+            ts = _phrase_token_set(src)
+            if len(ts) >= 2:
+                phrases.add(ts)
+        self.position_phrases: list[frozenset[str]] = sorted(phrases, key=len)
 
     @classmethod
     def from_supabase(
@@ -507,6 +611,7 @@ class RelevanceEngine:
 
         cv_skill_words     = _csv_to_words(cv_skills_csv)
         cv_job_title_words = _csv_to_words(cv_titles_csv)
+        cv_job_titles_list = [t.strip() for t in cv_titles_csv.split(",") if t.strip()]
 
         if cv_domain_csv.strip():
             cv_domain_terms: set[str] = _csv_to_words(cv_domain_csv)
@@ -520,80 +625,59 @@ class RelevanceEngine:
                     flush=True,
                 )
 
-        engine = cls(keywords, cv_skill_words, cv_domain_terms, cv_job_title_words)
+        engine = cls(keywords, cv_skill_words, cv_domain_terms, cv_job_title_words,
+                     cv_job_titles=cv_job_titles_list)
 
         # Log summary for GitHub Actions visibility
         print(
             f"[RelevanceEngine] Loaded: {len(cv_skill_words)} skill-word(s), "
             f"{len(cv_job_title_words)} title-word(s), "
             f"{len(cv_domain_terms)} domain-term(s), "
-            f"{len(engine.keyword_words)} keyword-word(s)",
+            f"{len(engine.keyword_words)} keyword-word(s), "
+            f"{len(engine.position_phrases)} position-phrase(s)",
             flush=True,
         )
         return engine
 
     def is_relevant(self, title: str, description: str = "") -> tuple[bool, str]:
-        """Classify a single job title.
+        """Classify a single job by TITLE (position-name match), not word-by-word.
+
+        Pipeline:
+            T5     hard-reject — clearly non-IT / non-target role        → REJECT
+            POS    title contains ALL words of a position phrase          → ACCEPT
+            T_DESC (only with description) IT skill vocab in description   → ACCEPT
+            --     no position phrase matched                             → REJECT
+
+        The POS tier replaces the old word-by-word T1–T4 tiers: a single generic
+        word ("desk", "cloud", "security") can no longer accept a job — the title
+        must match a whole position name.  Description-vs-CV fit is judged
+        separately by the enricher's LLM reasoning step.
 
         Returns (is_relevant, reason_str).
-
-        reason_str examples:
-            "T1:keyword(it)"
-            "T2:job_title_word(administrator)"
-            "T3:skill_word(active directory)"
-            "T4:domain_term(networking)"
-            "T5:hard_reject(property consultant)"
-            "REJECT:no_match"
         """
         title_lower = title.lower()
-        title_words = set(re.split(r"\W+", title_lower)) - {""}
 
-        # T5 — hard-reject FIRST, before any positive tier.
-        # MUST run before T1/T2/T3 so a broad word like "engineer" or "technician"
-        # in CV job-title words cannot rescue a non-IT role
-        # (e.g. "Graduate Process Engineer" was passing T2 on "engineer").
+        # T5 — hard-reject FIRST (sales, hospitality, civil eng, etc.).
         m = _HARD_REJECT.search(title_lower)
         if m:
             fragment = m.group(0)[:40].lower()
             return False, f"T5:hard_reject({fragment})"
 
-        # T1P — IT-specific multi-word phrase (help desk / service desk / desktop support).
-        # Rescues genuine IT desk roles that lost their standalone "desk" T1 match.
+        # T1P — IT-specific compound phrase (help desk / service desk / desktop support).
         pm = _IT_TITLE_PHRASES.search(title_lower)
         if pm:
             return True, f"T1P:it_phrase({pm.group(0).strip()})"
 
-        # T1 — any keyword word appears as a whole word in the title
-        for kw_word in self.keyword_words:
-            if re.search(r"\b" + re.escape(kw_word) + r"\b", title_lower):
-                return True, f"T1:keyword({kw_word})"
+        # POS — full position-name match: every significant word of at least one
+        # position phrase must be present in the title (order-independent).
+        title_tokens = _phrase_token_set(title)
+        if title_tokens:
+            for phrase in self.position_phrases:
+                if phrase <= title_tokens:
+                    return True, f"POS:position({' '.join(sorted(phrase))})"
 
-        # T2 — any CV job-title word appears in the title
-        matches = title_words & self.cv_job_title_words
-        if matches:
-            sample = next(iter(matches))
-            return True, f"T2:job_title_word({sample})"
-
-        # T3 — any CV skill word appears in the title
-        matches = title_words & self.cv_skill_words
-        if matches:
-            sample = next(iter(matches))
-            return True, f"T3:skill_word({sample})"
-
-        # T4 — CV domain-term catch-all
-        # Strip generic role words (coordinator, controller, inspector, …) so that
-        # a single vague word can't accept an unrelated role (e.g. "Packaging
-        # Coordinator" matching only on "coordinator" from the user's CV titles).
-        # A job must contain at least one genuinely IT-flavoured domain term.
-        matches = title_words & self.cv_domain_terms
-        real_matches = matches - _GENERIC_ROLE_WORDS
-        if real_matches:
-            sample = next(iter(real_matches))
-            return True, f"T4:domain_term({sample})"
-
-        # T_DESC — description contains a highly specific IT skill term.
-        # Only activates when a non-empty description is supplied (enricher flow).
-        # Catches roles where the title is ambiguous but the description is clearly IT.
+        # T_DESC — title didn't match a position, but the DESCRIPTION clearly shows
+        # IT work (Intune, SCCM, Fortinet, …).  Only when a description is supplied.
         if description:
             desc_m = _SKILL_VOCAB_RE.search(description)
             if desc_m:
