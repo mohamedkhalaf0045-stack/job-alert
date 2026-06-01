@@ -92,6 +92,11 @@ _ENV_TO_JSON: dict[str, str] = {
     "LOCATION":            "Location",
     "OLLAMA_URL":          "OllamaUrl",
     "LLM_MIN_SCORE":       "MinAiScore",   # settings.json key for minimum score threshold
+    # Search-source toggles — must be mapped so settings.json takes effect when
+    # the env var is absent and Supabase bot_state hasn't been explicitly set.
+    "SEARCH_LINKEDIN":     "SearchLinkedIn",
+    "SEARCH_INDEED":       "SearchIndeed",
+    "HIDE_APPLIED":        "HideAppliedJobs",
 }
 
 
@@ -407,6 +412,37 @@ def main() -> None:
 
     all_new_jobs: list[dict] = []
 
+    # LinkedIn health tracking — used to detect an expired li_at cookie.
+    # A live cookie returns SOMETHING (new, updated, seen or invalid) across a run.
+    # A run-total of exactly 0 across every keyword means the scraper got nothing,
+    # which is the signature of an expired/blocked session — not "no new jobs".
+    li_attempted = False
+    li_run_total = 0
+
+    # --- Heartbeat: detect & report worker downtime since the last run ---
+    # If the worker was off (laptop asleep, crash, etc.) the gap between
+    # worker_last_run and now will exceed the normal ~5 min cadence.  Alert the
+    # user once on resume so silent multi-hour gaps never go unnoticed again.
+    if tg_token and tg_chat:
+        try:
+            last_run_iso = db.get_config(supabase_url, supabase_key, "worker_last_run", "")
+            if last_run_iso:
+                last_dt = datetime.fromisoformat(last_run_iso.replace("Z", "+00:00"))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                gap_min = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
+                if gap_min > 30:   # > 6 missed cycles
+                    hrs = gap_min / 60
+                    tg.send_message(
+                        tg_token, tg_chat,
+                        f"⚠️ Worker was offline for ~{hrs:.1f}h "
+                        f"(last run {last_run_iso[:16]} UTC).\n"
+                        f"Resuming now — jobs posted during the gap may have been missed.",
+                    )
+                    _log(f"Downtime detected: {gap_min:.0f} min gap since last run — user alerted")
+        except Exception as exc:
+            _log(f"Heartbeat check error (non-fatal): {exc}")
+
     # Load already-notified URLs BEFORE scanning starts so per-source instant
     # alerts (below) never double-send a URL that was notified in a previous run.
     already_sent: set[str] = set()
@@ -558,10 +594,14 @@ def main() -> None:
                     f"inserted={summary['inserted']}, updated={summary['updated']}, "
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
+                li_attempted = True
+                li_run_total += (summary["inserted"] + summary["updated"]
+                                 + summary["seen"] + summary["invalid"])
                 all_new_jobs.extend(summary.get("new_jobs", []))
                 _alert_new(summary.get("new_jobs", []))
             except Exception as exc:
                 _log(f"LinkedIn error for '{keyword}': {exc}")
+                li_attempted = True
 
         # --- Bayt ---
         if search_bayt and _source_fails["bayt"] < _FAIL_THRESHOLD:
@@ -786,6 +826,46 @@ def main() -> None:
         elif search_web:
             _log(f"WebSearch: skipped (all providers exhausted on previous keywords)")
 
+    # --- LinkedIn cookie-expiry detection ---------------------------------------
+    # A live session returns at least something across a full run.  A run-total of
+    # exactly 0 (across every keyword) for several runs in a row means the li_at
+    # cookie has expired or the session is blocked.  Alert the user ONCE so they
+    # can refresh it — instead of silently receiving zero LinkedIn jobs for days.
+    if search_li and li_attempted and tg_token and tg_chat:
+        try:
+            streak = int(db.get_config(supabase_url, supabase_key, "linkedin_zero_streak", "0") or "0")
+        except ValueError:
+            streak = 0
+
+        if li_run_total == 0:
+            streak += 1
+            db.set_config(supabase_url, supabase_key, "linkedin_zero_streak", str(streak))
+            already_alerted = (db.get_config(supabase_url, supabase_key,
+                                             "linkedin_cookie_alerted", "") == "true")
+            if streak >= 3 and not already_alerted:
+                tg.send_message(
+                    tg_token, tg_chat,
+                    "🍪 LinkedIn returned 0 results for 3 scans in a row — "
+                    "your li_at cookie has most likely expired.\n\n"
+                    "Fix it in ~30 seconds:\n"
+                    "1. Open linkedin.com in your browser (logged in)\n"
+                    "2. F12 → Application → Cookies → linkedin.com\n"
+                    "3. Copy the value of  li_at\n"
+                    "4. Paste it into the Job Alert GUI → Settings → LinkedIn Cookie → Save\n\n"
+                    "Indeed, Bayt and GulfTalent keep working in the meantime.",
+                )
+                db.set_config(supabase_url, supabase_key, "linkedin_cookie_alerted", "true")
+                _log(f"LinkedIn zero-streak={streak} — cookie-expiry alert sent")
+            else:
+                _log(f"LinkedIn zero-streak={streak} (alert at 3, already_alerted={already_alerted})")
+        else:
+            # LinkedIn is healthy again — reset streak and re-arm the alert.
+            if streak != 0:
+                db.set_config(supabase_url, supabase_key, "linkedin_zero_streak", "0")
+            if db.get_config(supabase_url, supabase_key, "linkedin_cookie_alerted", "") == "true":
+                db.set_config(supabase_url, supabase_key, "linkedin_cookie_alerted", "false")
+                _log("LinkedIn healthy again — cookie alert re-armed")
+
     # --- Gmail job alert emails ---
     if search_gmail:
         try:
@@ -977,6 +1057,25 @@ def main() -> None:
 
     else:
         _log("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing). Skipping alerts.")
+
+    # --- Heartbeat: record this run + ping external dead-man's switch ----------
+    # worker_last_run powers the downtime-detection alert at the top of the next
+    # run.  setting_healthcheck_url (optional) lets an external monitor such as
+    # healthchecks.io page you if the worker stops pinging entirely.
+    try:
+        db.set_config(supabase_url, supabase_key, "worker_last_run",
+                      datetime.now(timezone.utc).isoformat())
+    except Exception as exc:
+        _log(f"Heartbeat write error (non-fatal): {exc}")
+
+    healthcheck_url = db.get_config(supabase_url, supabase_key, "setting_healthcheck_url", "")
+    if healthcheck_url:
+        try:
+            import requests as _hc_req
+            _hc_req.get(healthcheck_url, timeout=8)
+            _log("Heartbeat: external health-check pinged")
+        except Exception as exc:
+            _log(f"Heartbeat ping error (non-fatal): {exc}")
 
     _log("Worker finished.")
 

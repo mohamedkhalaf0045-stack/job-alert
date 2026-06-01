@@ -447,6 +447,106 @@ EXAMPLE 4b (borderline IT-adjacent, partial fit):
 """
 
 
+# ── Score-response parsing (shared by Ollama + cloud fallback) ────────────────
+
+def _clamp_int(v, lo=0, hi=10, default=5):
+    try:    return max(lo, min(hi, int(v)))
+    except: return default
+
+
+def _clean_list(v, max_items=5, max_len=60):
+    if not isinstance(v, list):
+        return []
+    out = []
+    for item in v[:max_items]:
+        s = str(item).strip()[:max_len]
+        if s:
+            out.append(s)
+    return out
+
+
+def _breakdown_from_json(raw: str) -> dict:
+    """Parse a raw LLM JSON string into a normalised breakdown dict.
+
+    Shared by the Ollama path and the cloud-fallback path so both produce
+    identical, validated output. Returns {} if no JSON object is found.
+    """
+    m = re.search(r'\{.*\}', raw or "", re.DOTALL)
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return {}
+
+    breakdown = {
+        "skills_match":     _clamp_int(data.get("skills_match")),
+        "experience_match": _clamp_int(data.get("experience_match")),
+        "location_match":   _clamp_int(data.get("location_match")),
+        "seniority_match":  _clamp_int(data.get("seniority_match")),
+        "overall_score":    _clamp_int(data.get("overall_score")),
+        "matched_skills":   _clean_list(data.get("matched_skills")),
+        "missing_skills":   _clean_list(data.get("missing_skills")),
+        "red_flags":        _clean_list(data.get("red_flags"), max_items=3, max_len=80),
+        "reasoning":        str(data.get("reasoning", "")).strip()[:300],
+    }
+    # If overall_score wasn't returned, derive it from the 4 axes (weighted average)
+    if data.get("overall_score") is None:
+        axes = [
+            (breakdown["skills_match"],     0.40),
+            (breakdown["experience_match"], 0.30),
+            (breakdown["seniority_match"],  0.15),
+            (breakdown["location_match"],   0.15),
+        ]
+        weighted = sum(v * w for v, w in axes)
+        breakdown["overall_score"] = _clamp_int(round(weighted))
+    return breakdown
+
+
+# ── Cloud LLM fallback (Groq — free, OpenAI-compatible, very fast) ─────────────
+
+DEFAULT_CLOUD_MODEL = "llama-3.3-70b-versatile"
+_GROQ_ENDPOINT      = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def cloud_score(prompt: str, cloud_key: str,
+                cloud_model: str = DEFAULT_CLOUD_MODEL) -> tuple[int, str, dict]:
+    """Score a job via Groq's OpenAI-compatible chat API.
+
+    Used as a fallback when the local Ollama instance is unreachable or times
+    out (the common case on a low-RAM Windows box).  Groq's free tier is fast
+    enough to clear a large backlog in minutes.
+
+    Returns (overall_score, reasoning, breakdown) or (-1, "", {}) on failure.
+    """
+    if not cloud_key:
+        return -1, "", {}
+    try:
+        r = requests.post(
+            _GROQ_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {cloud_key}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "model": cloud_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"]
+        breakdown = _breakdown_from_json(raw)
+        if not breakdown:
+            return -1, "", {}
+        return breakdown["overall_score"], breakdown["reasoning"], breakdown
+    except Exception as exc:
+        _log(f"Cloud-fallback (Groq) error: {exc}")
+        return -1, "", {}
+
+
 def ollama_score(
     job: dict,
     description: str,
@@ -454,8 +554,13 @@ def ollama_score(
     model: str,
     ollama_url: str,
     dynamic_few_shot: str = "",
+    cloud_key: str = "",
+    cloud_model: str = DEFAULT_CLOUD_MODEL,
 ) -> tuple[int, str, dict]:
     """Call Ollama to score a job on 4 axes + overall.
+
+    Falls back to the Groq cloud API when Ollama is unreachable or times out,
+    provided a cloud_key is configured.
 
     Returns (overall_score, reasoning_summary, full_breakdown_dict).
     Breakdown keys: skills_match, experience_match, location_match, seniority_match,
@@ -534,19 +639,12 @@ def ollama_score(
         _log(prompt[:6000] + (" ...[truncated]" if len(prompt) > 6000 else ""))
         _log("--- END PROMPT ---")
 
-    def _clamp_int(v, lo=0, hi=10, default=5):
-        try:    return max(lo, min(hi, int(v)))
-        except: return default
-
-    def _clean_list(v, max_items=5, max_len=60):
-        if not isinstance(v, list):
-            return []
-        out = []
-        for item in v[:max_items]:
-            s = str(item).strip()[:max_len]
-            if s:
-                out.append(s)
-        return out
+    def _try_cloud(reason: str):
+        """Attempt the Groq cloud fallback; log whether it was available."""
+        if cloud_key:
+            _log(f"          Ollama {reason} — falling back to cloud ({cloud_model})")
+            return cloud_score(prompt, cloud_key, cloud_model)
+        return None
 
     try:
         r = requests.post(
@@ -558,35 +656,26 @@ def ollama_score(
         raw = r.json().get("response", "{}")
         if _DEBUG_PROMPT:
             _log(f"Ollama raw response: {raw[:800]}")
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        data = json.loads(m.group(0)) if m else {}
-
-        breakdown = {
-            "skills_match":     _clamp_int(data.get("skills_match")),
-            "experience_match": _clamp_int(data.get("experience_match")),
-            "location_match":   _clamp_int(data.get("location_match")),
-            "seniority_match":  _clamp_int(data.get("seniority_match")),
-            "overall_score":    _clamp_int(data.get("overall_score")),
-            "matched_skills":   _clean_list(data.get("matched_skills")),
-            "missing_skills":   _clean_list(data.get("missing_skills")),
-            "red_flags":        _clean_list(data.get("red_flags"), max_items=3, max_len=80),
-            "reasoning":        str(data.get("reasoning", "")).strip()[:300],
-        }
-        # If overall_score wasn't returned, derive it from the 4 axes (weighted average)
-        if data.get("overall_score") is None:
-            axes = [
-                (breakdown["skills_match"],     0.40),
-                (breakdown["experience_match"], 0.30),
-                (breakdown["seniority_match"],  0.15),
-                (breakdown["location_match"],   0.15),
-            ]
-            weighted = sum(v * w for v, w in axes)
-            breakdown["overall_score"] = _clamp_int(round(weighted))
+        breakdown = _breakdown_from_json(raw)
+        if not breakdown:
+            # Ollama replied but the JSON was unparseable — try cloud before giving up
+            cloud = _try_cloud("returned unparseable JSON")
+            if cloud and cloud[0] != -1:
+                return cloud
+            return -1, "", {}
         return breakdown["overall_score"], breakdown["reasoning"], breakdown
-    except requests.exceptions.ConnectionError:
-        _log(f"ERROR: Cannot reach Ollama at {ollama_url} - is 'ollama serve' running?")
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+        kind = "timed out" if isinstance(exc, requests.exceptions.Timeout) else "unreachable"
+        cloud = _try_cloud(kind)
+        if cloud is not None:
+            return cloud
+        _log(f"ERROR: Ollama at {ollama_url} {kind} - is 'ollama serve' running? "
+             f"(set setting_groq_api_key for cloud fallback)")
         return -1, "", {}
     except Exception as exc:
+        cloud = _try_cloud(f"error: {exc}")
+        if cloud is not None and cloud[0] != -1:
+            return cloud
         _log(f"Ollama error: {exc}")
         return -1, "", {}
 
@@ -762,6 +851,10 @@ def main() -> None:
                         help=f"Cap tailored-CV generations per run (default {DEFAULT_TAILORED_CV_PER_RUN})")
     parser.add_argument("--analyze-cv", action="store_true",
                         help="Analyze CV and store structured profile to Supabase, then exit")
+    parser.add_argument("--groq-key",   default="",
+                        help="Groq API key for cloud fallback when Ollama is down (or set GROQ_API_KEY / setting_groq_api_key)")
+    parser.add_argument("--groq-model", default=DEFAULT_CLOUD_MODEL,
+                        help=f"Groq model for cloud fallback (default {DEFAULT_CLOUD_MODEL})")
     args = parser.parse_args()
 
     global _VERBOSE, _DEBUG_PROMPT
@@ -791,6 +884,14 @@ def main() -> None:
     # Read config overrides from Supabase bot_state
     model     = db.get_config(supabase_url, supabase_key, "setting_ollama_model", "") or args.model
     ollama    = db.get_config(supabase_url, supabase_key, "setting_ollama_url",   "") or args.ollama
+    # Cloud LLM fallback (Groq) — used when Ollama is unreachable or times out.
+    # Priority: Supabase bot_state > env GROQ_API_KEY > CLI --groq-key.
+    cloud_key   = (db.get_config(supabase_url, supabase_key, "setting_groq_api_key", "")
+                   or _env("GROQ_API_KEY") or args.groq_key).strip()
+    cloud_model = (db.get_config(supabase_url, supabase_key, "setting_groq_model", "")
+                   or args.groq_model).strip()
+    if cloud_key:
+        _log(f"Cloud fallback enabled (Groq, model={cloud_model})")
     # Priority: Supabase bot_state > settings.json MinAiScore > CLI --min-score > hardcoded default (4)
     _settings_min = _SETTINGS_JSON.get("MinAiScore")
     _fallback_min = int(_settings_min) if _settings_min is not None else args.min_score
@@ -975,10 +1076,11 @@ def main() -> None:
             _vlog("          Embedding failed - proceeding to score anyway")
 
         score, summary, breakdown = ollama_score(job, description, profile, model, ollama,
-                                                  dynamic_few_shot=dynamic_few_shot)
+                                                  dynamic_few_shot=dynamic_few_shot,
+                                                  cloud_key=cloud_key, cloud_model=cloud_model)
 
         if score == -1:
-            _log("          Ollama unreachable - stopping enrichment")
+            _log("          Scoring unavailable (Ollama down, no cloud fallback) - stopping enrichment")
             break
 
         # Auto-dismiss if LLM itself says "Wrong field" — score is irrelevant
@@ -1000,12 +1102,21 @@ def main() -> None:
         if breakdown.get("red_flags"):
             _log(f"          Red flags: {' | '.join(breakdown['red_flags'])}")
 
-        db.update_job_enrichment(
+        saved = db.update_job_enrichment(
             supabase_url, supabase_key,
             job["job_id"], description, score, summary,
             min_score=min_score,
             breakdown=breakdown,
         )
+
+        if not saved:
+            # DB write failed — do NOT send a Telegram alert.
+            # The job stays in get_unscored_jobs (llm_score still NULL) and will
+            # be retried on the next enricher run.  Alerting here would cause a
+            # duplicate alert every time the enricher retries this job.
+            _log(f"          WARNING: DB update failed — skipping Telegram alert (will retry next run)")
+            failed += 1
+            continue
 
         # Phase 5: generate cover-letter draft for high-scoring jobs.
         # Throttled per run so a backfill doesn't take forever (~30s per draft).
@@ -1080,16 +1191,39 @@ def main() -> None:
             else:
                 # Job was already alerted by worker (no score then).
                 # Send a brief score-update message so the user sees the rating.
-                try:
-                    import telegram_notify as tg_mod
-                    job_id = job.get("job_id") or ""
-                    ok = tg_mod.send_score_update(tg_token, tg_chat, job, breakdown, job_id=job_id)
-                    if ok:
-                        _log(f"          Telegram: score update sent ({score}/10)")
-                    else:
-                        _log(f"          Telegram: score update failed — will retry next run")
-                except Exception as exc:
-                    _log(f"          Telegram: score update error: {exc}")
+                # Apply the same staleness gate as new alerts — don't send a
+                # score update for a 3-day-old backlog job; the user has moved on.
+                # Use max(max_notification_hours, 48) so a narrow max_hours setting
+                # (e.g. 2h) doesn't suppress updates for genuinely recent jobs.
+                update_max_hours = max(max_notification_hours, 48)
+                update_is_stale = False
+                date_posted = job.get("date_posted") or ""
+                if date_posted:
+                    try:
+                        posted_dt = datetime.fromisoformat(date_posted.replace("Z", "+00:00"))
+                        if len(date_posted) == 10 and "T" not in date_posted:
+                            posted_dt = posted_dt.replace(hour=23, minute=59)
+                        hours_old = (datetime.now(timezone.utc) - posted_dt).total_seconds() / 3600
+                        if hours_old > update_max_hours:
+                            update_is_stale = True
+                            _log(
+                                f"          Telegram: score update skipped — posted "
+                                f"{int(hours_old / 24)}d ago (>{update_max_hours}h). "
+                                f"Score saved in app."
+                            )
+                    except Exception:
+                        pass  # unknown date → allow update
+                if not update_is_stale:
+                    try:
+                        import telegram_notify as tg_mod
+                        job_id = job.get("job_id") or ""
+                        ok = tg_mod.send_score_update(tg_token, tg_chat, job, breakdown, job_id=job_id)
+                        if ok:
+                            _log(f"          Telegram: score update sent ({score}/10)")
+                        else:
+                            _log(f"          Telegram: score update failed — will retry next run")
+                    except Exception as exc:
+                        _log(f"          Telegram: score update error: {exc}")
 
         if score < min_score:
             dismissed += 1
