@@ -5,7 +5,7 @@
 > - Update the "Pending Tasks" section whenever something is done or added
 > - This file is the single source of truth for what exists, how it works, and what comes next
 >
-> Last updated: 2026-05-19
+> Last updated: 2026-06-01
 
 ---
 
@@ -59,8 +59,9 @@ deduplication across sources.
 | **GitHub Actions** | Cloud scanner, runs every 5 min | Yes (free public repo) | github.com |
 | **Telegram Bot** | Push alerts to phone | Yes | Message @BotFather |
 | **Ollama** | Local LLM, runs on laptop | Yes (local) | ollama.com |
+| **Groq** | Cloud LLM fallback for scoring (when Ollama is down/slow) | Yes (free tier) | console.groq.com |
 | **LinkedIn** | Job source (scraped, no API) | Uses cookie | Your browser session |
-| **Indeed** | Job source (RSS feed) | Yes | No auth needed |
+| **Indeed** | Job source (Playwright headless Chrome — RSS now 403; residential IP only) | Yes | No auth needed |
 | **Adzuna** | Job aggregator API | Free tier (50k/month) | developer.adzuna.com |
 
 **Credentials needed (stored in settings.json — never commit this file):**
@@ -124,7 +125,7 @@ project-root/
 │   ├── bayt.py                     Bayt.com scraper (UAE #1 job board, priority 2)
 │   ├── gulftalent.py               GulfTalent.com scraper (UAE, priority 3)
 │   ├── naukri_gulf.py              NaukriGulf.com scraper (UAE/MENA, priority 4)
-│   ├── indeed.py                   Indeed RSS feed scraper
+│   ├── indeed.py                   Indeed Playwright scraper (RSS now 403; skipped on GitHub Actions — datacenter IPs blocked)
 │   ├── adzuna.py                   Adzuna job API client
 │   ├── websearch.py                Web deep search (Tavily → Brave → Google → Bing)
 │   ├── gmail_scan.py               Gmail IMAP scanner (reads job alert emails)
@@ -244,6 +245,10 @@ Used for key-value storage of:
 - `setting_compact_telegram_alerts`
 - `profile_cache_text`, `profile_cache_updated_at` — LinkedIn profile 24h cache
 - `pref_few_shot_block`, `pref_few_shot_updated_at` — Phase 4 active learning cache
+- `setting_groq_api_key`, `setting_groq_model`, `setting_prefer_cloud` — Groq cloud-scoring fallback (Phase 18)
+- `worker_last_run` — heartbeat timestamp for downtime detection (Phase 17)
+- `linkedin_zero_streak`, `linkedin_cookie_alerted` — LinkedIn cookie-expiry detection state (Phase 17)
+- `setting_healthcheck_url` — optional external dead-man's-switch ping URL (Phase 17)
 
 ### RLS Policies (must be applied once in Supabase SQL editor)
 ```sql
@@ -540,6 +545,12 @@ python cloud/dedup.py --reprocess-all
 
 | # | Commit | What it does |
 |---|--------|-------------|
+| — | `cb7b4f2` | **(2026-06-01)** Enricher `--prefer-cloud` / `setting_prefer_cloud`: score via Groq directly for fast backlog clearing |
+| — | `a9a4ee9` | **(2026-06-01)** Indeed skips on GitHub Actions (datacenter IPs blocked by Cloudflare); drop pointless Chromium install from workflow |
+| — | `d5346fa` | **(2026-06-01)** Indeed: wait for `[data-jk]` job cards, not `networkidle` (fixes 30s timeouts) |
+| — | `b5429f4` | **(2026-06-01)** CI: install Playwright Chromium in job-alert workflow (later refined) |
+| — | `29169bb` | **(2026-06-01)** Merge PR #1 — worker resilience |
+| — | `f130068` | **(2026-06-01)** Worker resilience: downtime alert + LinkedIn cookie-expiry alert + Groq fallback + Indeed Playwright + relevance-engine tuning (Phases 17–19) |
 | 1 | `79ba2cc` | Tailored CV per job: enricher generates a role-specific CV draft (score >= 7); two inline buttons in Telegram: "📝 Cover Letter" + "📄 Tailored CV"; worker handles cv_ callbacks |
 | 2 | `988fae8` | Cover Letter button: every Telegram alert now has an inline "📝 Cover Letter" button; worker handles cover_ callbacks on-demand (not auto-sent) |
 | 3 | `5d348ea` | URL safety checker: validates every link before Telegram send (HTTPS only, no IP/shortener/bad-TLD, 40+ trusted-domain whitelist); strips UTM/tracking params |
@@ -936,6 +947,93 @@ Tap either → delivered to Telegram on next worker run.
 
 ---
 
+### Phase 17 — Worker Resilience (2026-06-01)
+**Problem:** When the pipeline broke, it broke *silently*. Two real incidents:
+1. The worker was off for 2 days (laptop asleep) — no jobs, no warning.
+2. The local LinkedIn cookie expired — LinkedIn returned 0 jobs for days, but
+   because Indeed kept inserting jobs, the existing `health_check.py`
+   ("0 jobs in 25h") never fired. The dead cookie went unnoticed.
+
+**Solution (all in `cloud/worker.py`):**
+- **Downtime alert** — worker writes `worker_last_run` to `bot_state` at the end
+  of every run. On the next run, if the gap exceeds 30 min (6 missed cycles) it
+  sends a Telegram alert: *"⚠️ Worker was offline for ~Xh… jobs may have been missed."*
+- **LinkedIn cookie-expiry alert** — tracks the per-run LinkedIn result total
+  across all keywords. A run-total of exactly 0 (nothing inserted/updated/seen/
+  invalid) is the signature of a dead cookie, not "no new jobs". After 3
+  consecutive empty runs it sends a one-time alert telling the user to refresh
+  `li_at`, with step-by-step instructions. Auto re-arms (`linkedin_cookie_alerted`
+  reset) once LinkedIn recovers. State in `linkedin_zero_streak`.
+- **External dead-man's switch (optional)** — if `setting_healthcheck_url` is set,
+  the worker GETs it each run so an external monitor (e.g. healthchecks.io) can
+  page if the worker stops pinging entirely.
+- **`_ENV_TO_JSON` fix** — mapped `SEARCH_LINKEDIN`, `SEARCH_INDEED`,
+  `HIDE_APPLIED` so `settings.json` toggles actually take effect (previously
+  `SearchIndeed: true` in settings.json was silently ignored).
+
+---
+
+### Phase 18 — Cloud LLM Fallback (Groq) (2026-06-01)
+**Problem:** The enricher hadn't run since ~May 21 — Ollama times out on the
+low-RAM Windows box. An **871-job backlog** of unscored jobs piled up. Without a
+fallback, each job would also waste the full 300 s Ollama timeout before failing.
+
+**Solution (all in `cloud/enricher.py`):**
+- **Groq cloud fallback** — when Ollama is unreachable or times out, scoring
+  falls back to Groq's free, OpenAI-compatible API (`llama-3.3-70b-versatile`),
+  which scores in <1 s. Graceful no-op when no key is set. Key read from
+  `setting_groq_api_key` / `GROQ_API_KEY` / `--groq-key`.
+- **`--prefer-cloud` / `setting_prefer_cloud`** — skips Ollama entirely and
+  scores via Groq directly. Essential for backlog clearing: without it, a machine
+  whose Ollama times out would burn 300 s × 871 ≈ 72 h just on timeouts.
+  **Set to `true` in Supabase** for this user (their Ollama times out).
+- **Shared `_breakdown_from_json()`** — one validated JSON parser used by both the
+  Ollama and Groq paths (no duplicated clamp/clean logic).
+- **Staleness gate on the score-update path** — previously only *new* alerts were
+  age-gated; the "score update for an already-alerted job" branch had no age check,
+  so a 4-day-old backlog job (e.g. the Parsons 7/10) still pinged Telegram. Now
+  both paths skip jobs older than `max(setting_max_hours, 48h)`.
+
+**To get a key:** console.groq.com → Create API Key (`gsk_...`) → stored in
+`bot_state.setting_groq_api_key`. Verified end-to-end: scored a real
+"Senior IT End User Specialist" 9/10.
+
+---
+
+### Phase 19 — Indeed Playwright Scraper (2026-06-01)
+**Problem:** Indeed's RSS feed now returns **HTTP 403 on all domains**
+(Cloudflare Bot Management). `cloud/indeed.py` returned 0 jobs.
+
+**Solution:**
+- Rewrote `cloud/indeed.py` to use **Playwright headless Chromium**. Loads the
+  `/jobs` search page, waits for `[data-jk]` job cards (not `networkidle`, which
+  never settles on Indeed), extracts title/company/location/age from the DOM,
+  paginates one page deep. Returns 16 jobs locally for "IT Support" in UAE.
+- **Datacenter-IP block** — Indeed serves a block page to GitHub Actions
+  (datacenter IP) while allowing residential IPs. `scrape_indeed()` detects
+  `GITHUB_ACTIONS=true` and skips Indeed instantly, so the cloud worker doesn't
+  waste ~20 s/keyword on a guaranteed-empty fetch. **Indeed is collected only by
+  the local (residential) worker.**
+- `cloud/requirements.txt` gains `playwright>=1.44.0`; `linux/setup.sh` gains
+  `playwright install --with-deps chromium`.
+
+---
+
+### Relevance Engine Tuning (2026-06-01)
+Ongoing refinements to `cloud/relevance_engine.py` from auditing 5 days of alerts:
+- Added `_IT_CORE_TERMS = {soc, noc, csirt, gsoc}` — always merged into domain
+  terms so "SOC Analyst" / "NOC Engineer" pass (security-ops roles).
+- Added `admin`, `senior` to `_KEYWORD_WORD_BLOCKLIST` (and applied the blocklist
+  to `cv_domain_terms`, not just keyword/title words) — stops "Female Admin",
+  "Senior BIM Engineer", "Senior Engagement Manager" false positives.
+- New T5 hard-reject patterns: software/web/mobile **developer** roles
+  (the user is IT support/sysadmin, not a dev), consulting (`engagement manager`,
+  `management consultant`, `strategy manager`), and many more non-IT disciplines.
+- New `T_DESC` tier — accepts a vague title when the **description** contains a
+  highly specific IT tool (Intune, SCCM, Fortinet, Veeam, etc.).
+
+---
+
 ## 9. All Bugs Encountered and Fixed
 
 | Bug | Root cause | Fix |
@@ -971,10 +1069,38 @@ Tap either → delivered to Telegram on next worker run.
 | APK infinite update loop | `tag_name = "v1.0.4-dev"` → version "1.0.4-dev" never matched app version "1.0.4" → always triggered update | Strip suffix with `.split(RegExp(r'[-+]')).first` in `update_service.dart` |
 | Web search returning listing pages (100 jobs per page) | Glassdoor/Indeed search URLs passed `_is_job_url()` because it only checked host, not URL path pattern | Added `_LISTING_PAGE_URL` + `_LISTING_PAGE_TITLE` regex to `websearch.py`; both URL and page title are checked |
 | Double Telegram alerts on some jobs | `already_sent` set was initialized inside the scan loop, not before it | Moved initialization before the keyword loop so all per-source instant alerts share the same dedup set |
+| Indeed returns 403 on RSS (all domains) | Cloudflare now blocks the RSS feed entirely | Rewrote `cloud/indeed.py` with Playwright headless Chromium (Phase 19) |
+| Indeed returns 0 on GitHub Actions | Cloudflare blocks datacenter IPs (works on residential) | Skip Indeed when `GITHUB_ACTIONS=true`; collected by local worker only |
+| `SearchIndeed: true` in settings.json ignored | `SEARCH_INDEED` missing from `_ENV_TO_JSON` map in `worker.py` | Added `SEARCH_INDEED`/`SEARCH_LINKEDIN`/`HIDE_APPLIED` to the map |
+| Dead LinkedIn cookie went unnoticed for days | `health_check.py` only fires on "0 jobs in 25h"; Indeed kept inserting so total was never 0 | Phase 17 LinkedIn-specific cookie-expiry alert (3 empty LinkedIn runs) |
+| 4-day-old job (Parsons 7/10) alerted from backlog | Staleness gate applied only to new alerts, not the enricher score-update path | Apply `max(max_hours,48h)` age gate to both alert paths |
+| 871-job enricher backlog never cleared | Ollama times out on low-RAM Windows; no fallback | Phase 18 Groq cloud fallback + `--prefer-cloud` |
+| Worker offline 2 days with no warning | No heartbeat / downtime detection | Phase 17 `worker_last_run` heartbeat + >30min gap Telegram alert |
 
 ---
 
 ## 10. Pending Tasks
+
+### 🆕 Added 2026-06-01 (Phases 17–19)
+
+- [x] **Groq cloud fallback configured** — `setting_groq_api_key` + `setting_prefer_cloud=true`
+  set in Supabase. The enricher now scores via Groq (free, <1s/job) instead of stalling on
+  Ollama timeouts.
+- [ ] **Clear the 871-job backlog** — now feasible via Groq. Run on the local (residential)
+  machine so LinkedIn descriptions fetch:
+  ```powershell
+  python cloud/enricher.py --limit 200 --prefer-cloud
+  ```
+  Bottleneck is ~40s/job for the LinkedIn description fetch (scoring itself is instant).
+  Jobs older than 48h are scored silently (no Telegram spam); recent high-scorers notify.
+- [ ] **Refresh the LOCAL LinkedIn cookie** — the cloud worker's cookie (GitHub secret) is
+  alive and delivering LinkedIn jobs 24/7. The *local* PowerShell worker's cookie is dead,
+  but that only matters for local LinkedIn scans (Indeed still works locally). Refresh it in
+  the GUI if you want the local worker doing LinkedIn too. The new Phase-17 alert will now
+  warn you whenever a cookie dies.
+- [ ] **(Optional) True 5-min cadence** — GitHub's `*/5` cron is throttled (runs land hours
+  apart under load). A free external pinger (cron-job.org → `workflow_dispatch`) gives real
+  5-min scans. Not set up yet.
 
 ### ⚠️ Must Do Now (one-time manual steps)
 
@@ -1039,7 +1165,9 @@ Tap either → delivered to Telegram on next worker run.
   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `LINKEDIN_COOKIE`, `KEYWORDS`, `LOCATION`.
   Start command is already in `railway.toml`.
 
-- [ ] **Indeed scraping fix** — RSS feed is unreliable; Adzuna API is the better fallback.
+- [x] **Indeed scraping fix** — DONE (2026-06-01). RSS now 403; replaced with Playwright
+  headless Chromium. Works locally (residential IP); skipped on GitHub Actions (datacenter
+  IPs blocked by Cloudflare), so Indeed is collected only by the local worker.
 
 - [ ] **Tailored CV in Flutter app** — `job_detail_screen.dart` currently shows cover letter card;
   add a second card for the tailored CV draft with a copy button.
