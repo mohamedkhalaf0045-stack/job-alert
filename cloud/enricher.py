@@ -556,11 +556,14 @@ def ollama_score(
     dynamic_few_shot: str = "",
     cloud_key: str = "",
     cloud_model: str = DEFAULT_CLOUD_MODEL,
+    prefer_cloud: bool = False,
 ) -> tuple[int, str, dict]:
     """Call Ollama to score a job on 4 axes + overall.
 
     Falls back to the Groq cloud API when Ollama is unreachable or times out,
-    provided a cloud_key is configured.
+    provided a cloud_key is configured.  When prefer_cloud is True and a
+    cloud_key is set, Ollama is skipped entirely and scoring goes straight to
+    Groq — much faster for clearing a large backlog.
 
     Returns (overall_score, reasoning_summary, full_breakdown_dict).
     Breakdown keys: skills_match, experience_match, location_match, seniority_match,
@@ -645,6 +648,10 @@ def ollama_score(
             _log(f"          Ollama {reason} — falling back to cloud ({cloud_model})")
             return cloud_score(prompt, cloud_key, cloud_model)
         return None
+
+    # Fast path: skip Ollama entirely and score via cloud (backlog clearing).
+    if prefer_cloud and cloud_key:
+        return cloud_score(prompt, cloud_key, cloud_model)
 
     try:
         r = requests.post(
@@ -855,6 +862,8 @@ def main() -> None:
                         help="Groq API key for cloud fallback when Ollama is down (or set GROQ_API_KEY / setting_groq_api_key)")
     parser.add_argument("--groq-model", default=DEFAULT_CLOUD_MODEL,
                         help=f"Groq model for cloud fallback (default {DEFAULT_CLOUD_MODEL})")
+    parser.add_argument("--prefer-cloud", action="store_true",
+                        help="Skip Ollama and score via Groq directly (fast backlog clearing; requires a Groq key)")
     args = parser.parse_args()
 
     global _VERBOSE, _DEBUG_PROMPT
@@ -890,8 +899,15 @@ def main() -> None:
                    or _env("GROQ_API_KEY") or args.groq_key).strip()
     cloud_model = (db.get_config(supabase_url, supabase_key, "setting_groq_model", "")
                    or args.groq_model).strip()
+    prefer_cloud = args.prefer_cloud or (
+        db.get_config(supabase_url, supabase_key, "setting_prefer_cloud", "")
+        .strip().lower() in ("true", "1", "yes", "on"))
     if cloud_key:
-        _log(f"Cloud fallback enabled (Groq, model={cloud_model})")
+        mode = "primary (Ollama skipped)" if prefer_cloud else "fallback when Ollama is down"
+        _log(f"Cloud scoring enabled (Groq, model={cloud_model}) — {mode}")
+    elif prefer_cloud:
+        _log("WARNING: --prefer-cloud set but no Groq key configured — using Ollama")
+        prefer_cloud = False
     # Priority: Supabase bot_state > settings.json MinAiScore > CLI --min-score > hardcoded default (4)
     _settings_min = _SETTINGS_JSON.get("MinAiScore")
     _fallback_min = int(_settings_min) if _settings_min is not None else args.min_score
@@ -1077,7 +1093,8 @@ def main() -> None:
 
         score, summary, breakdown = ollama_score(job, description, profile, model, ollama,
                                                   dynamic_few_shot=dynamic_few_shot,
-                                                  cloud_key=cloud_key, cloud_model=cloud_model)
+                                                  cloud_key=cloud_key, cloud_model=cloud_model,
+                                                  prefer_cloud=prefer_cloud)
 
         if score == -1:
             _log("          Scoring unavailable (Ollama down, no cloud fallback) - stopping enrichment")
