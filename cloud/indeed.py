@@ -15,6 +15,7 @@ Returns a list of job dicts in the same shape as linkedin.py / bayt.py.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from datetime import datetime, timezone, timedelta
@@ -223,6 +224,15 @@ def scrape_indeed(keyword: str, location: str, max_hours: int = 72) -> list[dict
 
     Returns job dicts filtered to ``max_hours`` age.
     """
+    # Indeed's Cloudflare protection blocks datacenter IPs (GitHub Actions,
+    # most cloud hosts) while allowing residential IPs.  Scraping from CI just
+    # burns ~20s/keyword on a block page that yields nothing.  Skip it there —
+    # Indeed is collected by the local (residential) worker instead.
+    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+        print("[Indeed] Skipped on GitHub Actions (datacenter IPs are blocked by "
+              "Cloudflare). Indeed is scraped by the local residential worker.")
+        return []
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:

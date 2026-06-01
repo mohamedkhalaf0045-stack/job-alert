@@ -32,8 +32,10 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r cloud/requirements.txt
 
-      - name: Install Playwright Chromium (for Indeed scraper)
-        run: python -m playwright install --with-deps chromium
+      # NOTE: Playwright Chromium is intentionally NOT installed here.
+      # Indeed blocks datacenter IPs, so cloud/indeed.py skips Indeed when
+      # GITHUB_ACTIONS=true. Indeed is scraped only by the local (residential)
+      # worker. Installing Chromium here would just add ~150MB/run for nothing.
 
       - name: Run job alert worker
         run: python cloud/worker.py
