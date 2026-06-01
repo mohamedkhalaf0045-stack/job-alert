@@ -1034,6 +1034,53 @@ Ongoing refinements to `cloud/relevance_engine.py` from auditing 5 days of alert
 
 ---
 
+### Phase 20 — Position-Name Matching + "Search → Think → Learn" (2026-06-01)
+**Problem:** The relevance engine matched **single words** — it split "IT Help Desk"
+into `it`/`help`/`desk` and accepted a job if *any one* appeared. That let
+"Housekeeping Desk", "Security Guard" (security), "Cloud Kitchen Manager" (cloud)
+through. The user's directive: *"don't use one keyword… search with all position
+names, not word by word… then check the description against my CV."*
+
+**The model — three stages:**
+```
+1. SEARCH → match full POSITION NAMES (title gate)   [wide, clean net]
+2. THINK  → LLM reads description, reasons vs CV       [keeps only real matches]
+3. LEARN  → applies/dismisses retrain the THINK step   [smarter over time]
+```
+
+**Stage 1 — Position-name title gate (`cloud/relevance_engine.py`, the NEW work):**
+- A title qualifies only when it contains **ALL** significant words of at least one
+  *position phrase* (order-independent). One generic word never accepts a job.
+- Position phrases come from: user keywords + **64 built-in canonical IT positions**
+  ("network administrator", "cloud engineer", "service desk", "soc analyst"…) +
+  the user's own CV job titles.
+- Normalization: `systems`≈`system`, `admin`≈`administrator`, plus token expansion
+  (`sysadmin`→system+administrator, `helpdesk`→help+desk, `m365`→microsoft+365).
+- **Every phrase requires ≥2 words** — enforces "not word by word". A bare "IT"
+  keyword contributes no phrase; "IT X" roles are covered by 2-word built-ins.
+- Removed the leaky word-by-word T1–T4 tiers. Kept T5 hard-reject (+ hospitality
+  cluster), T1P desk-compounds, and T_DESC (description IT-vocab) as a rescue when
+  the title is vague but the description is clearly IT.
+- Verified live in the cloud: "Housekeeping Desk Coordinator" → dropped; Data
+  Scientist / Head of Operations / Co-Founder (CTO) / Talent Management Specialist
+  → dropped; IT Support / System Administrator / IT Helpdesk / IT Infrastructure
+  → accepted. 49/49 regression cases pass.
+
+**Stage 2 — "Think" (already operational):** the enricher's Groq scoring reads the
+description and reasons about fit vs the CV (skills/experience/seniority) with a
+rationale. Fast (<1s via Groq, `setting_prefer_cloud=true`).
+
+**Stage 3 — "Learn" (already operational):** `cloud/preferences.py` feeds the last
+applied/dismissed jobs into the scoring prompt as few-shot examples, so the THINK
+step calibrates to the user's taste. Feedback signal = the `status` field
+(applied/dismissed/saved) set from the mobile app. *(Optional future add: Telegram
+👍/👎 buttons for one-tap feedback — not yet built.)*
+
+**Speed:** a stricter title gate means **fewer** jobs reach the LLM, and Groq scores
+in <1s — so the pipeline is both more accurate and faster than before.
+
+---
+
 ## 9. All Bugs Encountered and Fixed
 
 | Bug | Root cause | Fix |
@@ -1076,6 +1123,7 @@ Ongoing refinements to `cloud/relevance_engine.py` from auditing 5 days of alert
 | 4-day-old job (Parsons 7/10) alerted from backlog | Staleness gate applied only to new alerts, not the enricher score-update path | Apply `max(max_hours,48h)` age gate to both alert paths |
 | 871-job enricher backlog never cleared | Ollama times out on low-RAM Windows; no fallback | Phase 18 Groq cloud fallback + `--prefer-cloud` |
 | Worker offline 2 days with no warning | No heartbeat / downtime detection | Phase 17 `worker_last_run` heartbeat + >30min gap Telegram alert |
+| "Housekeeping Desk" alerted (and class of word-by-word false positives) | Engine matched single words — "IT Help Desk" → `desk` matched any "…Desk" title | Phase 20 position-name gate: title must contain ALL words of a ≥2-word position phrase |
 
 ---
 
