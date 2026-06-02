@@ -257,6 +257,13 @@ def main() -> None:
         if setting_bing:
             bing_key = setting_bing
 
+        # Blocked source domains (e.g. Jobsora) — dropped before DB insert.
+        # jobsora.com is built in; this lets the user add more via the dashboard
+        # or mobile app without a code change.
+        setting_blocked = db.get_config(supabase_url, supabase_key, "setting_blocked_domains", "")
+        if setting_blocked:
+            db.set_blocked_domains(setting_blocked)
+
     except Exception as exc:
         _log(f"Could not read Supabase settings (using env vars): {exc}")
 

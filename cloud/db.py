@@ -6,6 +6,7 @@ This avoids IPv4/IPv6 connectivity issues on GitHub Actions runners.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, urlunparse
@@ -14,6 +15,44 @@ from supabase import create_client, Client
 
 
 _client: Client | None = None
+
+
+# ── Blocked job-source domains ────────────────────────────────────────────────
+# Jobs whose URL host matches any of these are dropped in sync_jobs() before they
+# ever reach the database — so they are never alerted, never shown in the app or
+# dashboard. Jobsora is a low-signal aggregator the user does not want.
+# Extend at runtime via set_blocked_domains() (the worker loads the Supabase
+# setting_blocked_domains list) or the BLOCKED_DOMAINS env var (comma-separated).
+_BLOCKED_DOMAINS: set[str] = {"jobsora.com"}
+for _d in (os.environ.get("BLOCKED_DOMAINS", "") or "").split(","):
+    _d = _d.strip().lower().lstrip("www.")
+    if _d:
+        _BLOCKED_DOMAINS.add(_d)
+
+
+def set_blocked_domains(domains) -> None:
+    """Merge additional blocked domains (from Supabase settings) into the set.
+
+    Accepts a comma-separated string or an iterable of domain strings.
+    Always keeps the built-in defaults (e.g. jobsora.com).
+    """
+    if isinstance(domains, str):
+        domains = domains.split(",")
+    for d in (domains or []):
+        d = str(d).strip().lower().lstrip("www.")
+        if d:
+            _BLOCKED_DOMAINS.add(d)
+
+
+def _is_blocked_domain(url: str) -> bool:
+    """True if the URL's host is (or is a subdomain of) a blocked domain."""
+    try:
+        host = urlparse((url or "").strip()).netloc.lower().split(":")[0].lstrip("www.")
+    except Exception:
+        return False
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in _BLOCKED_DOMAINS)
 
 
 def _get_client(supabase_url: str, supabase_key: str) -> Client:
@@ -452,14 +491,18 @@ def update_job_enrichment(
     summary: str,
     min_score: int = 4,
     breakdown: dict | None = None,
-) -> None:
-    """Persist LLM enrichment for a job.
+) -> bool:
+    """Persist LLM enrichment for a job. Returns True on success, False on failure.
 
     If `breakdown` is provided (multi-criteria scoring, Phase 2+) the extra
     columns are included in the update. If those columns don't exist in the
     Supabase schema yet, the update is retried once without them so legacy
     deployments keep working. Run the SQL in `cloud/migrations/2026-05-13-multi-criteria.sql`
     once in Supabase to enable the full breakdown.
+
+    Callers must check the return value before sending Telegram alerts — if False,
+    llm_score was NOT saved and the job stays in get_unscored_jobs, meaning it
+    will be retried next enricher run.  Alerting on a failed save causes duplicates.
     """
     # Postgres text/jsonb columns cannot store the NUL byte ().
     # LinkedIn/Indeed scraped HTML sometimes contains stray NULs. Strip them.
@@ -490,7 +533,7 @@ def update_job_enrichment(
 
     try:
         sb.table("jobs").update(update).eq("job_id", job_id).execute()
-        return
+        return True
     except Exception as exc:
         msg = str(exc).lower()
         # PostgREST returns PGRST204 / "column ... does not exist" when the schema is older
@@ -501,11 +544,13 @@ def update_job_enrichment(
                              if k in ("description", "llm_score", "llm_summary", "status")}
             try:
                 sb.table("jobs").update(legacy_update).eq("job_id", job_id).execute()
-                return
+                return True
             except Exception as exc2:
                 print(f"[DB] update_job_enrichment (legacy retry) error for {job_id}: {exc2}")
+                return False
         else:
             print(f"[DB] update_job_enrichment error for {job_id}: {exc}")
+            return False
 
 
 def get_scores_for_urls(supabase_url: str, supabase_key: str, urls: list[str]) -> dict[str, dict]:
@@ -528,7 +573,7 @@ def get_scores_for_urls(supabase_url: str, supabase_key: str, urls: list[str]) -
 
 
 def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: str = "LinkedIn") -> dict:
-    summary: dict = {"inserted": 0, "updated": 0, "seen": 0, "invalid": 0, "new_jobs": []}
+    summary: dict = {"inserted": 0, "updated": 0, "seen": 0, "invalid": 0, "blocked": 0, "new_jobs": []}
     if not jobs:
         return summary
 
@@ -552,9 +597,16 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
 
     for job in jobs:
         job_id = _job_id(job)
-        url = _canonical_url(str(job.get("Url", "")))
+        raw_url = str(job.get("Url", ""))
+        url = _canonical_url(raw_url)
         if not job_id or not url:
             summary["invalid"] += 1
+            continue
+
+        # Blocked source domain (e.g. Jobsora) — drop before it ever hits the DB,
+        # so it is never alerted, scored, or shown in the app/dashboard.
+        if _is_blocked_domain(raw_url) or _is_blocked_domain(url):
+            summary["blocked"] = summary.get("blocked", 0) + 1
             continue
 
         title = _normalize(str(job.get("Title", "")))
