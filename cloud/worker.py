@@ -453,9 +453,15 @@ def main() -> None:
     li_run_total = 0
 
     # --- Heartbeat: detect & report worker downtime since the last run ---
-    # If the worker was off (laptop asleep, crash, etc.) the gap between
-    # worker_last_run and now will exceed the normal ~5 min cadence.  Alert the
-    # user once on resume so silent multi-hour gaps never go unnoticed again.
+    # If the worker was off (laptop asleep, crash, GitHub cron throttle) the gap
+    # between worker_last_run and now exceeds the normal ~5 min cadence.  Alert
+    # the user ONCE per gap on resume.
+    #
+    # Idempotency: two near-simultaneous runs (e.g. a scheduled run + a manual
+    # dispatch) used to both read the same stale worker_last_run and BOTH alert.
+    # Now we (a) dedupe on the stale value via worker_downtime_notified, and
+    # (b) claim worker_last_run = now immediately, so any overlapping/next run
+    # sees a fresh value and stays silent.
     if tg_token and tg_chat:
         try:
             last_run_iso = db.get_config(supabase_url, supabase_key, "worker_last_run", "")
@@ -465,14 +471,22 @@ def main() -> None:
                     last_dt = last_dt.replace(tzinfo=timezone.utc)
                 gap_min = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
                 if gap_min > 30:   # > 6 missed cycles
-                    hrs = gap_min / 60
-                    tg.send_message(
-                        tg_token, tg_chat,
-                        f"⚠️ Worker was offline for ~{hrs:.1f}h "
-                        f"(last run {last_run_iso[:16]} UTC).\n"
-                        f"Resuming now — jobs posted during the gap may have been missed.",
-                    )
-                    _log(f"Downtime detected: {gap_min:.0f} min gap since last run — user alerted")
+                    already = db.get_config(supabase_url, supabase_key, "worker_downtime_notified", "")
+                    if already != last_run_iso:
+                        # Claim this gap immediately so concurrent runs don't re-alert.
+                        db.set_config(supabase_url, supabase_key, "worker_downtime_notified", last_run_iso)
+                        db.set_config(supabase_url, supabase_key, "worker_last_run",
+                                      datetime.now(timezone.utc).isoformat())
+                        hrs = gap_min / 60
+                        tg.send_message(
+                            tg_token, tg_chat,
+                            f"⚠️ Worker was offline for ~{hrs:.1f}h "
+                            f"(last run {last_run_iso[:16]} UTC).\n"
+                            f"Resuming now — jobs posted during the gap may have been missed.",
+                        )
+                        _log(f"Downtime detected: {gap_min:.0f} min gap — user alerted (once)")
+                    else:
+                        _log(f"Downtime gap already alerted for {last_run_iso[:16]} — skipping duplicate")
         except Exception as exc:
             _log(f"Heartbeat check error (non-fatal): {exc}")
 
