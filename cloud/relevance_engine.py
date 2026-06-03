@@ -155,10 +155,21 @@ _BUILTIN_POSITIONS: tuple[str, ...] = (
     "devops engineer", "windows administrator", "linux administrator",
     "server administrator", "database administrator",
     "endpoint engineer", "endpoint administrator", "endpoint management",
-    "microsoft 365 administrator", "azure administrator", "azure engineer",
+    "microsoft 365", "microsoft 365 administrator", "azure administrator", "azure engineer",
     "identity engineer", "collaboration engineer",
     "workplace technology", "digital workplace", "end user computing", "end user support",
     "it manager", "it support manager", "infrastructure manager",
+    # IT specialist / officer / support variants (also reached by the
+    # "Information Technology" -> "it" normalization, e.g. "Information
+    # Technology Officer" -> {it, officer}).
+    "it specialist", "it officer", "it support officer", "it operations",
+    "it security", "it infrastructure", "it systems",
+    # Computer / desktop / user support (e.g. "Remote Computer User Support").
+    "computer support", "user support", "computer operator", "computer technician",
+    # Architect roles (design-level IT positions).
+    "it architect", "solution architect", "solutions architect", "systems architect",
+    "infrastructure architect", "security architect", "azure architect",
+    "enterprise architect", "data architect", "network architect",
 )
 
 
@@ -167,9 +178,14 @@ def _phrase_token_set(text: str) -> frozenset[str]:
 
     Drops stopwords + seniority/level noise; normalises plurals/variants;
     expands single tokens that stand for two words (sysadmin → system+administrator).
+    Also folds "Information Technology" / "Info Tech" → the token "it" so spelled-out
+    titles ("Information Technology Officer") match the same positions as "IT" ones.
     """
+    low = text.lower()
+    low = re.sub(r"\binformation\s+technology\b", " it ", low)
+    low = re.sub(r"\binfo(?:rmation)?\s*tech\b", " it ", low)
     out: set[str] = set()
-    for raw in re.split(r"\W+", text.lower()):
+    for raw in re.split(r"\W+", low):
         tok = re.sub(r"[^a-z0-9+#]", "", raw)
         if not tok or tok in _STOPWORDS or tok in _SENIORITY_NOISE:
             continue
