@@ -1126,6 +1126,30 @@ native tab.
 
 ---
 
+### Phase 22 — Telegram 👍/👎 Feedback Buttons (2026-06-01)
+**Problem:** The user tried to "dislike" a wrong job in Telegram, but job alerts
+only had Cover Letter / Tailored CV buttons — there was no feedback mechanism.
+A 👎 message reaction or reply was silently dropped (the worker only polls
+`callback_query` + `/status`, not message reactions). So the learning loop only
+got feedback when the user marked jobs in the mobile app.
+
+**Solution — one-tap feedback that feeds Phase 4 active learning:**
+- `telegram_notify.py`: every alert now has a second button row
+  **[👍 Good match] [👎 Not for me]** (`good_{job_id}` / `bad_{job_id}`), on both
+  `send_job_alert_with_button` (worker) and `send_score_update` (enricher).
+- `db.py`: `set_job_status(job_id, status)` helper.
+- `worker.py`: handles `good_`/`bad_` callbacks → sets status `applied` /
+  `dismissed`, answers the callback (pop-up), sends a confirmation. Since
+  `preferences.py` already reads `applied` (positive) + `dismissed` (negative)
+  as few-shot examples, the AI immediately biases similar roles up/down.
+
+So a 👎 both **removes** the job (status=dismissed) and **teaches** the scorer to
+rate similar roles lower — completing the SEARCH → THINK → LEARN loop with a
+one-tap signal. Feedback is processed on the next worker poll (~5 min, or instant
+via the dashboard's "Trigger Cloud Scan").
+
+---
+
 ## 9. All Bugs Encountered and Fixed
 
 | Bug | Root cause | Fix |
