@@ -387,6 +387,23 @@ def get_jobs_by_status(supabase_url: str, supabase_key: str, status: str,
         return []
 
 
+def set_job_status(supabase_url: str, supabase_key: str, job_id: str, status: str) -> bool:
+    """Update a single job's status (applied/dismissed/saved/new) by job_id.
+
+    Used by the Telegram 👍/👎 feedback buttons — the new status feeds the
+    Phase 4 active-learning loop (preferences.py reads applied + dismissed).
+    """
+    if not job_id or not status:
+        return False
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        sb.table("jobs").update({"status": status}).eq("job_id", job_id).execute()
+        return True
+    except Exception as exc:
+        print(f"[DB] set_job_status({job_id}, {status}) error: {exc}")
+        return False
+
+
 # ─── Phase 3: dedup helpers ────────────────────────────────────────────────
 
 def get_recent_with_embeddings(supabase_url: str, supabase_key: str,

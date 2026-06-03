@@ -335,6 +335,32 @@ def main() -> None:
                             "It will generate tailored CVs for all high-scoring jobs automatically.",
                         )
                         _log(f"Tailored CV not in DB yet for job_id={job_id} — sent instructions")
+
+                elif data.startswith("bad_") or data.startswith("good_"):
+                    # 👍 / 👎 feedback → set job status, which feeds the
+                    # Phase 4 active-learning loop (preferences.py reads
+                    # applied + dismissed to bias future scoring).
+                    is_bad  = data.startswith("bad_")
+                    job_id  = data[len("bad_"):] if is_bad else data[len("good_"):]
+                    new_status = "dismissed" if is_bad else "applied"
+                    ok = db.set_job_status(supabase_url, supabase_key, job_id, new_status)
+                    tg.answer_callback_query(
+                        tg_token, cb["callback_query_id"],
+                        text=("👎 Got it — fewer like this" if is_bad
+                              else "👍 Noted — more like this"),
+                    )
+                    if ok:
+                        tg.send_message(
+                            tg_token, cb["chat_id"],
+                            ("\U0001f44e Thanks — marked *not for me*. The AI will "
+                             "learn to score similar roles lower."
+                             if is_bad else
+                             "\U0001f44d Thanks — marked *good match*. The AI will "
+                             "learn to score similar roles higher."),
+                        )
+                        _log(f"Feedback {'👎' if is_bad else '👍'} → status={new_status} job_id={job_id}")
+                    else:
+                        _log(f"Feedback save failed for job_id={job_id}")
             # ─────────────────────────────────────────────────────────────────
 
             commands  = tg.extract_commands(updates)

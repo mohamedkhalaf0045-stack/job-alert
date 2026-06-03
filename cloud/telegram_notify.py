@@ -86,16 +86,28 @@ def send_job_alert_with_button(bot_token: str, chat_id: str, job: dict,
         "text":                    text,
         "disable_web_page_preview": False,
         "reply_markup": {
-            "inline_keyboard": [[
-                {
-                    "text":          "\U0001f4dd Cover Letter",   # 📝
-                    "callback_data": f"cover_{job_id}",
-                },
-                {
-                    "text":          "\U0001f4c4 Tailored CV",    # 📄
-                    "callback_data": f"cv_{job_id}",
-                },
-            ]]
+            "inline_keyboard": [
+                [
+                    {
+                        "text":          "\U0001f4dd Cover Letter",   # 📝
+                        "callback_data": f"cover_{job_id}",
+                    },
+                    {
+                        "text":          "\U0001f4c4 Tailored CV",    # 📄
+                        "callback_data": f"cv_{job_id}",
+                    },
+                ],
+                [
+                    {
+                        "text":          "\U0001f44d Good match",     # 👍
+                        "callback_data": f"good_{job_id}",
+                    },
+                    {
+                        "text":          "\U0001f44e Not for me",     # 👎
+                        "callback_data": f"bad_{job_id}",
+                    },
+                ],
+            ]
         },
     }
 
@@ -286,10 +298,16 @@ def send_score_update(bot_token: str, chat_id: str, job: dict, breakdown: dict,
         "text":                     text,
         "disable_web_page_preview": True,
         "reply_markup": {
-            "inline_keyboard": [[
-                {"text": "\U0001f4dd Cover Letter", "callback_data": f"cover_{job_id}"},
-                {"text": "\U0001f4c4 Tailored CV",  "callback_data": f"cv_{job_id}"},
-            ]]
+            "inline_keyboard": [
+                [
+                    {"text": "\U0001f4dd Cover Letter", "callback_data": f"cover_{job_id}"},
+                    {"text": "\U0001f4c4 Tailored CV",  "callback_data": f"cv_{job_id}"},
+                ],
+                [
+                    {"text": "\U0001f44d Good match", "callback_data": f"good_{job_id}"},
+                    {"text": "\U0001f44e Not for me", "callback_data": f"bad_{job_id}"},
+                ],
+            ]
         },
     }
     for attempt in range(1, 4):
