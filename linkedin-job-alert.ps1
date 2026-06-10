@@ -708,22 +708,33 @@ function Update-CloudLamp {
     $token = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubToken" -DefaultValue "")
     $repo  = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubRepo"  -DefaultValue "")
 
-    if (-not $token -or -not $repo) {
+    if (-not $repo) {
         $script:CloudLamp.Tag = "grey"
         $script:CloudLamp.Invalidate()
-        $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud not configured (add GitHubToken/GitHubRepo to settings.json)")
+        $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud not configured (add GitHubRepo to settings.json)")
         return
     }
 
     try {
         $url = "https://api.github.com/repos/$repo/actions/workflows/job-alert.yml/runs?per_page=1"
-        $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $url)
-        $req.Headers.Add("Authorization", "Bearer $token")
-        $req.Headers.Add("Accept", "application/vnd.github+json")
-        $resp = $script:HttpClient.SendAsync($req).GetAwaiter().GetResult()
-        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        $data = $body | ConvertFrom-Json
-        $run  = $data.workflow_runs | Select-Object -First 1
+        # A PUBLIC repo's run list is readable WITHOUT a token. Try the token first
+        # (higher rate limit); fall back to an unauthenticated request if the token
+        # is missing or revoked — so a dead token no longer greys out the lamp.
+        $run = $null
+        $tokenOptions = @()
+        if ($token) { $tokenOptions += $true }
+        $tokenOptions += $false
+        foreach ($useToken in $tokenOptions) {
+            $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $url)
+            if ($useToken) { $req.Headers.Add("Authorization", "Bearer $token") }
+            $req.Headers.Add("Accept", "application/vnd.github+json")
+            $resp = $script:HttpClient.SendAsync($req).GetAwaiter().GetResult()
+            if (-not $resp.IsSuccessStatusCode) { continue }   # 401 with a dead token -> try unauthenticated
+            $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            $data = $body | ConvertFrom-Json
+            $run  = $data.workflow_runs | Select-Object -First 1
+            if ($run) { break }
+        }
 
         if ($run) {
             $script:CloudLastRunId  = [long]$run.id
