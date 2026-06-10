@@ -131,29 +131,52 @@ def set_config(key: str, value: str) -> bool:
 
 # ── GitHub Actions helpers ────────────────────────────────────────────────────
 
+_RUNS_CACHE: dict = {"at": 0.0, "data": []}
+_RUNS_TTL = 90.0   # cache runs ~90s — stays under the 60/hr unauthenticated GitHub limit
+
+
+def _fetch_runs(limit: int, use_token: bool) -> list[dict]:
+    headers = {"Accept": "application/vnd.github+json"}
+    if use_token and GH_TOKEN:
+        headers["Authorization"] = f"Bearer {GH_TOKEN}"
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{GH_REPO}/actions/runs?per_page={limit}",
+        headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as r:
+        runs = json.loads(r.read()).get("workflow_runs", [])
+    return [{
+        "name": run.get("name", ""), "status": run.get("status", ""),
+        "conclusion": run.get("conclusion", ""), "created_at": run.get("created_at", ""),
+        "url": run.get("html_url", ""), "event": run.get("event", ""),
+    } for run in runs]
+
+
 def gh_runs(limit: int = 8) -> list[dict]:
-    if not (GH_TOKEN and GH_REPO):
+    """Recent workflow runs.
+
+    Works even when the GitHub token is missing/revoked: a PUBLIC repo's run
+    list is readable WITHOUT authentication, so we fall back to an unauthenticated
+    request on any auth failure.  Cached ~90s to stay under the unauthenticated
+    rate limit (60 req/hr).
+    """
+    if not GH_REPO:
         return []
-    try:
-        req = urllib.request.Request(
-            f"https://api.github.com/repos/{GH_REPO}/actions/runs?per_page={limit}",
-            headers={"Authorization": f"Bearer {GH_TOKEN}",
-                     "Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=12) as r:
-            runs = json.loads(r.read()).get("workflow_runs", [])
-        out = []
-        for run in runs:
-            out.append({
-                "name": run.get("name", ""),
-                "status": run.get("status", ""),
-                "conclusion": run.get("conclusion", ""),
-                "created_at": run.get("created_at", ""),
-                "url": run.get("html_url", ""),
-                "event": run.get("event", ""),
-            })
-        return out
-    except Exception:
-        return []
+    now_ts = time.time()
+    if (now_ts - _RUNS_CACHE["at"]) < _RUNS_TTL and _RUNS_CACHE["data"]:
+        return _RUNS_CACHE["data"]
+    out = []
+    for use_token in (True, False):   # try authenticated first, then public fallback
+        if use_token and not GH_TOKEN:
+            continue
+        try:
+            out = _fetch_runs(limit, use_token)
+            break
+        except Exception:
+            continue   # 401/403 with a dead token → retry unauthenticated
+    if out:
+        _RUNS_CACHE["data"] = out
+        _RUNS_CACHE["at"] = now_ts
+    return out
 
 
 def gh_dispatch(workflow: str = "job-alert.yml", ref: str = "main") -> tuple[bool, str]:
