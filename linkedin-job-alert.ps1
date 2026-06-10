@@ -142,19 +142,19 @@ function Sync-SettingsToSupabase {
     }
     $keywords = ($script:KeywordsBox.Lines | Where-Object { $_ -ne "" }) -join ","
 
+    # SECURITY: credentials (LinkedIn cookie, Telegram token/chat id, Gmail
+    # email/app password) are deliberately NOT synced. bot_state is readable
+    # with the public anon key that ships in the mobile app, so anything
+    # written here is world-readable. Cloud workers read secrets from
+    # GitHub Actions Secrets; local workers read settings.json.
     $pairs = @(
         [ordered]@{ key = "setting_keywords";           value = $keywords }
         [ordered]@{ key = "setting_location";           value = $script:CountryBox.Text.Trim() }
         [ordered]@{ key = "setting_max_hours";          value = $maxHours }
         [ordered]@{ key = "setting_search_linkedin";    value = if ($script:LinkedInCheckBox.Checked) { "true" } else { "false" } }
         [ordered]@{ key = "setting_search_indeed";      value = if ($script:IndeedCheckBox.Checked) { "true" } else { "false" } }
-        [ordered]@{ key = "setting_linkedin_cookie";    value = $script:CookieBox.Text.Trim() }
         [ordered]@{ key = "setting_exclude_keywords";   value = $script:ExcludeBox.Text.Trim() }
-        [ordered]@{ key = "setting_telegram_bot_token"; value = $script:TelegramTokenBox.Text.Trim() }
-        [ordered]@{ key = "setting_telegram_chat_id";   value = $script:TelegramChatIdBox.Text.Trim() }
         [ordered]@{ key = "setting_search_gmail";       value = if ($script:GmailCheckBox.Checked) { "true" } else { "false" } }
-        [ordered]@{ key = "setting_gmail_email";        value = $script:GmailEmailBox.Text.Trim() }
-        [ordered]@{ key = "setting_gmail_app_password"; value = $script:GmailPasswordBox.Text.Trim() }
     )
 
     $headers = @{

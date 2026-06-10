@@ -248,11 +248,20 @@ async def run(job_id: str, supabase_url: str, supabase_key: str) -> None:
         return
 
     # ── LinkedIn cookie ────────────────────────────────────────────────────
-    li_cookie = db.get_config(supabase_url, supabase_key, "setting_linkedin_cookie", "")
+    # SECURITY: env (GitHub Secrets) / settings.json only — never bot_state,
+    # which is readable with the public anon key shipped in the mobile app.
+    li_cookie = os.environ.get("LINKEDIN_COOKIE", "").strip()
     if not li_cookie:
-        _log("No LinkedIn cookie — configure it in the app Settings")
+        try:
+            with open(os.path.join(os.path.dirname(__file__), "..", "settings.json"),
+                      encoding="utf-8-sig") as f:
+                li_cookie = (json.load(f).get("LinkedInCookie") or "").strip()
+        except Exception:
+            pass
+    if not li_cookie:
+        _log("No LinkedIn cookie — set the LINKEDIN_COOKIE secret (or settings.json locally)")
         req["status"] = "failed"
-        req["result_msg"] = "No LinkedIn cookie configured. Set it in Settings."
+        req["result_msg"] = "No LinkedIn cookie configured. Set the LINKEDIN_COOKIE secret."
         db.set_config(supabase_url, supabase_key, f"apply_req_{job_id}", json.dumps(req))
         return
 

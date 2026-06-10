@@ -206,9 +206,22 @@ class SupabaseService {
     }
   }
 
+  // SECURITY: these fields are never uploaded — bot_state is readable with
+  // the public anon key that ships in this app, so anything written here is
+  // world-readable. Secrets live in GitHub Actions Secrets (cloud workers)
+  // and settings.json (desktop) only.
+  static const _secretSettingKeys = {
+    'linkedin_cookie',
+    'gmail_email',
+    'gmail_app_password',
+    'github_token',
+  };
+
   static Future<bool> saveSettings(AppSettings s) async {
     try {
-      final entries = s.toMap().entries.toList();
+      final entries = s.toMap().entries
+          .where((e) => !_secretSettingKeys.contains(e.key))
+          .toList();
       final body = jsonEncode(entries
           .map((e) => {'key': 'setting_${e.key}', 'value': e.value})
           .toList());

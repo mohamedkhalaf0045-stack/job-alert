@@ -178,18 +178,18 @@ def main() -> None:
     # These override env vars so the laptop config is always respected even
     # when the GitHub Secret is stale or missing.
     try:
+        # SECURITY: credentials (LinkedIn cookie, Telegram token/chat id,
+        # search-API keys) are intentionally NOT read from bot_state — that
+        # table is readable with the public anon key shipped in the mobile
+        # app. Secrets come from env vars (GitHub Actions Secrets) only.
         setting_kw      = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
         setting_loc     = db.get_config(supabase_url, supabase_key, "setting_location", "")
         setting_hours   = db.get_config(supabase_url, supabase_key, "setting_max_hours", "")
         setting_li      = db.get_config(supabase_url, supabase_key, "setting_search_linkedin", "")
         setting_indeed  = db.get_config(supabase_url, supabase_key, "setting_search_indeed", "")
-        setting_cookie  = db.get_config(supabase_url, supabase_key, "setting_linkedin_cookie", "")
         setting_exclude = db.get_config(supabase_url, supabase_key, "setting_exclude_keywords", "")
-        setting_tg_tok      = db.get_config(supabase_url, supabase_key, "setting_telegram_bot_token", "")
-        setting_tg_chat     = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id", "")
         setting_adzuna      = db.get_config(supabase_url, supabase_key, "setting_search_adzuna", "")
         setting_adzuna_id   = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_id", "")
-        setting_adzuna_key  = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_key", "")
         setting_min_score   = db.get_config(supabase_url, supabase_key, "setting_llm_min_score", "")
         setting_li_geoid    = db.get_config(supabase_url, supabase_key, "setting_linkedin_geoid", "")
 
@@ -217,18 +217,10 @@ def main() -> None:
 
         if setting_indeed:
             search_indeed = setting_indeed.lower() not in ("false", "0", "no", "off")
-        if setting_cookie:
-            cookie_header = setting_cookie
-        if setting_tg_tok:
-            tg_token = setting_tg_tok
-        if setting_tg_chat:
-            tg_chat = setting_tg_chat
         if setting_adzuna:
             search_adzuna = setting_adzuna.lower() not in ("false", "0", "no", "off")
         if setting_adzuna_id:
             adzuna_app_id = setting_adzuna_id
-        if setting_adzuna_key:
-            adzuna_app_key = setting_adzuna_key
         if setting_min_score:
             try:
                 min_score = int(setting_min_score)
@@ -238,24 +230,12 @@ def main() -> None:
             li_geo_id = setting_li_geoid.strip()
 
         setting_web        = db.get_config(supabase_url, supabase_key, "setting_search_web", "")
-        setting_tavily     = db.get_config(supabase_url, supabase_key, "setting_tavily_api_key", "")
-        setting_brave      = db.get_config(supabase_url, supabase_key, "setting_brave_api_key", "")
-        setting_google_key = db.get_config(supabase_url, supabase_key, "setting_google_api_key", "")
         setting_google_cx  = db.get_config(supabase_url, supabase_key, "setting_google_cx", "")
-        setting_bing       = db.get_config(supabase_url, supabase_key, "setting_bing_api_key", "")
 
         if setting_web:
             search_web = setting_web.lower() not in ("false", "0", "no", "off")
-        if setting_tavily:
-            tavily_key = setting_tavily
-        if setting_brave:
-            brave_key = setting_brave
-        if setting_google_key:
-            google_key = setting_google_key
         if setting_google_cx:
             google_cx = setting_google_cx
-        if setting_bing:
-            bing_key = setting_bing
 
         # Blocked source domains (e.g. Jobsora) — dropped before DB insert.
         # jobsora.com is built in; this lets the user add more via the dashboard

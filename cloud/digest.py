@@ -137,10 +137,8 @@ def main() -> None:
         except Exception:
             pass
 
-    # Per-user overrides from Supabase
-    if sup_url and sup_key:
-        tg_tok  = db.get_config(sup_url, sup_key, "setting_telegram_bot_token", "") or tg_tok
-        tg_chat = db.get_config(sup_url, sup_key, "setting_telegram_chat_id",   "") or tg_chat
+    # SECURITY: Telegram credentials come from env / settings.json only —
+    # never from bot_state, which is readable with the public anon key.
 
     if not sup_url or not sup_key:
         _log("ERROR: SUPABASE_URL / SUPABASE_KEY missing")

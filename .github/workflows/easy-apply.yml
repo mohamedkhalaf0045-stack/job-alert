@@ -35,7 +35,9 @@ jobs:
 
       - name: Run Easy Apply executor
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
+          # Cookie comes from Secrets now — bot_state no longer stores it
+          LINKEDIN_COOKIE: ${{ secrets.LINKEDIN_COOKIE }}
         run: |
           python cloud/apply_executor.py --job-id "${{ inputs.job_id }}"

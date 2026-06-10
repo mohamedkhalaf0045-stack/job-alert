@@ -269,7 +269,7 @@ def build_status() -> dict:
     with _cf.ThreadPoolExecutor(max_workers=10) as ex:
         f_cfg       = ex.submit(_get_configs, [
             "worker_last_run", "linkedin_zero_streak", "linkedin_cookie_alerted",
-            "setting_groq_api_key", "setting_prefer_cloud", "setting_groq_model"])
+            "setting_prefer_cloud", "setting_groq_model"])
         f_runs      = ex.submit(gh_runs, 6)
         f_total     = ex.submit(sb_count, "")
         f_unscored  = ex.submit(sb_count, "llm_score=is.null")
@@ -333,7 +333,8 @@ def build_status() -> dict:
         },
         "by_source": by_source,
         "groq": {
-            "key_set": bool(cfg.get("setting_groq_api_key", "")),
+            # Groq key lives in env only (never bot_state — world-readable)
+            "key_set": bool(os.environ.get("GROQ_API_KEY", "")),
             "prefer_cloud": cfg.get("setting_prefer_cloud", "") == "true",
             "model": cfg.get("setting_groq_model", "") or "llama-3.3-70b-versatile",
         },

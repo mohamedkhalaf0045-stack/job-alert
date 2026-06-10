@@ -3,13 +3,12 @@ import 'screens/dashboard_screen.dart';
 import 'screens/jobs_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/notification_service.dart';
-import 'services/github_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Load the GitHub PAT from Supabase so API calls work even when the APK
-  // was built without --dart-define=GITHUB_TOKEN.
-  await GitHubService.loadToken();
+  // SECURITY: the GitHub PAT comes from compile-time --dart-define only
+  // (see build-apk.yml). It is never loaded from Supabase — bot_state is
+  // readable with the public anon key, so a token stored there is public.
   runApp(const JobAlertApp());
 }
 
