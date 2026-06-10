@@ -308,14 +308,49 @@ def _spawn(name: str, args: list[str], logfile: Path) -> tuple[bool, str]:
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 
+# Only these settings may be written via the dashboard. Prevents an attacker
+# (or a stray request) from overwriting sensitive secrets — Telegram token,
+# LinkedIn cookie, API keys — through /api/settings.
+_WRITABLE_SETTINGS = frozenset({
+    "setting_keywords", "setting_location", "setting_max_hours",
+    "setting_llm_min_score", "setting_prefer_cloud", "setting_blocked_domains",
+    "setting_search_linkedin", "setting_search_indeed", "setting_search_web",
+})
+
+
+def _host_is_local(host_header: str, port: int) -> bool:
+    """True only if the Host header points at this loopback server.
+
+    Defends against DNS-rebinding / CSRF: a malicious web page can make the
+    browser send requests to 127.0.0.1:port, but it cannot forge the Host
+    header to a loopback name. Requests with any other Host are rejected.
+    """
+    host = (host_header or "").strip().lower()
+    name = host.rsplit(":", 1)[0] if ":" in host else host
+    return name in ("127.0.0.1", "localhost", "[::1]", "::1")
+
+
 class Handler(BaseHTTPRequestHandler):
+    server_version = "JobAlertDash/1.0"
+
     def log_message(self, *a):
         pass  # quiet
+
+    def _guard(self) -> bool:
+        """Reject non-loopback Host headers (DNS-rebinding / CSRF defense)."""
+        port = self.server.server_address[1]
+        if not _host_is_local(self.headers.get("Host", ""), port):
+            self._send(403, b'{"error":"forbidden: non-local Host"}')
+            return False
+        return True
 
     def _send(self, code: int, body: bytes, ctype="application/json"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        # Block embedding / cross-origin reads as defense-in-depth.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
@@ -331,6 +366,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- GET ----
     def do_GET(self):
+        if not self._guard():
+            return
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         if u.path == "/":
@@ -365,13 +402,18 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- POST ----
     def do_POST(self):
+        if not self._guard():
+            return
         u = urllib.parse.urlparse(self.path)
         b = self._body()
         if u.path == "/api/scan":
             ok, msg = gh_dispatch("job-alert.yml")
             self._json({"ok": ok, "message": msg})
         elif u.path == "/api/enrich":
-            limit = int(b.get("limit", 50))
+            try:
+                limit = max(1, min(500, int(b.get("limit", 50))))   # clamp
+            except (ValueError, TypeError):
+                limit = 50
             args = ["cloud/enricher.py", "--limit", str(limit), "--prefer-cloud"]
             ok, msg = _spawn("enricher", args, DASH_ENRICH_LOG)
             self._json({"ok": ok, "message": msg})
@@ -379,14 +421,21 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = _spawn("worker", ["cloud/worker.py"], DASH_WORKER_LOG)
             self._json({"ok": ok, "message": msg})
         elif u.path == "/api/settings":
-            saved = []
+            # Only allow known-safe keys — never let the dashboard overwrite the
+            # Telegram token, LinkedIn cookie, or API keys.
+            saved, rejected = [], []
             for key, val in (b or {}).items():
-                if set_config(key, str(val)):
+                if key in _WRITABLE_SETTINGS and set_config(key, str(val)):
                     saved.append(key)
-            self._json({"ok": True, "saved": saved})
+                else:
+                    rejected.append(key)
+            self._json({"ok": True, "saved": saved, "rejected": rejected})
         elif u.path == "/api/job":
             jid = b.get("job_id", "")
             status = b.get("status", "")
+            if status not in ("new", "applied", "dismissed", "saved"):
+                self._json({"ok": False, "message": "invalid status"}, 400)
+                return
             try:
                 _sb_request("PATCH", f"jobs?job_id=eq.{urllib.parse.quote(jid)}",
                             body={"status": status})
