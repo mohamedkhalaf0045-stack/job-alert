@@ -206,28 +206,69 @@ def _age_str(iso: str) -> str:
         return iso[:16]
 
 
-def build_status() -> dict:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    last_run = get_config("worker_last_run", "")
-    runs = gh_runs(6)
-    last_cloud = runs[0] if runs else {}
+_STATUS_CACHE: dict = {"at": 0.0, "data": None}
+_STATUS_TTL = 6.0   # seconds — the page auto-refreshes every 4s; serve cached within TTL
 
-    total      = sb_count()
-    unscored   = sb_count("llm_score=is.null")
-    scored     = total - unscored
-    sent       = sb_count("telegram_sent_at=not.is.null")
-    today_n    = sb_count(f"date_collected=gte.{today}T00:00:00Z")
-    applied    = sb_count("status=eq.applied")
-    dismissed  = sb_count("status=eq.dismissed")
 
-    by_source = {}
+def _get_configs(keys: list[str]) -> dict:
+    """Read several bot_state keys in ONE request instead of N round-trips."""
     try:
-        rows, _ = _sb_request("GET", "jobs?select=source&limit=2000&order=date_collected.desc")
-        for r in rows:
-            s = (r.get("source") or "?").split("/")[0]
-            by_source[s] = by_source.get(s, 0) + 1
+        rows, _ = _sb_request("GET", "bot_state?select=key,value&key=in.(" +
+                              ",".join(keys) + ")")
+        return {r["key"]: r["value"] for r in rows}
     except Exception:
-        pass
+        return {}
+
+
+def build_status() -> dict:
+    # Serve a recent cached snapshot so the 4s auto-refresh is instant and we
+    # don't hammer Supabase with ~13 calls every few seconds.
+    now_ts = time.time()
+    if _STATUS_CACHE["data"] is not None and (now_ts - _STATUS_CACHE["at"]) < _STATUS_TTL:
+        return _STATUS_CACHE["data"]
+
+    import concurrent.futures as _cf
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _by_source() -> dict:
+        bs: dict = {}
+        try:
+            rows, _ = _sb_request("GET", "jobs?select=source&limit=1000&order=date_collected.desc")
+            for r in rows:
+                s = (r.get("source") or "?").split("/")[0]
+                bs[s] = bs.get(s, 0) + 1
+        except Exception:
+            pass
+        return bs
+
+    # Fire every independent query concurrently — turns ~13 sequential round-trips
+    # (8-9s) into roughly one round-trip (~1s).
+    with _cf.ThreadPoolExecutor(max_workers=10) as ex:
+        f_cfg       = ex.submit(_get_configs, [
+            "worker_last_run", "linkedin_zero_streak", "linkedin_cookie_alerted",
+            "setting_groq_api_key", "setting_prefer_cloud", "setting_groq_model"])
+        f_runs      = ex.submit(gh_runs, 6)
+        f_total     = ex.submit(sb_count, "")
+        f_unscored  = ex.submit(sb_count, "llm_score=is.null")
+        f_sent      = ex.submit(sb_count, "telegram_sent_at=not.is.null")
+        f_today     = ex.submit(sb_count, f"date_collected=gte.{today}T00:00:00Z")
+        f_applied   = ex.submit(sb_count, "status=eq.applied")
+        f_dismissed = ex.submit(sb_count, "status=eq.dismissed")
+        f_source    = ex.submit(_by_source)
+
+        cfg        = f_cfg.result()
+        runs       = f_runs.result()
+        total      = f_total.result()
+        unscored   = f_unscored.result()
+        sent       = f_sent.result()
+        today_n    = f_today.result()
+        applied    = f_applied.result()
+        dismissed  = f_dismissed.result()
+        by_source  = f_source.result()
+
+    scored     = total - unscored
+    last_cloud = runs[0] if runs else {}
+    last_run   = cfg.get("worker_last_run", "")
 
     # worker health verdict
     healthy = True
@@ -241,13 +282,13 @@ def build_status() -> dict:
                 notes.append(f"Worker last ran {int(gap_min)}m ago (>30m)")
         except Exception:
             pass
-    streak = get_config("linkedin_zero_streak", "0")
-    cookie_alerted = get_config("linkedin_cookie_alerted", "") == "true"
+    streak = cfg.get("linkedin_zero_streak", "0")
+    cookie_alerted = cfg.get("linkedin_cookie_alerted", "") == "true"
     if cookie_alerted:
         healthy = False
         notes.append("LinkedIn cookie likely expired")
 
-    return {
+    status = {
         "now": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "worker_last_run": last_run,
         "worker_last_run_age": _age_str(last_run),
@@ -269,12 +310,15 @@ def build_status() -> dict:
         },
         "by_source": by_source,
         "groq": {
-            "key_set": bool(get_config("setting_groq_api_key", "")),
-            "prefer_cloud": get_config("setting_prefer_cloud", "") == "true",
-            "model": get_config("setting_groq_model", "") or "llama-3.3-70b-versatile",
+            "key_set": bool(cfg.get("setting_groq_api_key", "")),
+            "prefer_cloud": cfg.get("setting_prefer_cloud", "") == "true",
+            "model": cfg.get("setting_groq_model", "") or "llama-3.3-70b-versatile",
         },
         "procs": _proc_status(),
     }
+    _STATUS_CACHE["data"] = status
+    _STATUS_CACHE["at"] = now_ts
+    return status
 
 
 def _proc_status() -> dict:
