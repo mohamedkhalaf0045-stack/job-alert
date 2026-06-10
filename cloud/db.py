@@ -508,6 +508,7 @@ def update_job_enrichment(
     summary: str,
     min_score: int = 4,
     breakdown: dict | None = None,
+    salary: dict | None = None,
 ) -> bool:
     """Persist LLM enrichment for a job. Returns True on success, False on failure.
 
@@ -548,15 +549,27 @@ def update_job_enrichment(
             "red_flags":        _strip_nul_list(breakdown.get("red_flags")      or []),
         })
 
+    if salary:
+        # Phase 24: market-salary snapshot (run 2026-06-10-salary-insights.sql)
+        update.update({
+            "salary_min":      salary.get("min"),
+            "salary_max":      salary.get("max"),
+            "salary_avg":      salary.get("avg"),
+            "salary_currency": salary.get("currency"),
+            "salary_period":   salary.get("period"),
+            "salary_source":   salary.get("source"),
+        })
+
     try:
         sb.table("jobs").update(update).eq("job_id", job_id).execute()
         return True
     except Exception as exc:
         msg = str(exc).lower()
         # PostgREST returns PGRST204 / "column ... does not exist" when the schema is older
-        if breakdown and ("could not find" in msg or "does not exist" in msg or "schema cache" in msg or "pgrst204" in msg):
-            print(f"[DB] Phase-2 columns missing in Supabase - falling back to llm_score/llm_summary only. "
-                  f"Run cloud/migrations/2026-05-13-multi-criteria.sql to enable the breakdown.")
+        if (breakdown or salary) and ("could not find" in msg or "does not exist" in msg or "schema cache" in msg or "pgrst204" in msg):
+            print(f"[DB] Phase-2/salary columns missing in Supabase - falling back to llm_score/llm_summary only. "
+                  f"Run cloud/migrations/2026-05-13-multi-criteria.sql and "
+                  f"cloud/migrations/2026-06-10-salary-insights.sql to enable them.")
             legacy_update = {k: v for k, v in update.items()
                              if k in ("description", "llm_score", "llm_summary", "status")}
             try:
@@ -644,6 +657,18 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
             "status": _normalize(str(job.get("Status", "new"))) or "new",
         }
 
+        # Phase 24: posted salary (Adzuna provides it). Only included when
+        # present so inserts keep working on schemas without the salary
+        # migration (2026-06-10-salary-insights.sql).
+        if job.get("SalaryMin") or job.get("SalaryMax"):
+            record.update({
+                "salary_min":      job.get("SalaryMin"),
+                "salary_max":      job.get("SalaryMax"),
+                "salary_currency": job.get("SalaryCurrency") or "",
+                "salary_period":   job.get("SalaryPeriod") or "year",
+                "salary_source":   job.get("SalarySource") or "posted",
+            })
+
         # Prefer URL match; fall back to job_id match (URL format changed)
         existing = existing_by_url.get(url) or existing_by_id.get(job_id)
         if existing is None:
@@ -651,9 +676,25 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
                 sb.table("jobs").insert(record).execute()
                 summary["inserted"] += 1
                 summary["new_jobs"].append(job)
-            except Exception:
-                # Unique-constraint violation (race condition or stale cache) — treat as seen
-                summary["seen"] += 1
+            except Exception as exc:
+                msg = str(exc).lower()
+                has_salary = any(k.startswith("salary_") for k in record)
+                if has_salary and ("could not find" in msg or "does not exist" in msg
+                                   or "schema cache" in msg or "pgrst204" in msg):
+                    # Salary columns missing — retry without them so new jobs
+                    # are never dropped on a pre-migration schema.
+                    slim = {k: v for k, v in record.items() if not k.startswith("salary_")}
+                    try:
+                        sb.table("jobs").insert(slim).execute()
+                        summary["inserted"] += 1
+                        summary["new_jobs"].append(job)
+                        print("[DB] salary columns missing - run "
+                              "cloud/migrations/2026-06-10-salary-insights.sql")
+                    except Exception:
+                        summary["seen"] += 1
+                else:
+                    # Unique-constraint violation (race condition or stale cache) — treat as seen
+                    summary["seen"] += 1
         else:
             changed = (
                 existing.get("title") != record["title"]
