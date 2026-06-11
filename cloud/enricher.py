@@ -677,7 +677,7 @@ def ollama_score(
         if cloud is not None:
             return cloud
         _log(f"ERROR: Ollama at {ollama_url} {kind} - is 'ollama serve' running? "
-             f"(set setting_groq_api_key for cloud fallback)")
+             f"(set the GROQ_API_KEY env var for cloud fallback)")
         return -1, "", {}
     except Exception as exc:
         cloud = _try_cloud(f"error: {exc}")
@@ -859,7 +859,7 @@ def main() -> None:
     parser.add_argument("--analyze-cv", action="store_true",
                         help="Analyze CV and store structured profile to Supabase, then exit")
     parser.add_argument("--groq-key",   default="",
-                        help="Groq API key for cloud fallback when Ollama is down (or set GROQ_API_KEY / setting_groq_api_key)")
+                        help="Groq API key for cloud fallback when Ollama is down (or set the GROQ_API_KEY env var)")
     parser.add_argument("--groq-model", default=DEFAULT_CLOUD_MODEL,
                         help=f"Groq model for cloud fallback (default {DEFAULT_CLOUD_MODEL})")
     parser.add_argument("--prefer-cloud", action="store_true",
@@ -894,9 +894,9 @@ def main() -> None:
     model     = db.get_config(supabase_url, supabase_key, "setting_ollama_model", "") or args.model
     ollama    = db.get_config(supabase_url, supabase_key, "setting_ollama_url",   "") or args.ollama
     # Cloud LLM fallback (Groq) — used when Ollama is unreachable or times out.
-    # Priority: Supabase bot_state > env GROQ_API_KEY > CLI --groq-key.
-    cloud_key   = (db.get_config(supabase_url, supabase_key, "setting_groq_api_key", "")
-                   or _env("GROQ_API_KEY") or args.groq_key).strip()
+    # SECURITY: the key comes from env / CLI only — never from bot_state,
+    # which is readable with the public anon key shipped in the mobile app.
+    cloud_key   = (_env("GROQ_API_KEY") or args.groq_key).strip()
     cloud_model = (db.get_config(supabase_url, supabase_key, "setting_groq_model", "")
                    or args.groq_model).strip()
     prefer_cloud = args.prefer_cloud or (
@@ -946,9 +946,12 @@ def main() -> None:
     # structured CV (Supabase) > --cv arg > ProfileText > UserProfile > Supabase setting > default
     profile, profile_label = resolve_profile_with_fallback(args.cv, supabase_url, supabase_key, cookie)
 
-    # Load Telegram config for post-score alerts
-    tg_token = db.get_config(supabase_url, supabase_key, "setting_telegram_bot_token", "") or _env("TELEGRAM_BOT_TOKEN")
-    tg_chat  = db.get_config(supabase_url, supabase_key, "setting_telegram_chat_id",   "") or _env("TELEGRAM_CHAT_ID")
+    # Load Telegram config for post-score alerts.
+    # SECURITY: env / settings.json only — never bot_state, which is readable
+    # with the public anon key shipped in the mobile app.
+    _tg_cfg  = _load_settings_json()
+    tg_token = _env("TELEGRAM_BOT_TOKEN") or str(_tg_cfg.get("TelegramBotToken", "") or "").strip()
+    tg_chat  = _env("TELEGRAM_CHAT_ID")   or str(_tg_cfg.get("TelegramChatId", "") or "").strip()
     # Phase 6: optional compact alerts (score + title + URL only)
     tg_compact = (db.get_config(supabase_url, supabase_key, "setting_telegram_compact", "")
                   .strip().lower() in ("true", "1", "yes", "on"))

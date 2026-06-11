@@ -5,7 +5,7 @@
 > - Update the "Pending Tasks" section whenever something is done or added
 > - This file is the single source of truth for what exists, how it works, and what comes next
 >
-> Last updated: 2026-06-01
+> Last updated: 2026-06-10
 
 ---
 
@@ -1197,6 +1197,44 @@ via the dashboard's "Trigger Cloud Scan").
 ---
 
 ## 10. Pending Tasks
+
+### 🔒 Security-incident remediation — 2026-06-10
+
+**What happened:** secrets (GitHub PAT, Telegram token, LinkedIn cookie, …) were
+stored in Supabase `bot_state`, which is readable by the public anon key committed
+in `mobile/lib/config.dart` (public repo). GitHub auto-revoked the leaked PAT.
+Details: `Desktop\SECURITY-URGENT.md`.
+
+**Fixed in code (PR #2, branch `security/dashboard-hardening`):**
+- [x] Windows GUI / Linux GUI no longer sync the cookie, Telegram token/chat id,
+  or Gmail credentials to bot_state (non-secret settings still sync).
+- [x] Cloud workers (`worker.py`, `enricher.py`, `digest.py`, `apply_executor.py`)
+  read secrets from env (GitHub Actions Secrets) or local settings.json only —
+  never bot_state. `easy-apply.yml` now passes `LINKEDIN_COOKIE`.
+- [x] Mobile app no longer uploads `linkedin_cookie` / `gmail_*` / `github_token`
+  and no longer loads the GitHub PAT from Supabase (compile-time define only).
+- [x] Secret rows deleted from bot_state (verified gone; nothing re-writes them).
+- [x] `__pycache__` untracked + gitignored; git remote URL no longer embeds a token.
+
+**Still to do (manual, in this order):**
+- [ ] **Rotate Telegram bot token** (@BotFather → `/revoke`) → new value into
+  GitHub Secret `TELEGRAM_BOT_TOKEN` + local settings.json. Old one is public.
+- [ ] **Refresh LinkedIn cookie** (log out/in → new `li_at`) → GitHub Secret
+  `LINKEDIN_COOKIE` + local settings.json. Old one is public.
+- [ ] **New fine-grained GitHub PAT** (repo `job-alert`, Actions: read+write) →
+  GitHub Secret `GH_PAT`, settings.json `GitHubToken`, cron-job.org header.
+- [ ] **Add GitHub Secret `GROQ_API_KEY`** (rotate the old Groq key first) —
+  the enricher no longer reads it from bot_state.
+- [ ] **Run `cloud/migrations/2026-06-10-bot-state-rls-lockdown.sql`** in
+  Supabase SQL Editor, then switch GitHub Secret `SUPABASE_KEY` **and** local
+  settings.json `SupabaseKey` to the **service_role** key. (Read the migration
+  header first — the mobile app becomes read-only until the Edge Function lands.)
+- [ ] **Restart the desktop GUI/worker** — a running instance still has the old
+  sync code in memory; pressing "Save" there would re-upload secrets.
+- [ ] **Rebuild the mobile APK** (Actions → build-apk) so the phone gets the
+  no-secret-upload version.
+- [ ] (Later) Move mobile workflow-triggering + Easy Apply writes behind a
+  Supabase Edge Function so the service_role key stays server-side.
 
 ### 🆕 Added 2026-06-01 (Phases 17–19)
 

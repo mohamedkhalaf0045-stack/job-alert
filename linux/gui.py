@@ -47,14 +47,16 @@ _ENV_FILE      = _CONFIG_DIR / "settings.env"
 _LOG_FILE      = _LOG_DIR / "job-alert.log"
 
 # Keys to sync from settings.json → Supabase bot_state
+# SECURITY: credentials (LinkedIn cookie, Telegram token/chat id) are
+# deliberately NOT in this map. bot_state is readable with the public anon
+# key that ships in the mobile app, so anything synced here is
+# world-readable. Cloud workers read secrets from GitHub Actions Secrets;
+# local workers read settings.json / .env.
 _SUPABASE_SETTING_MAP = {
     "Keywords":         "setting_keywords",       # comma-joined list
     "Location":         "setting_location",
     "CustomHours":      "setting_max_hours",
     "MinAiScore":       "setting_llm_min_score",
-    "LinkedInCookie":   "setting_linkedin_cookie",
-    "TelegramBotToken": "setting_telegram_bot_token",
-    "TelegramChatId":   "setting_telegram_chat_id",
     "OllamaUrl":        "setting_ollama_url",
     "SearchLinkedIn":   "setting_search_linkedin",
     "SearchIndeed":     "setting_search_indeed",

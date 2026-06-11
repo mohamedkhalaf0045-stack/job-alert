@@ -142,19 +142,19 @@ function Sync-SettingsToSupabase {
     }
     $keywords = ($script:KeywordsBox.Lines | Where-Object { $_ -ne "" }) -join ","
 
+    # SECURITY: credentials (LinkedIn cookie, Telegram token/chat id, Gmail
+    # email/app password) are deliberately NOT synced. bot_state is readable
+    # with the public anon key that ships in the mobile app, so anything
+    # written here is world-readable. Cloud workers read secrets from
+    # GitHub Actions Secrets; local workers read settings.json.
     $pairs = @(
         [ordered]@{ key = "setting_keywords";           value = $keywords }
         [ordered]@{ key = "setting_location";           value = $script:CountryBox.Text.Trim() }
         [ordered]@{ key = "setting_max_hours";          value = $maxHours }
         [ordered]@{ key = "setting_search_linkedin";    value = if ($script:LinkedInCheckBox.Checked) { "true" } else { "false" } }
         [ordered]@{ key = "setting_search_indeed";      value = if ($script:IndeedCheckBox.Checked) { "true" } else { "false" } }
-        [ordered]@{ key = "setting_linkedin_cookie";    value = $script:CookieBox.Text.Trim() }
         [ordered]@{ key = "setting_exclude_keywords";   value = $script:ExcludeBox.Text.Trim() }
-        [ordered]@{ key = "setting_telegram_bot_token"; value = $script:TelegramTokenBox.Text.Trim() }
-        [ordered]@{ key = "setting_telegram_chat_id";   value = $script:TelegramChatIdBox.Text.Trim() }
         [ordered]@{ key = "setting_search_gmail";       value = if ($script:GmailCheckBox.Checked) { "true" } else { "false" } }
-        [ordered]@{ key = "setting_gmail_email";        value = $script:GmailEmailBox.Text.Trim() }
-        [ordered]@{ key = "setting_gmail_app_password"; value = $script:GmailPasswordBox.Text.Trim() }
     )
 
     $headers = @{
@@ -708,22 +708,33 @@ function Update-CloudLamp {
     $token = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubToken" -DefaultValue "")
     $repo  = [string](Get-SettingValue -SettingsObject $settings -Name "GitHubRepo"  -DefaultValue "")
 
-    if (-not $token -or -not $repo) {
+    if (-not $repo) {
         $script:CloudLamp.Tag = "grey"
         $script:CloudLamp.Invalidate()
-        $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud not configured (add GitHubToken/GitHubRepo to settings.json)")
+        $script:CloudLampTooltip.SetToolTip($script:CloudLamp, "Cloud not configured (add GitHubRepo to settings.json)")
         return
     }
 
     try {
         $url = "https://api.github.com/repos/$repo/actions/workflows/job-alert.yml/runs?per_page=1"
-        $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $url)
-        $req.Headers.Add("Authorization", "Bearer $token")
-        $req.Headers.Add("Accept", "application/vnd.github+json")
-        $resp = $script:HttpClient.SendAsync($req).GetAwaiter().GetResult()
-        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        $data = $body | ConvertFrom-Json
-        $run  = $data.workflow_runs | Select-Object -First 1
+        # A PUBLIC repo's run list is readable WITHOUT a token. Try the token first
+        # (higher rate limit); fall back to an unauthenticated request if the token
+        # is missing or revoked — so a dead token no longer greys out the lamp.
+        $run = $null
+        $tokenOptions = @()
+        if ($token) { $tokenOptions += $true }
+        $tokenOptions += $false
+        foreach ($useToken in $tokenOptions) {
+            $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $url)
+            if ($useToken) { $req.Headers.Add("Authorization", "Bearer $token") }
+            $req.Headers.Add("Accept", "application/vnd.github+json")
+            $resp = $script:HttpClient.SendAsync($req).GetAwaiter().GetResult()
+            if (-not $resp.IsSuccessStatusCode) { continue }   # 401 with a dead token -> try unauthenticated
+            $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            $data = $body | ConvertFrom-Json
+            $run  = $data.workflow_runs | Select-Object -First 1
+            if ($run) { break }
+        }
 
         if ($run) {
             $script:CloudLastRunId  = [long]$run.id

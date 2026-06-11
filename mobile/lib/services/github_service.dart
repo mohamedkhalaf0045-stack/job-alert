@@ -2,28 +2,17 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/cloud_status.dart';
-import 'supabase_service.dart';
 
 class GitHubService {
   static const _base = 'https://api.github.com';
 
-  // Runtime token — seeded from compile-time --dart-define, then overridden
-  // by the value stored in Supabase (setting_github_token).  Updated whenever
-  // the settings screen saves a new token.
+  // Runtime token — seeded from compile-time --dart-define (GH_PAT secret in
+  // build-apk.yml). SECURITY: it is never read from or written to Supabase —
+  // bot_state is readable with the public anon key, so a token stored there
+  // is public. (That is exactly how the original token leaked.)
   static String _token = Config.githubToken;
 
-  /// Called once at app startup. Reads setting_github_token from Supabase and
-  /// caches it so all subsequent API calls use the correct PAT.
-  static Future<void> loadToken() async {
-    try {
-      final stored = await SupabaseService.getConfigValue('setting_github_token', '');
-      if (stored.isNotEmpty) {
-        _token = stored;
-      }
-    } catch (_) {}
-  }
-
-  /// Called by the settings screen after saving a new token.
+  /// Called by the settings screen after saving a new token (in-memory only).
   static void setToken(String token) => _token = token.trim();
 
   /// Returns the headers map.  Authorization is omitted when the token is empty

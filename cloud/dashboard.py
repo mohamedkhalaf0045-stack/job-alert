@@ -131,29 +131,52 @@ def set_config(key: str, value: str) -> bool:
 
 # ── GitHub Actions helpers ────────────────────────────────────────────────────
 
+_RUNS_CACHE: dict = {"at": 0.0, "data": []}
+_RUNS_TTL = 90.0   # cache runs ~90s — stays under the 60/hr unauthenticated GitHub limit
+
+
+def _fetch_runs(limit: int, use_token: bool) -> list[dict]:
+    headers = {"Accept": "application/vnd.github+json"}
+    if use_token and GH_TOKEN:
+        headers["Authorization"] = f"Bearer {GH_TOKEN}"
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{GH_REPO}/actions/runs?per_page={limit}",
+        headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as r:
+        runs = json.loads(r.read()).get("workflow_runs", [])
+    return [{
+        "name": run.get("name", ""), "status": run.get("status", ""),
+        "conclusion": run.get("conclusion", ""), "created_at": run.get("created_at", ""),
+        "url": run.get("html_url", ""), "event": run.get("event", ""),
+    } for run in runs]
+
+
 def gh_runs(limit: int = 8) -> list[dict]:
-    if not (GH_TOKEN and GH_REPO):
+    """Recent workflow runs.
+
+    Works even when the GitHub token is missing/revoked: a PUBLIC repo's run
+    list is readable WITHOUT authentication, so we fall back to an unauthenticated
+    request on any auth failure.  Cached ~90s to stay under the unauthenticated
+    rate limit (60 req/hr).
+    """
+    if not GH_REPO:
         return []
-    try:
-        req = urllib.request.Request(
-            f"https://api.github.com/repos/{GH_REPO}/actions/runs?per_page={limit}",
-            headers={"Authorization": f"Bearer {GH_TOKEN}",
-                     "Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=12) as r:
-            runs = json.loads(r.read()).get("workflow_runs", [])
-        out = []
-        for run in runs:
-            out.append({
-                "name": run.get("name", ""),
-                "status": run.get("status", ""),
-                "conclusion": run.get("conclusion", ""),
-                "created_at": run.get("created_at", ""),
-                "url": run.get("html_url", ""),
-                "event": run.get("event", ""),
-            })
-        return out
-    except Exception:
-        return []
+    now_ts = time.time()
+    if (now_ts - _RUNS_CACHE["at"]) < _RUNS_TTL and _RUNS_CACHE["data"]:
+        return _RUNS_CACHE["data"]
+    out = []
+    for use_token in (True, False):   # try authenticated first, then public fallback
+        if use_token and not GH_TOKEN:
+            continue
+        try:
+            out = _fetch_runs(limit, use_token)
+            break
+        except Exception:
+            continue   # 401/403 with a dead token → retry unauthenticated
+    if out:
+        _RUNS_CACHE["data"] = out
+        _RUNS_CACHE["at"] = now_ts
+    return out
 
 
 def gh_dispatch(workflow: str = "job-alert.yml", ref: str = "main") -> tuple[bool, str]:
@@ -206,28 +229,69 @@ def _age_str(iso: str) -> str:
         return iso[:16]
 
 
-def build_status() -> dict:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    last_run = get_config("worker_last_run", "")
-    runs = gh_runs(6)
-    last_cloud = runs[0] if runs else {}
+_STATUS_CACHE: dict = {"at": 0.0, "data": None}
+_STATUS_TTL = 6.0   # seconds — the page auto-refreshes every 4s; serve cached within TTL
 
-    total      = sb_count()
-    unscored   = sb_count("llm_score=is.null")
-    scored     = total - unscored
-    sent       = sb_count("telegram_sent_at=not.is.null")
-    today_n    = sb_count(f"date_collected=gte.{today}T00:00:00Z")
-    applied    = sb_count("status=eq.applied")
-    dismissed  = sb_count("status=eq.dismissed")
 
-    by_source = {}
+def _get_configs(keys: list[str]) -> dict:
+    """Read several bot_state keys in ONE request instead of N round-trips."""
     try:
-        rows, _ = _sb_request("GET", "jobs?select=source&limit=2000&order=date_collected.desc")
-        for r in rows:
-            s = (r.get("source") or "?").split("/")[0]
-            by_source[s] = by_source.get(s, 0) + 1
+        rows, _ = _sb_request("GET", "bot_state?select=key,value&key=in.(" +
+                              ",".join(keys) + ")")
+        return {r["key"]: r["value"] for r in rows}
     except Exception:
-        pass
+        return {}
+
+
+def build_status() -> dict:
+    # Serve a recent cached snapshot so the 4s auto-refresh is instant and we
+    # don't hammer Supabase with ~13 calls every few seconds.
+    now_ts = time.time()
+    if _STATUS_CACHE["data"] is not None and (now_ts - _STATUS_CACHE["at"]) < _STATUS_TTL:
+        return _STATUS_CACHE["data"]
+
+    import concurrent.futures as _cf
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _by_source() -> dict:
+        bs: dict = {}
+        try:
+            rows, _ = _sb_request("GET", "jobs?select=source&limit=1000&order=date_collected.desc")
+            for r in rows:
+                s = (r.get("source") or "?").split("/")[0]
+                bs[s] = bs.get(s, 0) + 1
+        except Exception:
+            pass
+        return bs
+
+    # Fire every independent query concurrently — turns ~13 sequential round-trips
+    # (8-9s) into roughly one round-trip (~1s).
+    with _cf.ThreadPoolExecutor(max_workers=10) as ex:
+        f_cfg       = ex.submit(_get_configs, [
+            "worker_last_run", "linkedin_zero_streak", "linkedin_cookie_alerted",
+            "setting_prefer_cloud", "setting_groq_model"])
+        f_runs      = ex.submit(gh_runs, 6)
+        f_total     = ex.submit(sb_count, "")
+        f_unscored  = ex.submit(sb_count, "llm_score=is.null")
+        f_sent      = ex.submit(sb_count, "telegram_sent_at=not.is.null")
+        f_today     = ex.submit(sb_count, f"date_collected=gte.{today}T00:00:00Z")
+        f_applied   = ex.submit(sb_count, "status=eq.applied")
+        f_dismissed = ex.submit(sb_count, "status=eq.dismissed")
+        f_source    = ex.submit(_by_source)
+
+        cfg        = f_cfg.result()
+        runs       = f_runs.result()
+        total      = f_total.result()
+        unscored   = f_unscored.result()
+        sent       = f_sent.result()
+        today_n    = f_today.result()
+        applied    = f_applied.result()
+        dismissed  = f_dismissed.result()
+        by_source  = f_source.result()
+
+    scored     = total - unscored
+    last_cloud = runs[0] if runs else {}
+    last_run   = cfg.get("worker_last_run", "")
 
     # worker health verdict
     healthy = True
@@ -241,13 +305,13 @@ def build_status() -> dict:
                 notes.append(f"Worker last ran {int(gap_min)}m ago (>30m)")
         except Exception:
             pass
-    streak = get_config("linkedin_zero_streak", "0")
-    cookie_alerted = get_config("linkedin_cookie_alerted", "") == "true"
+    streak = cfg.get("linkedin_zero_streak", "0")
+    cookie_alerted = cfg.get("linkedin_cookie_alerted", "") == "true"
     if cookie_alerted:
         healthy = False
         notes.append("LinkedIn cookie likely expired")
 
-    return {
+    status = {
         "now": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "worker_last_run": last_run,
         "worker_last_run_age": _age_str(last_run),
@@ -269,12 +333,16 @@ def build_status() -> dict:
         },
         "by_source": by_source,
         "groq": {
-            "key_set": bool(get_config("setting_groq_api_key", "")),
-            "prefer_cloud": get_config("setting_prefer_cloud", "") == "true",
-            "model": get_config("setting_groq_model", "") or "llama-3.3-70b-versatile",
+            # Groq key lives in env only (never bot_state — world-readable)
+            "key_set": bool(os.environ.get("GROQ_API_KEY", "")),
+            "prefer_cloud": cfg.get("setting_prefer_cloud", "") == "true",
+            "model": cfg.get("setting_groq_model", "") or "llama-3.3-70b-versatile",
         },
         "procs": _proc_status(),
     }
+    _STATUS_CACHE["data"] = status
+    _STATUS_CACHE["at"] = now_ts
+    return status
 
 
 def _proc_status() -> dict:
@@ -308,14 +376,49 @@ def _spawn(name: str, args: list[str], logfile: Path) -> tuple[bool, str]:
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 
+# Only these settings may be written via the dashboard. Prevents an attacker
+# (or a stray request) from overwriting sensitive secrets — Telegram token,
+# LinkedIn cookie, API keys — through /api/settings.
+_WRITABLE_SETTINGS = frozenset({
+    "setting_keywords", "setting_location", "setting_max_hours",
+    "setting_llm_min_score", "setting_prefer_cloud", "setting_blocked_domains",
+    "setting_search_linkedin", "setting_search_indeed", "setting_search_web",
+})
+
+
+def _host_is_local(host_header: str, port: int) -> bool:
+    """True only if the Host header points at this loopback server.
+
+    Defends against DNS-rebinding / CSRF: a malicious web page can make the
+    browser send requests to 127.0.0.1:port, but it cannot forge the Host
+    header to a loopback name. Requests with any other Host are rejected.
+    """
+    host = (host_header or "").strip().lower()
+    name = host.rsplit(":", 1)[0] if ":" in host else host
+    return name in ("127.0.0.1", "localhost", "[::1]", "::1")
+
+
 class Handler(BaseHTTPRequestHandler):
+    server_version = "JobAlertDash/1.0"
+
     def log_message(self, *a):
         pass  # quiet
+
+    def _guard(self) -> bool:
+        """Reject non-loopback Host headers (DNS-rebinding / CSRF defense)."""
+        port = self.server.server_address[1]
+        if not _host_is_local(self.headers.get("Host", ""), port):
+            self._send(403, b'{"error":"forbidden: non-local Host"}')
+            return False
+        return True
 
     def _send(self, code: int, body: bytes, ctype="application/json"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        # Block embedding / cross-origin reads as defense-in-depth.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
@@ -331,6 +434,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- GET ----
     def do_GET(self):
+        if not self._guard():
+            return
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         if u.path == "/":
@@ -365,13 +470,18 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- POST ----
     def do_POST(self):
+        if not self._guard():
+            return
         u = urllib.parse.urlparse(self.path)
         b = self._body()
         if u.path == "/api/scan":
             ok, msg = gh_dispatch("job-alert.yml")
             self._json({"ok": ok, "message": msg})
         elif u.path == "/api/enrich":
-            limit = int(b.get("limit", 50))
+            try:
+                limit = max(1, min(500, int(b.get("limit", 50))))   # clamp
+            except (ValueError, TypeError):
+                limit = 50
             args = ["cloud/enricher.py", "--limit", str(limit), "--prefer-cloud"]
             ok, msg = _spawn("enricher", args, DASH_ENRICH_LOG)
             self._json({"ok": ok, "message": msg})
@@ -379,14 +489,21 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = _spawn("worker", ["cloud/worker.py"], DASH_WORKER_LOG)
             self._json({"ok": ok, "message": msg})
         elif u.path == "/api/settings":
-            saved = []
+            # Only allow known-safe keys — never let the dashboard overwrite the
+            # Telegram token, LinkedIn cookie, or API keys.
+            saved, rejected = [], []
             for key, val in (b or {}).items():
-                if set_config(key, str(val)):
+                if key in _WRITABLE_SETTINGS and set_config(key, str(val)):
                     saved.append(key)
-            self._json({"ok": True, "saved": saved})
+                else:
+                    rejected.append(key)
+            self._json({"ok": True, "saved": saved, "rejected": rejected})
         elif u.path == "/api/job":
             jid = b.get("job_id", "")
             status = b.get("status", "")
+            if status not in ("new", "applied", "dismissed", "saved"):
+                self._json({"ok": False, "message": "invalid status"}, 400)
+                return
             try:
                 _sb_request("PATCH", f"jobs?job_id=eq.{urllib.parse.quote(jid)}",
                             body={"status": status})

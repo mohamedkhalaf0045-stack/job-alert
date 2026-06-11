@@ -13,3 +13,8 @@ worker-crash.log
 bot_stdout.txt
 bot_stderr.txt
 startup_error.txt
+
+# Python bytecode / tool caches
+__pycache__/
+*.pyc
+.ruff_cache/
