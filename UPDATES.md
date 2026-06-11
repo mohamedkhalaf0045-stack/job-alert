@@ -1236,6 +1236,20 @@ Details: `Desktop\SECURITY-URGENT.md`.
 - [ ] (Later) Move mobile workflow-triggering + Easy Apply writes behind a
   Supabase Edge Function so the service_role key stays server-side.
 
+### 🆕 Added 2026-06-10 (Phase 25 — multiple locations)
+
+- [x] **Track several locations at once** — the location field now accepts a
+  comma-separated list, e.g. `United Arab Emirates, Egypt`. The cloud worker
+  scans every location × keyword; LinkedIn geo_id is applied only when a single
+  location is set (multi-location relies on the text location + per-location
+  filter). Windows GUI and the mobile app relabelled to show multiple are
+  allowed; the local PowerShell scan loops locations too. (Linux GUI hint
+  rides with its pending rewrite.)
+- [ ] **Sequencing:** keep `setting_location` a SINGLE value until the new
+  worker is on `main`. The old deployed worker does not split commas — setting
+  "UAE, Egypt" before the PR merges makes it search the literal string and find
+  nothing. After merge, set the comma list and restart the GUI.
+
 ### 🆕 Added 2026-06-10 (Phase 24 — salary insights)
 
 - [x] **Market salary in alerts** — every scored job's Telegram alert now shows

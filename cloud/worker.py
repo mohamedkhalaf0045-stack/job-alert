@@ -256,8 +256,23 @@ def main() -> None:
         _log(f"RelevanceEngine load error (non-fatal, using keyword-only fallback): {exc}")
         engine = relevance_engine.RelevanceEngine(keywords, set(), set(), set())
 
-    geo_info = f", geoId={li_geo_id}" if li_geo_id else " (text-location fallback — set setting_linkedin_geoid for best results)"
-    _log(f"Starting scan: {len(keywords)} keyword(s), location={location}{geo_info}, max_hours={max_hours}")
+    # Multiple locations: `location` may be a comma-separated list
+    # (e.g. "United Arab Emirates, Egypt"). Each location is searched
+    # independently for every keyword. The configured LinkedIn geo_id only
+    # makes sense for a single location, so it's applied only when there's
+    # exactly one — multi-location runs rely on the text location + the
+    # per-location _loc_filter instead.
+    locations = [loc.strip() for loc in (location or "").split(",") if loc.strip()] \
+        or [_DEFAULT_LOCATION]
+    if len(locations) == 1:
+        location_pairs = [(locations[0], li_geo_id)]
+    else:
+        location_pairs = [(loc, "") for loc in locations]
+
+    geo_info = f", geoId={li_geo_id}" if (len(locations) == 1 and li_geo_id) \
+        else " (text-location fallback — set setting_linkedin_geoid for best results)"
+    _log(f"Starting scan: {len(keywords)} keyword(s) × {len(locations)} location(s) "
+         f"[{', '.join(locations)}]{geo_info}, max_hours={max_hours}")
 
     # --- Handle pending Telegram commands (/status etc.) and cover-letter button presses ---
     if tg_token and tg_chat:
@@ -585,14 +600,21 @@ def main() -> None:
     }
     _FAIL_THRESHOLD = 2   # disable after this many consecutive zero-result attempts
 
-    for idx, keyword in enumerate(keywords):
+    # One scan per (keyword, location). `location` and `li_geo_id` are rebound
+    # each iteration — every scraper call and the _loc_filter closure already
+    # read these names, so they transparently use the current location.
+    scan_targets = [(kw, loc, geo) for (loc, geo) in location_pairs for kw in keywords]
+    for idx, (keyword, location, li_geo_id) in enumerate(scan_targets):
         if idx > 0:
-            # Fixed 1.5 s between keywords (was 2.0 + 0.5*idx → up to 7 s).
+            # Fixed 1.5 s between scans (was 2.0 + 0.5*idx → up to 7 s).
             # LinkedIn rate-limits per session, not per-IP, so a short fixed
             # delay is enough without growing linearly with keyword count.
             time.sleep(1.5)
 
-        _log(f"Scanning keyword: '{keyword}'")
+        if len(locations) > 1:
+            _log(f"Scanning keyword: '{keyword}' in '{location}'")
+        else:
+            _log(f"Scanning keyword: '{keyword}'")
 
         # --- LinkedIn ---
         if search_li:
@@ -896,11 +918,22 @@ def main() -> None:
     # --- Gmail job alert emails ---
     if search_gmail:
         try:
-            # Pass the active location so jobs from other countries are dropped
-            # before they ever reach Supabase or Telegram.
+            # Fetch unfiltered, then keep jobs matching ANY configured location
+            # (the worker may track several, e.g. UAE + Egypt) so jobs from
+            # other countries are dropped before Supabase or Telegram.
             gm_jobs = gmail_scan.scan_gmail(
-                gmail_email, gmail_password, location=location
+                gmail_email, gmail_password, location=""
             )
+            if gm_jobs:
+                before = len(gm_jobs)
+                gm_jobs = [
+                    j for j in gm_jobs
+                    if any(gmail_scan._job_location_matches(j.get("Location", ""), loc)
+                           for loc in locations)
+                ]
+                gm_loc_dropped = before - len(gm_jobs)
+                if gm_loc_dropped:
+                    _log(f"Gmail: dropped {gm_loc_dropped} job(s) outside {locations}")
             if gm_jobs:
                 gm_jobs, gm_age_dropped = _age_filter(gm_jobs, "Gmail")
                 if gm_age_dropped:
