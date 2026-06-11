@@ -1292,19 +1292,26 @@ function Invoke-JobScan {
             $allVisible = [System.Collections.Generic.List[object]]::new()
             $newIds     = [System.Collections.Generic.List[string]]::new()
 
-            $kwIndex = 0
+            # Multiple locations: $location may be comma-separated (e.g.
+            # "United Arab Emirates, Egypt"). Scan every location x keyword.
+            $locations = @($location -split ',' | ForEach-Object { $_.Trim() } |
+                Where-Object { $_ })
+            if ($locations.Count -eq 0) { $locations = @($location) }
+
+            $scanIndex = 0
+            foreach ($loc in $locations) {
             foreach ($keyword in $keywords) {
-                if ($kwIndex -gt 0) {
-                    $jitter = 3000 + ($kwIndex * 500)
+                if ($scanIndex -gt 0) {
+                    $jitter = [Math]::Min(3000 + ($scanIndex * 500), 8000)
                     Start-Sleep -Milliseconds $jitter
                 }
-                $kwIndex++
+                $scanIndex++
                 $liJobs     = @()
                 $indeedJobs = @()
 
                 if ($searchLinkedIn) {
                     $state.LogQueue.Enqueue("Checking LinkedIn '$keyword'...")
-                    $liJobs = @(Get-LinkedInJobs -Keyword $keyword -Location $location `
+                    $liJobs = @(Get-LinkedInJobs -Keyword $keyword -Location $loc `
                                 -CookieHeader $cookieHeader -HideAppliedJobs:$hideApplied `
                                 -MaxHours $maxHours)
                     $dbSync = Sync-JobsToDatabase -Jobs $liJobs -Source "LinkedIn"
@@ -1313,7 +1320,7 @@ function Invoke-JobScan {
 
                 if ($searchIndeed) {
                     $state.LogQueue.Enqueue("Checking Indeed '$keyword'...")
-                    $indeedJobs = @(Get-IndeedJobs -Keyword $keyword -Location $location -MaxHours $maxHours)
+                    $indeedJobs = @(Get-IndeedJobs -Keyword $keyword -Location $loc -MaxHours $maxHours)
                     $dbSyncI    = Sync-JobsToDatabase -Jobs $indeedJobs -Source "Indeed"
                     $state.LogQueue.Enqueue("Indeed '$keyword': +$($dbSyncI.inserted) new, $($dbSyncI.seen) known.")
                 }
@@ -1333,6 +1340,7 @@ function Invoke-JobScan {
                     }
                 }
             }
+            }   # end foreach location
 
             $deduped = @($allVisible | Group-Object Id | ForEach-Object { $_.Group[0] })
             $sorted  = @($deduped | Sort-Object `
@@ -1797,9 +1805,11 @@ $script:ExcludeBox             = New-Tb -X 12 -Y 183 -W 238 -H 26
 $script:ExcludeBox.Text        = [string](Get-SettingValue -SettingsObject $savedSettings -Name "ExcludeKeywords" -DefaultValue "")
 [void]$searchCard.Controls.Add($script:ExcludeBox)
 
-[void]$searchCard.Controls.Add((New-Lbl "Country / location" 260 31))
+[void]$searchCard.Controls.Add((New-Lbl "Countries / locations (comma-separated)" 260 31))
 $script:CountryBox      = New-Tb -X 260 -Y 49 -W 280
 $script:CountryBox.Text = [string](Get-SettingValue -SettingsObject $savedSettings -Name "Location" -DefaultValue "United Arab Emirates")
+# Multiple locations: enter several comma-separated, e.g. "United Arab Emirates, Egypt".
+# Each location is searched for every keyword (the cloud worker splits on commas too).
 [void]$searchCard.Controls.Add($script:CountryBox)
 
 [void]$searchCard.Controls.Add((New-Lbl "Posted time filter" 260 88))

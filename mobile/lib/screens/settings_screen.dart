@@ -178,8 +178,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextFormField(
             controller: _locationCtrl,
             decoration: const InputDecoration(
-              labelText: 'Location',
-              hintText: 'United Arab Emirates',
+              labelText: 'Locations',
+              hintText: 'United Arab Emirates, Egypt',
+              helperText: 'Separate multiple locations with commas',
             ),
           ),
           const SizedBox(height: 12),
