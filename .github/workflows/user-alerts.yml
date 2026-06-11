@@ -1,0 +1,56 @@
+name: user-alerts
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 min  → instant-frequency users
+    - cron: '0 * * * *'      # every hour    → digest-frequency users
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'instant | digest | all'
+        required: false
+        default: instant
+
+# Only one run at a time — prevents double-alerting if a run overruns 15 min
+concurrency:
+  group: user-alerts
+  cancel-in-progress: false
+
+jobs:
+  send-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r cloud/requirements.txt
+
+      - name: Determine alert mode
+        id: mode
+        env:
+          TRIGGER_SCHEDULE: ${{ github.event.schedule }}
+          DISPATCH_MODE:    ${{ github.event.inputs.mode }}
+        run: |
+          if [ -n "$DISPATCH_MODE" ]; then
+            echo "mode=$DISPATCH_MODE" >> $GITHUB_OUTPUT
+          elif [ "$TRIGGER_SCHEDULE" = "0 * * * *" ]; then
+            echo "mode=digest" >> $GITHUB_OUTPUT
+          else
+            echo "mode=instant" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send alerts
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          RESEND_API_KEY:     ${{ secrets.RESEND_API_KEY }}
+        run: python cloud/user_alerts.py --mode ${{ steps.mode.outputs.mode }}

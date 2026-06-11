@@ -247,6 +247,20 @@ def main() -> None:
     except Exception as exc:
         _log(f"Could not read Supabase settings (using env vars): {exc}")
 
+    # Phase 6: legacy single-user Telegram gate.
+    # Once the owner is receiving alerts via user_alerts.py (the multi-user
+    # sender), set bot_state key "setting_legacy_telegram" = "false" in the
+    # Supabase SQL Editor to stop worker.py from sending a duplicate alert.
+    # Default is "true" (backward-compatible — keeps working until explicitly
+    # disabled).
+    try:
+        _legacy_tg = db.get_config(supabase_url, supabase_key, "setting_legacy_telegram", "true")
+        if _legacy_tg.strip().lower() in ("false", "0", "no", "off"):
+            tg_chat = ""   # disables all worker.py Telegram sends
+            _log("Phase 6: legacy Telegram disabled — alerts handled by user_alerts.py")
+    except Exception:
+        pass  # keep tg_chat as-is on any error
+
     # --- Build relevance engine (CV-driven, replaces all hardcoded regex filters) ---
     try:
         engine = relevance_engine.RelevanceEngine.from_supabase(

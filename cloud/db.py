@@ -715,3 +715,207 @@ def sync_jobs(supabase_url: str, supabase_key: str, jobs: list[dict], source: st
                 summary["seen"] += 1
 
     return summary
+
+
+# ─── Multi-user per-user helpers (Phase 2+) ──────────────────────────────────
+
+def get_active_profiles(
+    supabase_url: str,
+    supabase_key: str,
+    channel: str | None = None,
+) -> list[dict]:
+    """Return merged profile + preferences for every non-paused user.
+
+    Each dict has: user_id, email, display_name, telegram_chat_id, alert_email,
+    alert_telegram, timezone, keywords, locations, exclude_keywords, min_score,
+    alert_frequency, digest_hour.
+
+    channel='email'|'telegram' narrows to users who have that channel enabled.
+    Only returns users with at least one keyword or location set.
+    """
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        prefs_resp = sb.table("user_preferences").select("*").eq("paused", False).execute()
+        prefs_by_user = {row["user_id"]: row for row in (prefs_resp.data or [])}
+        if not prefs_by_user:
+            return []
+
+        profiles_resp = (
+            sb.table("profiles")
+            .select("id,email,display_name,telegram_chat_id,alert_email,alert_telegram,timezone")
+            .in_("id", list(prefs_by_user.keys()))
+            .execute()
+        )
+
+        combined: list[dict] = []
+        for prof in (profiles_resp.data or []):
+            uid   = prof["id"]
+            prefs = prefs_by_user.get(uid, {})
+
+            if channel == "email"    and not prof.get("alert_email"):
+                continue
+            if channel == "telegram" and not prof.get("alert_telegram"):
+                continue
+
+            kw  = prefs.get("keywords")  or []
+            loc = prefs.get("locations") or []
+            if not kw and not loc:
+                continue
+
+            combined.append({
+                "user_id":          uid,
+                "email":            prof.get("email"),
+                "display_name":     prof.get("display_name"),
+                "telegram_chat_id": prof.get("telegram_chat_id"),
+                "alert_email":      prof.get("alert_email", True),
+                "alert_telegram":   prof.get("alert_telegram", False),
+                "timezone":         prof.get("timezone", "Asia/Dubai"),
+                "keywords":         kw,
+                "locations":        loc,
+                "exclude_keywords": prefs.get("exclude_keywords") or [],
+                "min_score":        prefs.get("min_score"),
+                "alert_frequency":  prefs.get("alert_frequency", "daily"),
+                "digest_hour":      prefs.get("digest_hour", 8),
+            })
+        return combined
+    except Exception as exc:
+        print(f"[DB] get_active_profiles error: {exc}")
+        return []
+
+
+def get_user_preferences(supabase_url: str, supabase_key: str, user_id: str) -> dict:
+    """Return the user_preferences row for user_id as a dict, or {} if not found."""
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("user_preferences")
+            .select("*")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        return rows[0] if rows else {}
+    except Exception as exc:
+        print(f"[DB] get_user_preferences error for {user_id}: {exc}")
+        return {}
+
+
+def get_user_matches(
+    supabase_url: str,
+    supabase_key: str,
+    user_id: str,
+    limit: int = 50,
+    before: str | None = None,
+) -> list[dict]:
+    """Call the user_jobs_feed SQL function for a user.
+
+    Returns matching jobs (filtered by the user's prefs, no dismissed/hidden)
+    ordered by date_collected desc. Each row includes `my_status`.
+    Pass `before` (ISO timestamptz) for keyset pagination.
+    """
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        params: dict = {"p_user": str(user_id), "p_limit": min(limit, 100)}
+        if before:
+            params["p_before"] = before
+        result = sb.rpc("user_jobs_feed", params).execute()
+        return result.data or []
+    except Exception as exc:
+        print(f"[DB] get_user_matches error for {user_id}: {exc}")
+        return []
+
+
+def get_last_alert_at(
+    supabase_url: str,
+    supabase_key: str,
+    user_id: str,
+    channel: str,
+) -> str | None:
+    """Return the most recent sent_at (ISO string) for a (user, channel), or None."""
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("user_alert_log")
+            .select("sent_at")
+            .eq("user_id", user_id)
+            .eq("channel", channel)
+            .order("sent_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        return rows[0]["sent_at"] if rows else None
+    except Exception as exc:
+        print(f"[DB] get_last_alert_at error for {user_id}/{channel}: {exc}")
+        return None
+
+
+def get_alerted_job_ids(
+    supabase_url: str,
+    supabase_key: str,
+    user_id: str,
+    channel: str,
+) -> set[str]:
+    """Return all job_ids already sent to a user on a channel (for dedup)."""
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("user_alert_log")
+            .select("job_id")
+            .eq("user_id", user_id)
+            .eq("channel", channel)
+            .execute()
+        )
+        return {row["job_id"] for row in (result.data or [])}
+    except Exception as exc:
+        print(f"[DB] get_alerted_job_ids error for {user_id}/{channel}: {exc}")
+        return set()
+
+
+def log_user_alert(
+    supabase_url: str,
+    supabase_key: str,
+    user_id: str,
+    job_ids: list[str],
+    channel: str,
+) -> None:
+    """Insert user_alert_log rows for each job_id. Idempotent (PK conflict = skip)."""
+    if not job_ids:
+        return
+    sb  = _get_client(supabase_url, supabase_key)
+    now = datetime.now(timezone.utc).isoformat()
+    rows = [
+        {"user_id": user_id, "job_id": jid, "channel": channel, "sent_at": now}
+        for jid in job_ids
+    ]
+    try:
+        sb.table("user_alert_log").upsert(rows, on_conflict="user_id,job_id,channel").execute()
+    except Exception as exc:
+        print(f"[DB] log_user_alert error for {user_id}/{channel}: {exc}")
+
+
+def upsert_user_interaction(
+    supabase_url: str,
+    supabase_key: str,
+    user_id: str,
+    job_id: str,
+    status: str,
+) -> bool:
+    """Upsert a row in user_job_interactions (saved/applied/dismissed/hidden).
+
+    Returns True on success, False on failure.
+    """
+    if not user_id or not job_id or not status:
+        return False
+    sb  = _get_client(supabase_url, supabase_key)
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        sb.table("user_job_interactions").upsert(
+            {"user_id": user_id, "job_id": job_id, "status": status, "updated_at": now},
+            on_conflict="user_id,job_id",
+        ).execute()
+        return True
+    except Exception as exc:
+        print(f"[DB] upsert_user_interaction error for {user_id}/{job_id}: {exc}")
+        return False

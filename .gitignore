@@ -1,5 +1,8 @@
 # Sensitive credentials — never commit these
 settings.json
+.env.local
+.env*.local
+web/.env
 
 # Runtime state files
 jobs.db
