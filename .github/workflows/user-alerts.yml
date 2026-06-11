@@ -53,4 +53,5 @@ jobs:
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           RESEND_API_KEY:     ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL:  ${{ secrets.RESEND_FROM_EMAIL }}
         run: python cloud/user_alerts.py --mode ${{ steps.mode.outputs.mode }}
