@@ -92,6 +92,11 @@ _ENV_TO_JSON: dict[str, str] = {
     "LLM_MIN_SCORE":      "MinAiScore",   # settings.json key for minimum score threshold
     "ADZUNA_APP_ID":      "AdzunaAppId",  # Phase 24: market-salary stats
     "ADZUNA_APP_KEY":     "AdzunaAppKey",
+    "NVIDIA_API_KEY":     "NvidiaApiKey",   # Phase 26: NVIDIA NIM cloud scorer
+    "GROQ_API_KEY":       "GroqApiKey",
+    "CLOUD_LLM_API_KEY":  "CloudLlmApiKey",
+    "CLOUD_LLM_BASE_URL": "CloudLlmBaseUrl",
+    "CLOUD_LLM_MODEL":    "CloudLlmModel",
 }
 
 
@@ -518,48 +523,74 @@ def _breakdown_from_json(raw: str) -> dict:
     return breakdown
 
 
-# ── Cloud LLM fallback (Groq — free, OpenAI-compatible, very fast) ─────────────
+# ── Cloud LLM scoring (OpenAI-compatible: NVIDIA NIM, Groq, …) ────────────────
 
-DEFAULT_CLOUD_MODEL = "llama-3.3-70b-versatile"
-_GROQ_ENDPOINT      = "https://api.groq.com/openai/v1/chat/completions"
+# NVIDIA NIM (build.nvidia.com) — free, OpenAI-compatible. Default provider.
+_NVIDIA_ENDPOINT     = "https://integrate.api.nvidia.com/v1/chat/completions"
+DEFAULT_NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
+# Groq — also free + OpenAI-compatible, kept for back-compat.
+_GROQ_ENDPOINT       = "https://api.groq.com/openai/v1/chat/completions"
+DEFAULT_GROQ_MODEL   = "llama-3.3-70b-versatile"
+# Back-compat alias (older CLI/help referenced DEFAULT_CLOUD_MODEL).
+DEFAULT_CLOUD_MODEL  = DEFAULT_GROQ_MODEL
+
+# Active cloud provider — configured by main(). Defaults to NVIDIA so the
+# module is usable standalone; cloud_score() reads these when base_url/provider
+# are None.
+_CLOUD_BASE_URL = _NVIDIA_ENDPOINT
+_CLOUD_PROVIDER = "NVIDIA"
 
 
 def cloud_score(prompt: str, cloud_key: str,
-                cloud_model: str = DEFAULT_CLOUD_MODEL) -> tuple[int, str, dict]:
-    """Score a job via Groq's OpenAI-compatible chat API.
+                cloud_model: str = DEFAULT_NVIDIA_MODEL,
+                base_url: str | None = None,
+                provider: str | None = None) -> tuple[int, str, dict]:
+    """Score a job via any OpenAI-compatible chat API (NVIDIA NIM, Groq, …).
 
-    Used as a fallback when the local Ollama instance is unreachable or times
-    out (the common case on a low-RAM Windows box).  Groq's free tier is fast
-    enough to clear a large backlog in minutes.
+    Used when the local Ollama instance is unreachable or times out (the common
+    case on a low-RAM Windows box), or as the primary scorer when prefer_cloud
+    is set. base_url/provider default to the module-level values configured by
+    main(). Free cloud tiers are fast enough to clear a large backlog.
 
     Returns (overall_score, reasoning, breakdown) or (-1, "", {}) on failure.
     """
     if not cloud_key:
         return -1, "", {}
-    try:
-        r = requests.post(
-            _GROQ_ENDPOINT,
-            headers={
-                "Authorization": f"Bearer {cloud_key}",
-                "Content-Type":  "application/json",
-            },
-            json={
-                "model": cloud_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-        raw = r.json()["choices"][0]["message"]["content"]
-        breakdown = _breakdown_from_json(raw)
-        if not breakdown:
+    base_url = base_url or _CLOUD_BASE_URL
+    provider = provider or _CLOUD_PROVIDER
+
+    headers = {
+        "Authorization": f"Bearer {cloud_key}",
+        "Content-Type":  "application/json",
+    }
+    base_payload = {
+        "model":       cloud_model,
+        "messages":    [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+    }
+
+    # Try strict JSON mode first; some NVIDIA NIM models reject response_format,
+    # so on a 400/422 retry once without it — the prompt already demands strict
+    # JSON and _breakdown_from_json regex-extracts the object as a safety net.
+    for use_json_mode in (True, False):
+        payload = dict(base_payload)
+        if use_json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        try:
+            r = requests.post(base_url, headers=headers, json=payload, timeout=90)
+            if use_json_mode and r.status_code in (400, 422):
+                _vlog(f"          Cloud ({provider}) rejected JSON mode — retrying without it")
+                continue
+            r.raise_for_status()
+            raw = r.json()["choices"][0]["message"]["content"]
+            breakdown = _breakdown_from_json(raw)
+            if not breakdown:
+                return -1, "", {}
+            return breakdown["overall_score"], breakdown["reasoning"], breakdown
+        except Exception as exc:
+            _log(f"Cloud-scoring ({provider}) error: {exc}")
             return -1, "", {}
-        return breakdown["overall_score"], breakdown["reasoning"], breakdown
-    except Exception as exc:
-        _log(f"Cloud-fallback (Groq) error: {exc}")
-        return -1, "", {}
+    return -1, "", {}
 
 
 def ollama_score(
@@ -695,7 +726,7 @@ def ollama_score(
         if cloud is not None:
             return cloud
         _log(f"ERROR: Ollama at {ollama_url} {kind} - is 'ollama serve' running? "
-             f"(set the GROQ_API_KEY env var for cloud fallback)")
+             f"(set NVIDIA_API_KEY — or GROQ_API_KEY — for free cloud scoring)")
         return -1, "", {}
     except Exception as exc:
         cloud = _try_cloud(f"error: {exc}")
@@ -876,12 +907,18 @@ def main() -> None:
                         help=f"Cap tailored-CV generations per run (default {DEFAULT_TAILORED_CV_PER_RUN})")
     parser.add_argument("--analyze-cv", action="store_true",
                         help="Analyze CV and store structured profile to Supabase, then exit")
+    parser.add_argument("--cloud-model", default="",
+                        help="Cloud LLM model id, overrides the provider default "
+                             "(e.g. meta/llama-3.3-70b-instruct for NVIDIA, "
+                             "llama-3.3-70b-versatile for Groq)")
     parser.add_argument("--groq-key",   default="",
-                        help="Groq API key for cloud fallback when Ollama is down (or set the GROQ_API_KEY env var)")
-    parser.add_argument("--groq-model", default=DEFAULT_CLOUD_MODEL,
-                        help=f"Groq model for cloud fallback (default {DEFAULT_CLOUD_MODEL})")
+                        help="(Back-compat) cloud API key. Prefer env vars NVIDIA_API_KEY "
+                             "(default provider), GROQ_API_KEY, or CLOUD_LLM_API_KEY; "
+                             "or settings.json NvidiaApiKey")
+    parser.add_argument("--groq-model", default="", help="(Deprecated alias for --cloud-model)")
     parser.add_argument("--prefer-cloud", action="store_true",
-                        help="Skip Ollama and score via Groq directly (fast backlog clearing; requires a Groq key)")
+                        help="Skip Ollama and score via the cloud LLM directly "
+                             "(fast backlog clearing; requires a cloud key)")
     args = parser.parse_args()
 
     global _VERBOSE, _DEBUG_PROMPT
@@ -911,24 +948,54 @@ def main() -> None:
     # Read config overrides from Supabase bot_state
     model     = db.get_config(supabase_url, supabase_key, "setting_ollama_model", "") or args.model
     ollama    = db.get_config(supabase_url, supabase_key, "setting_ollama_url",   "") or args.ollama
-    # Cloud LLM fallback (Groq) — used when Ollama is unreachable or times out.
-    # SECURITY: the key comes from env / CLI only — never from bot_state,
-    # which is readable with the public anon key shipped in the mobile app.
-    cloud_key   = (_env("GROQ_API_KEY") or args.groq_key).strip()
+    # Cloud LLM scorer — OpenAI-compatible. NVIDIA NIM (build.nvidia.com) is the
+    # default free provider; Groq still works; CLOUD_LLM_* points at any
+    # OpenAI-compatible host. SECURITY: keys come from env / settings.json / CLI
+    # only — never bot_state (world-readable via the public anon key).
+    global _CLOUD_BASE_URL, _CLOUD_PROVIDER
+    nvidia_key = _env("NVIDIA_API_KEY")
+    groq_key   = (_env("GROQ_API_KEY") or args.groq_key).strip()
+    custom_key = _env("CLOUD_LLM_API_KEY")
+    custom_url = _env("CLOUD_LLM_BASE_URL")
+    if custom_key and custom_url:
+        cloud_key, _CLOUD_BASE_URL, _CLOUD_PROVIDER = custom_key, custom_url, "custom"
+        _default_model = DEFAULT_NVIDIA_MODEL
+    elif nvidia_key:
+        cloud_key, _CLOUD_BASE_URL, _CLOUD_PROVIDER = nvidia_key, _NVIDIA_ENDPOINT, "NVIDIA"
+        _default_model = DEFAULT_NVIDIA_MODEL
+    elif groq_key:
+        cloud_key, _CLOUD_BASE_URL, _CLOUD_PROVIDER = groq_key, _GROQ_ENDPOINT, "Groq"
+        _default_model = DEFAULT_GROQ_MODEL
+    else:
+        cloud_key, _default_model = "", DEFAULT_NVIDIA_MODEL  # _CLOUD_* keep NVIDIA defaults
+
+    cloud_model = (_env("CLOUD_LLM_MODEL") or args.cloud_model or args.groq_model
+                   or db.get_config(supabase_url, supabase_key, "setting_cloud_model", "")
+                   or db.get_config(supabase_url, supabase_key, "setting_groq_model", "")
+                   or _default_model).strip()
+
     # Phase 24: Adzuna credentials for real market-salary stats (optional —
     # when missing, the scoring LLM's salary estimate is used instead)
     adzuna_app_id  = _env("ADZUNA_APP_ID")
     adzuna_app_key = _env("ADZUNA_APP_KEY")
-    cloud_model = (db.get_config(supabase_url, supabase_key, "setting_groq_model", "")
-                   or args.groq_model).strip()
-    prefer_cloud = args.prefer_cloud or (
-        db.get_config(supabase_url, supabase_key, "setting_prefer_cloud", "")
-        .strip().lower() in ("true", "1", "yes", "on"))
+
+    # prefer_cloud: explicit setting wins; otherwise default to cloud-first
+    # whenever a cloud key is configured (the local Ollama box is unreliable,
+    # so the cloud LLM is the intended engine). --prefer-cloud forces it on.
+    _pref = db.get_config(supabase_url, supabase_key, "setting_prefer_cloud", "").strip().lower()
+    if _pref in ("true", "1", "yes", "on"):
+        prefer_cloud = True
+    elif _pref in ("false", "0", "no", "off"):
+        prefer_cloud = False
+    else:
+        prefer_cloud = bool(cloud_key)
+    prefer_cloud = prefer_cloud or args.prefer_cloud
+
     if cloud_key:
         mode = "primary (Ollama skipped)" if prefer_cloud else "fallback when Ollama is down"
-        _log(f"Cloud scoring enabled (Groq, model={cloud_model}) — {mode}")
+        _log(f"Cloud scoring enabled ({_CLOUD_PROVIDER}, model={cloud_model}) — {mode}")
     elif prefer_cloud:
-        _log("WARNING: --prefer-cloud set but no Groq key configured — using Ollama")
+        _log("WARNING: --prefer-cloud set but no cloud key configured — using Ollama")
         prefer_cloud = False
     # Priority: Supabase bot_state > settings.json MinAiScore > CLI --min-score > hardcoded default (4)
     _settings_min = _SETTINGS_JSON.get("MinAiScore")

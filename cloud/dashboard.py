@@ -332,11 +332,15 @@ def build_status() -> dict:
             "sent": sent, "today": today_n, "applied": applied, "dismissed": dismissed,
         },
         "by_source": by_source,
-        "groq": {
-            # Groq key lives in env only (never bot_state — world-readable)
-            "key_set": bool(os.environ.get("GROQ_API_KEY", "")),
+        "groq": {  # cloud LLM scorer status (NVIDIA NIM by default, Groq/custom supported)
+            # Key lives in env or settings.json (never bot_state — world-readable)
+            "key_set": bool(os.environ.get("NVIDIA_API_KEY") or os.environ.get("GROQ_API_KEY")
+                            or os.environ.get("CLOUD_LLM_API_KEY")
+                            or S.get("NvidiaApiKey") or S.get("GroqApiKey")
+                            or S.get("CloudLlmApiKey")),
             "prefer_cloud": cfg.get("setting_prefer_cloud", "") == "true",
-            "model": cfg.get("setting_groq_model", "") or "llama-3.3-70b-versatile",
+            "model": cfg.get("setting_cloud_model", "") or cfg.get("setting_groq_model", "")
+                     or "meta/llama-3.3-70b-instruct",
         },
         "procs": _proc_status(),
     }
@@ -590,7 +594,7 @@ HTML = r"""<!DOCTYPE html>
       <div class="row"><span class="k">Applied / dismissed</span><span class="v" id="st-appdis">—</span></div>
     </div>
     <div class="card"><h2>AI Scoring</h2>
-      <div class="row"><span class="k">Groq key</span><span class="v" id="groq-key">—</span></div>
+      <div class="row"><span class="k">Cloud key</span><span class="v" id="groq-key">—</span></div>
       <div class="row"><span class="k">Prefer cloud</span><span class="v" id="groq-prefer">—</span></div>
       <div class="row"><span class="k">Model</span><span class="v mut" id="groq-model">—</span></div>
       <div class="row"><span class="k">Enricher</span><span class="v" id="proc-enricher">idle</span></div>
@@ -624,7 +628,7 @@ HTML = r"""<!DOCTYPE html>
       </div>
       <label>Keywords (comma-separated)</label>
       <input id="set-kw">
-      <label>Prefer cloud scoring (Groq)</label>
+      <label>Prefer cloud scoring (NVIDIA)</label>
       <select id="set-prefer"><option value="true">true</option><option value="false">false</option></select>
       <div class="btns"><button class="primary" onclick="saveSettings()">💾 Save Settings</button></div>
     </div>
@@ -645,7 +649,7 @@ HTML = r"""<!DOCTYPE html>
 let curLog='worker';
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
 async function act(url,body){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();toast(j.message||(j.ok?'Done':'Failed'));setTimeout(loadAll,1200);}catch(e){toast('Error: '+e);}}
-function enrich(){const n=prompt('How many backlog jobs to score via Groq?','50');if(n)act('/api/enrich',{limit:parseInt(n)});}
+function enrich(){const n=prompt('How many backlog jobs to score via the cloud LLM?','50');if(n)act('/api/enrich',{limit:parseInt(n)});}
 function scoreBadge(s){if(s===null||s===undefined)return '<span class="badge s-no">—</span>';const c=s>=7?'s-hi':s>=5?'s-mid':'s-lo';return '<span class="badge '+c+'">'+s+'</span>';}
 async function loadStatus(){
   try{const s=await (await fetch('/api/status')).json();

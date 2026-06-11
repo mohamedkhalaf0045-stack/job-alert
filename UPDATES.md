@@ -1236,6 +1236,33 @@ Details: `Desktop\SECURITY-URGENT.md`.
 - [ ] (Later) Move mobile workflow-triggering + Easy Apply writes behind a
   Supabase Edge Function so the service_role key stays server-side.
 
+### 🆕 Added 2026-06-10 (Phase 26 — NVIDIA powers the AI scoring)
+
+The AI job scorer (`cloud/enricher.py`) is now provider-agnostic and defaults
+to **NVIDIA NIM** (build.nvidia.com) — free, cloud-hosted, OpenAI-compatible —
+so scoring no longer depends on the flaky local Ollama box. Groq still works;
+`CLOUD_LLM_*` points at any OpenAI-compatible host.
+
+**Provider priority:** `CLOUD_LLM_API_KEY`+`CLOUD_LLM_BASE_URL` → `NVIDIA_API_KEY`
+→ `GROQ_API_KEY`. When a cloud key is present, `prefer_cloud` defaults ON (skips
+Ollama). Override with `setting_prefer_cloud` = true/false in Supabase, or the
+dashboard "Prefer cloud scoring" toggle.
+
+**Robustness:** if a NIM model rejects `response_format`, the scorer retries once
+without strict-JSON mode (the prompt already demands JSON + regex-extracts it).
+
+**To turn it on (one-time):**
+- [ ] Get a free key at **build.nvidia.com** → your profile → "API Keys" → it
+  looks like `nvapi-...`.
+- [ ] Put it in `settings.json` (gitignored, safe) as:
+  `"NvidiaApiKey": "nvapi-...."`  — the local enricher + dashboard read it.
+- [ ] (Optional) override the model: `setting_cloud_model` in Supabase, default
+  `meta/llama-3.3-70b-instruct`.
+- [ ] Restart the GUI; next auto-enrich logs `Cloud scoring enabled (NVIDIA …)`.
+- Note: cloud enrichment still runs **locally** (the GitHub Actions workflow only
+  scrapes). If you later want scoring to run server-side when your PC is off,
+  add an enrich step + `NVIDIA_API_KEY` secret to a workflow — separate task.
+
 ### 🆕 Added 2026-06-10 (Phase 25 — multiple locations)
 
 - [x] **Track several locations at once** — the location field now accepts a
