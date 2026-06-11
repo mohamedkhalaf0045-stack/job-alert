@@ -157,3 +157,93 @@ def from_ai_estimate(breakdown: dict | None) -> dict | None:
     avg = round(((mn or mx) + (mx or mn)) / 2)
     return {"avg": avg, "min": mn, "max": mx,
             "currency": cur or "AED", "period": "month", "source": "ai_estimate"}
+
+
+def _parse_estimate(raw: str) -> dict | None:
+    """Parse {"min","max","currency"} from a model JSON reply into our dict."""
+    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    if not m:
+        return None
+    try:
+        d = json.loads(m.group(0))
+    except Exception:
+        return None
+
+    def _amt(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return int(f) if 0 < f < 10_000_000 else None
+
+    mn, mx = _amt(d.get("min")), _amt(d.get("max"))
+    if not (mn or mx):
+        return None
+    if mn and mx and mn > mx:
+        mn, mx = mx, mn
+    cur = str(d.get("currency") or "").strip().upper()[:6] or "AED"
+    avg = round(((mn or mx) + (mx or mn)) / 2)
+    return {"avg": avg, "min": mn, "max": mx,
+            "currency": cur, "period": "month", "source": "ai_estimate"}
+
+
+def ai_salary_estimate(title: str, location: str, model: str, ollama_url: str,
+                       cloud_key: str = "", cloud_model: str = "",
+                       base_url: str = "") -> dict | None:
+    """Dedicated, focused salary estimate — independent of the job-scoring
+    prompt (whose few-shot examples make the model omit the salary fields).
+
+    Asks one tight question with its own example, so the model reliably
+    returns a salary. Tries the local Ollama first, then an optional
+    OpenAI-compatible cloud key. Returns the same dict shape as
+    from_ai_estimate, or None.
+    """
+    title = (title or "").strip()
+    if not title:
+        return None
+    prompt = (
+        "You estimate job salaries. Return STRICT JSON only, no prose.\n"
+        f"Job title: {title}\n"
+        f"Location: {location or 'United Arab Emirates'}\n"
+        "Give the typical MONTHLY market salary range for this role in this "
+        "location, in the LOCAL currency (UAE=AED, Egypt=EGP, Saudi=SAR, "
+        "USA=USD). Estimate from the title, seniority, and location even when "
+        "no salary is posted.\n"
+        'Format: {"min": <int>, "max": <int>, "currency": "<code>"}\n'
+        'Example: {"min": 8000, "max": 14000, "currency": "AED"}'
+    )
+
+    # 1) Local Ollama (JSON mode)
+    if ollama_url and model:
+        try:
+            r = requests.post(
+                f"{ollama_url}/api/generate",
+                json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
+                timeout=120,
+            )
+            r.raise_for_status()
+            est = _parse_estimate(r.json().get("response", ""))
+            if est:
+                return est
+        except Exception:
+            pass
+
+    # 2) Optional cloud fallback (OpenAI-compatible)
+    if cloud_key:
+        try:
+            ep = base_url or "https://api.groq.com/openai/v1/chat/completions"
+            r = requests.post(
+                ep,
+                headers={"Authorization": f"Bearer {cloud_key}",
+                         "Content-Type": "application/json"},
+                json={"model": cloud_model or "llama-3.3-70b-versatile",
+                      "messages": [{"role": "user", "content": prompt}],
+                      "temperature": 0.2,
+                      "response_format": {"type": "json_object"}},
+                timeout=60,
+            )
+            r.raise_for_status()
+            return _parse_estimate(r.json()["choices"][0]["message"]["content"])
+        except Exception:
+            return None
+    return None

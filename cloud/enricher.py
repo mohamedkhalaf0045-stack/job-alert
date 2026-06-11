@@ -1156,6 +1156,17 @@ def main() -> None:
             pass
         if not salary_info:
             salary_info = salary.from_ai_estimate(breakdown)
+        if not salary_info and score >= min_score:
+            # The scoring prompt's few-shot examples make the model omit the
+            # salary fields, so for jobs we'll actually alert, ask separately
+            # with a focused prompt. Gated on score to avoid extra LLM calls on
+            # dismissed/wrong-field jobs.
+            try:
+                salary_info = salary.ai_salary_estimate(
+                    title, job.get("location", ""), model, ollama,
+                    cloud_key=cloud_key, cloud_model=cloud_model)
+            except Exception:
+                pass
         if salary_info:
             breakdown["salary"] = salary_info
             per = "/mo" if salary_info.get("period") == "month" else "/yr"
