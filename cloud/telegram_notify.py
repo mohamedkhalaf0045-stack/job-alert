@@ -28,8 +28,78 @@ def format_message(job: dict) -> str:
         if summary:
             score_line += f" — {summary}"
         parts.append(score_line)
+    sal = salary_line(job)
+    if sal:
+        parts.append(sal)
     parts.append(url)
     return "\n".join(p for p in parts if p)
+
+
+# ── Salary line (Phase 24) ────────────────────────────────────────────────────
+
+_SALARY_LABEL = {
+    "posted":        "posted",
+    "adzuna_est":    "Adzuna est.",
+    "adzuna_market": "market avg, Adzuna",
+    "ai_estimate":   "AI estimate",
+}
+
+
+def _fmt_amount(v: float) -> str:
+    return f"{v:,.0f}"
+
+
+def _salary_fields(job: dict | None, breakdown: dict | None) -> dict | None:
+    """Normalise salary data from a job dict (scraper/DB keys) or a scoring
+    breakdown (enricher market lookup). Posted salary on the job wins."""
+    job = job or {}
+    g = lambda *names: next(
+        (job[n] for n in names if job.get(n) not in (None, "", 0)), None)
+    mn  = g("SalaryMin", "salary_min")
+    mx  = g("SalaryMax", "salary_max")
+    avg = g("SalaryAvg", "salary_avg")
+    if mn or mx or avg:
+        return {"min": mn, "max": mx, "avg": avg,
+                "currency": g("SalaryCurrency", "salary_currency") or "",
+                "period":   g("SalaryPeriod", "salary_period") or "year",
+                "source":   g("SalarySource", "salary_source") or "posted"}
+    s = (breakdown or {}).get("salary")
+    return s if isinstance(s, dict) and (s.get("min") or s.get("max") or s.get("avg")) else None
+
+
+def salary_line(job: dict | None = None, breakdown: dict | None = None,
+                compact: bool = False) -> str:
+    """One-line salary info for Telegram alerts; '' when nothing is known.
+
+    Monthly figures are shown regardless of source period (Adzuna amounts are
+    annualised, so they are divided by 12)."""
+    s = _salary_fields(job, breakdown)
+    if not s:
+        return ""
+    try:
+        div = 12.0 if (s.get("period") or "year") == "year" else 1.0
+        cur = (s.get("currency") or "").strip()
+        mn, mx, avg = s.get("min"), s.get("max"), s.get("avg")
+        label = _SALARY_LABEL.get(s.get("source") or "", s.get("source") or "")
+
+        if compact:
+            v = avg if avg else (((mn or mx) + (mx or mn)) / 2 if (mn or mx) else None)
+            if not v:
+                return ""
+            return f"💰 ~{cur} {float(v) / div / 1000:.1f}k/mo".strip()
+
+        if mn and mx:
+            rng = f"{cur} {_fmt_amount(float(mn) / div)}–{_fmt_amount(float(mx) / div)}/mo"
+        elif avg:
+            rng = f"~{cur} {_fmt_amount(float(avg) / div)}/mo"
+        elif mn or mx:
+            rng = f"~{cur} {_fmt_amount(float(mn or mx) / div)}/mo"
+        else:
+            return ""
+        head = "Salary" if s.get("source") == "posted" else "Market salary"
+        return f"💰 {head}: {rng}".strip() + (f" ({label})" if label else "")
+    except (TypeError, ValueError):
+        return ""
 
 
 def send_message(bot_token: str, chat_id: str, text: str) -> bool:
@@ -206,6 +276,9 @@ def format_score_alert(job: dict, breakdown: dict, compact: bool = False) -> str
         if company:
             head += f"  @  {company}"
         lines = [head]
+        sal = salary_line(job, breakdown, compact=True)
+        if sal:
+            lines.append(sal)
         if url:
             lines.append(url)
         return "\n".join(lines)
@@ -232,6 +305,10 @@ def format_score_alert(job: dict, breakdown: dict, compact: bool = False) -> str
     if matched: parts.append("Matched: "  + ", ".join(matched[:5]))
     if missing: parts.append("Missing: "  + ", ".join(missing[:5]))
     if flags:   parts.append("Flags: "    + " | ".join(flags[:3]))
+
+    sal = salary_line(job, breakdown)
+    if sal:
+        parts.append(sal)
 
     reasoning = (breakdown.get("reasoning") or "").strip()
     if reasoning:
@@ -279,6 +356,10 @@ def send_score_update(bot_token: str, chat_id: str, job: dict, breakdown: dict,
         lines.append("Matched: " + ", ".join(matched[:5]))
     if missing:
         lines.append("Missing: " + ", ".join(missing[:4]))
+
+    sal = salary_line(job, breakdown)
+    if sal:
+        lines.append(sal)
 
     flags = breakdown.get("red_flags") or []
     if flags:

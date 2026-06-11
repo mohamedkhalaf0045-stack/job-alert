@@ -32,6 +32,7 @@ import linkedin as li
 import preferences
 import cv_analyzer
 import relevance_engine
+import salary
 
 DEFAULT_PROFILE = (
     "IT Support Engineer / System Administrator with 3-5 years experience in UAE. "
@@ -89,6 +90,8 @@ _ENV_TO_JSON: dict[str, str] = {
     "TELEGRAM_CHAT_ID":   "TelegramChatId",
     "LINKEDIN_COOKIE":    "LinkedInCookie",
     "LLM_MIN_SCORE":      "MinAiScore",   # settings.json key for minimum score threshold
+    "ADZUNA_APP_ID":      "AdzunaAppId",  # Phase 24: market-salary stats
+    "ADZUNA_APP_KEY":     "AdzunaAppKey",
 }
 
 
@@ -500,6 +503,18 @@ def _breakdown_from_json(raw: str) -> dict:
         ]
         weighted = sum(v * w for v, w in axes)
         breakdown["overall_score"] = _clamp_int(round(weighted))
+
+    # Phase 24: optional market-salary estimate (used when Adzuna has no data)
+    def _sal_amount(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return int(f) if 0 < f < 10_000_000 else None
+    breakdown["salary_est_min_monthly"] = _sal_amount(data.get("salary_est_min_monthly"))
+    breakdown["salary_est_max_monthly"] = _sal_amount(data.get("salary_est_max_monthly"))
+    cur = str(data.get("salary_est_currency") or "").strip().upper()
+    breakdown["salary_est_currency"] = cur[:6] if cur.isalpha() else ""
     return breakdown
 
 
@@ -625,7 +640,10 @@ def ollama_score(
         '  "matched_skills":   [<short strings>],  // ONLY skills that appear in BOTH the job description AND the candidate profile. Do NOT list candidate skills that are absent from the job description.\n'
         '  "missing_skills":   [<short strings>],  // up to 5 skills the job requires but the candidate lacks\n'
         '  "red_flags":        [<short strings>],  // up to 3 hard blockers (wrong field, language req, nationals only, etc.)\n'
-        '  "reasoning":        "<one sentence explaining the overall_score>"\n'
+        '  "reasoning":        "<one sentence explaining the overall_score>",\n'
+        '  "salary_est_min_monthly": <int or null>,  // typical LOW monthly salary for this exact title+seniority in the job\'s location market, local currency (null if unknown)\n'
+        '  "salary_est_max_monthly": <int or null>,  // typical HIGH monthly salary for the same role/market\n'
+        '  "salary_est_currency":    "<currency code of the estimate, e.g. AED, EGP, USD>"\n'
         "}\n\n"
         f"{_FEW_SHOT_EXAMPLES}"
         f"{dynamic_few_shot}"
@@ -897,6 +915,10 @@ def main() -> None:
     # SECURITY: the key comes from env / CLI only — never from bot_state,
     # which is readable with the public anon key shipped in the mobile app.
     cloud_key   = (_env("GROQ_API_KEY") or args.groq_key).strip()
+    # Phase 24: Adzuna credentials for real market-salary stats (optional —
+    # when missing, the scoring LLM's salary estimate is used instead)
+    adzuna_app_id  = _env("ADZUNA_APP_ID")
+    adzuna_app_key = _env("ADZUNA_APP_KEY")
     cloud_model = (db.get_config(supabase_url, supabase_key, "setting_groq_model", "")
                    or args.groq_model).strip()
     prefer_cloud = args.prefer_cloud or (
@@ -1122,11 +1144,30 @@ def main() -> None:
         if breakdown.get("red_flags"):
             _log(f"          Red flags: {' | '.join(breakdown['red_flags'])}")
 
+        # Phase 24: average market salary for this title — Adzuna statistics
+        # first (real market data, cached 30 days in bot_state), the scoring
+        # LLM's estimate as fallback. Attached to the breakdown so the
+        # Telegram alert can show it, and persisted on the job row.
+        salary_info = None
+        try:
+            salary_info = salary.get_market_salary(
+                title, adzuna_app_id, adzuna_app_key, supabase_url, supabase_key)
+        except Exception:
+            pass
+        if not salary_info:
+            salary_info = salary.from_ai_estimate(breakdown)
+        if salary_info:
+            breakdown["salary"] = salary_info
+            per = "/mo" if salary_info.get("period") == "month" else "/yr"
+            _log(f"          Market salary ({salary_info['source']}): "
+                 f"{salary_info.get('currency', '')} {salary_info.get('avg')}{per}")
+
         saved = db.update_job_enrichment(
             supabase_url, supabase_key,
             job["job_id"], description, score, summary,
             min_score=min_score,
             breakdown=breakdown,
+            salary=salary_info,
         )
 
         if not saved:

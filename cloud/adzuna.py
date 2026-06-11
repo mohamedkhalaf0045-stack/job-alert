@@ -108,7 +108,7 @@ def scrape_adzuna(
 
             posted_date, posted_text = _parse_age(r.get("created") or "")
 
-            jobs.append({
+            job = {
                 "Id":         job_id,
                 "Keyword":    keyword,
                 "Title":      title,
@@ -119,7 +119,24 @@ def scrape_adzuna(
                 "PostedText": posted_text,
                 "IsApplied":  False,
                 "Source":     "Adzuna",
-            })
+            }
+
+            # Phase 24: Adzuna includes the advertised salary (annualised AED).
+            # salary_is_predicted == "1" means Adzuna estimated it from the ad
+            # text rather than the employer posting it explicitly.
+            sal_min, sal_max = r.get("salary_min"), r.get("salary_max")
+            if sal_min or sal_max:
+                predicted = str(r.get("salary_is_predicted") or "0").strip() in ("1", "true")
+                try:
+                    job["SalaryMin"] = round(float(sal_min)) if sal_min else None
+                    job["SalaryMax"] = round(float(sal_max)) if sal_max else None
+                    job["SalaryCurrency"] = "AED"
+                    job["SalaryPeriod"]   = "year"
+                    job["SalarySource"]   = "adzuna_est" if predicted else "posted"
+                except (TypeError, ValueError):
+                    pass
+
+            jobs.append(job)
 
         if len(raw_jobs) < _RESULTS_PER_PAGE:
             break

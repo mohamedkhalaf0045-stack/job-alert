@@ -1236,6 +1236,21 @@ Details: `Desktop\SECURITY-URGENT.md`.
 - [ ] (Later) Move mobile workflow-triggering + Easy Apply writes behind a
   Supabase Edge Function so the service_role key stays server-side.
 
+### 🆕 Added 2026-06-10 (Phase 24 — salary insights)
+
+- [x] **Market salary in alerts** — every scored job's Telegram alert now shows
+  a line like `💰 Market salary: ~AED 9,500/mo (market avg, Adzuna)`. Sources,
+  in priority order: salary posted in the ad (Adzuna scraper captures it) →
+  Adzuna salary statistics for the title (real market data, cached 30 days in
+  bot_state) → the scoring LLM's estimate. New module: `cloud/salary.py`.
+- [ ] **Run `cloud/migrations/2026-06-10-salary-insights.sql`** in Supabase →
+  SQL Editor (adds salary columns to jobs). Code degrades gracefully until it
+  runs, but salary data only persists once the columns exist.
+- [ ] (Optional) add `AdzunaAppId` / `AdzunaAppKey` to local settings.json so
+  LOCAL enricher runs also use real Adzuna stats — cloud runs already get them
+  from GitHub Secrets. Without them local runs fall back to the AI estimate.
+- [ ] (Later) show the salary fields in the mobile app jobs screen.
+
 ### 🆕 Added 2026-06-01 (Phases 17–19)
 
 - [x] **Groq cloud fallback configured** — `setting_groq_api_key` + `setting_prefer_cloud=true`
