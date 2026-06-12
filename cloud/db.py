@@ -895,6 +895,38 @@ def log_user_alert(
         print(f"[DB] log_user_alert error for {user_id}/{channel}: {exc}")
 
 
+def sync_scrape_keywords(supabase_url: str, supabase_key: str) -> None:
+    """Update bot_state.setting_keywords to the union of all active users' keywords.
+
+    Called once per worker cycle so every user's search terms are scraped.
+    Only updates bot_state if the merged set differs from what's already stored.
+    """
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        prefs_resp = sb.table("user_preferences").select("keywords").eq("paused", False).execute()
+        user_kws: set[str] = set()
+        for row in (prefs_resp.data or []):
+            for kw in (row.get("keywords") or []):
+                kw = kw.strip()
+                if kw:
+                    user_kws.add(kw)
+        if not user_kws:
+            return
+
+        current = sb.table("bot_state").select("value").eq("key", "setting_keywords").execute()
+        existing = set(k.strip() for k in ((current.data or [{}])[0].get("value") or "").split(",") if k.strip())
+
+        merged = existing | user_kws
+        if merged == existing:
+            return  # nothing new to add
+
+        sb.table("bot_state").update({"value": ",".join(sorted(merged))}).eq("key", "setting_keywords").execute()
+        new_kws = merged - existing
+        print(f"[DB] sync_scrape_keywords: added {len(new_kws)} new keyword(s): {', '.join(sorted(new_kws))}")
+    except Exception as exc:
+        print(f"[DB] sync_scrape_keywords error: {exc}")
+
+
 def upsert_user_interaction(
     supabase_url: str,
     supabase_key: str,

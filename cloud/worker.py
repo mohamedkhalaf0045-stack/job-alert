@@ -182,6 +182,7 @@ def main() -> None:
         # search-API keys) are intentionally NOT read from bot_state — that
         # table is readable with the public anon key shipped in the mobile
         # app. Secrets come from env vars (GitHub Actions Secrets) only.
+        db.sync_scrape_keywords(supabase_url, supabase_key)
         setting_kw      = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
         setting_loc     = db.get_config(supabase_url, supabase_key, "setting_location", "")
         setting_hours   = db.get_config(supabase_url, supabase_key, "setting_max_hours", "")
