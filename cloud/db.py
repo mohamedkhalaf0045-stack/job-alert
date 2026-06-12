@@ -927,6 +927,38 @@ def sync_scrape_keywords(supabase_url: str, supabase_key: str) -> None:
         print(f"[DB] sync_scrape_keywords error: {exc}")
 
 
+def sync_scrape_locations(supabase_url: str, supabase_key: str) -> None:
+    """Update bot_state.setting_location to the union of all active users' locations.
+
+    Called once per worker cycle so every user's preferred location is scraped.
+    Only updates bot_state if the merged set differs from what's already stored.
+    """
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        prefs_resp = sb.table("user_preferences").select("locations").eq("paused", False).execute()
+        user_locs: set[str] = set()
+        for row in (prefs_resp.data or []):
+            for loc in (row.get("locations") or []):
+                loc = loc.strip()
+                if loc:
+                    user_locs.add(loc)
+        if not user_locs:
+            return
+
+        current = sb.table("bot_state").select("value").eq("key", "setting_location").execute()
+        existing = set(l.strip() for l in ((current.data or [{}])[0].get("value") or "").split(",") if l.strip())
+
+        merged = existing | user_locs
+        if merged == existing:
+            return
+
+        sb.table("bot_state").update({"value": ",".join(sorted(merged))}).eq("key", "setting_location").execute()
+        new_locs = merged - existing
+        print(f"[DB] sync_scrape_locations: added {len(new_locs)} new location(s): {', '.join(sorted(new_locs))}")
+    except Exception as exc:
+        print(f"[DB] sync_scrape_locations error: {exc}")
+
+
 def upsert_user_interaction(
     supabase_url: str,
     supabase_key: str,
