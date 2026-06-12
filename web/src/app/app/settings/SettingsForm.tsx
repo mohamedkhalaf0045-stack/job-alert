@@ -28,6 +28,7 @@ export default function SettingsForm({
   const [keywords,   setKeywords]   = useState((prefs?.keywords         ?? []).join(', '))
   const [locations,  setLocations]  = useState((prefs?.locations        ?? []).join(', '))
   const [excludes,   setExcludes]   = useState((prefs?.exclude_keywords ?? []).join(', '))
+  const [minScore,   setMinScore]   = useState(prefs?.min_score?.toString() ?? '')
   const [freq,       setFreq]       = useState<'instant' | 'daily' | 'off'>(prefs?.alert_frequency ?? 'daily')
   const [paused,     setPaused]     = useState(prefs?.paused ?? false)
   const [alertEmail, setAlertEmail] = useState(profile?.alert_email    ?? true)
@@ -49,6 +50,7 @@ export default function SettingsForm({
           keywords:         keywords.split(',').map(s => s.trim()).filter(Boolean),
           locations:        locations.split(',').map(s => s.trim()).filter(Boolean),
           exclude_keywords: excludes.split(',').map(s => s.trim()).filter(Boolean),
+          min_score:        minScore ? parseInt(minScore) : null,
           alert_frequency:  freq,
           paused,
           updated_at:       new Date().toISOString(),
@@ -87,6 +89,12 @@ export default function SettingsForm({
       <Field label="Exclude keywords" hint="Jobs containing any of these are hidden from your feed.">
         <input value={excludes} onChange={e => setExcludes(e.target.value)}
           placeholder="Senior, Lead, Manager" className={inputCls} />
+      </Field>
+
+      <Field label="Min AI score (1–10)" hint="Hide jobs scored below this. Leave blank to show all.">
+        <input type="number" min="1" max="10" value={minScore}
+          onChange={e => setMinScore(e.target.value)}
+          placeholder="e.g. 5" className={inputCls} />
       </Field>
 
       <Field label="Alert frequency">

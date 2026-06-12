@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
-export default function NavBar({ email }: { email: string }) {
+export default function NavBar({ email, isAdmin }: { email: string; isAdmin?: boolean }) {
   const pathname = usePathname()
   const router   = useRouter()
 
@@ -36,6 +36,7 @@ export default function NavBar({ email }: { email: string }) {
         {navLink('/app/feed',     'Feed')}
         {navLink('/app/saved',    'Saved')}
         {navLink('/app/settings', 'Settings')}
+        {isAdmin && navLink('/app/admin', 'Admin')}
       </div>
       <div className="flex items-center gap-3">
         <span className="text-xs text-gray-400 hidden sm:block truncate max-w-[160px]">{email}</span>
