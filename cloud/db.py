@@ -959,6 +959,23 @@ def sync_scrape_locations(supabase_url: str, supabase_key: str) -> None:
         print(f"[DB] sync_scrape_locations error: {exc}")
 
 
+def save_telegram_history(
+    supabase_url: str,
+    supabase_key: str,
+    chat_id: int,
+    role: str,
+    content: str,
+) -> None:
+    """Insert a message into telegram_claude_history so the AI bot has context."""
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        sb.table("telegram_claude_history").insert(
+            {"chat_id": chat_id, "role": role, "content": content}
+        ).execute()
+    except Exception as exc:
+        print(f"[DB] save_telegram_history error for chat {chat_id}: {exc}")
+
+
 def upsert_user_interaction(
     supabase_url: str,
     supabase_key: str,

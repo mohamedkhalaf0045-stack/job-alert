@@ -170,9 +170,19 @@ def run(mode: str, dry_run: bool = False) -> None:
                     display_name=profile.get("display_name") or "",
                 )
             elif ch == "telegram":
+                msg = _tg_digest(new_jobs)
                 sent = telegram_notify.send_message(
-                    bot_token, profile["telegram_chat_id"], _tg_digest(new_jobs)
+                    bot_token, profile["telegram_chat_id"], msg
                 )
+                if sent:
+                    try:
+                        db.save_telegram_history(
+                            supabase_url, supabase_key,
+                            int(profile["telegram_chat_id"]),
+                            "assistant", msg,
+                        )
+                    except Exception:
+                        pass
 
             if sent:
                 db.log_user_alert(
