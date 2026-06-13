@@ -30,8 +30,8 @@ export async function GET(req: NextRequest) {
   )
 
   if (res.status === 204) {
-    return NextResponse.json({ ok: true, triggered: true })
+    return NextResponse.json({ ok: true, triggered: true, ts: Date.now() })
   }
   const body = await res.text()
-  return NextResponse.json({ ok: false, status: res.status, body }, { status: 500 })
+  return NextResponse.json({ ok: false, status: res.status, body, ts: Date.now() }, { status: 500 })
 }
