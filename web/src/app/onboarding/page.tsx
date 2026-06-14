@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import CVUploadCard from '@/components/CVUploadCard'
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -53,6 +54,16 @@ export default function OnboardingPage() {
           You can change these any time in Settings.
         </p>
         <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+            <p className="text-sm text-blue-900 font-medium mb-3">Optional: Upload your CV</p>
+            <CVUploadCard />
+            <p className="text-xs text-blue-800 mt-3">
+              ℹ️ Your CV skills will help us match you with more relevant jobs. You can still enter keywords below.
+            </p>
+          </div>
+
+          <hr className="border-gray-100" />
+
           <div>
             <label className="block text-sm font-medium mb-1">
               Job keywords <span className="text-red-500">*</span>

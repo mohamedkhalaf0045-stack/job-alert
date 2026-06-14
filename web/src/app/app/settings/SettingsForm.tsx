@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import CVUploadCard from '@/components/CVUploadCard'
 import type { UserPreferences, Profile } from '@/lib/types'
 
 const inputCls = 'w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -76,6 +77,11 @@ export default function SettingsForm({
 
   return (
     <form onSubmit={handleSave} className="space-y-6 max-w-lg">
+      <CVUploadCard />
+
+      <hr className="border-gray-100" />
+      <h2 className="text-base font-semibold">Filter Settings</h2>
+
       <Field label="Job keywords" hint="Comma-separated. Any match shows the job.">
         <input value={keywords} onChange={e => setKeywords(e.target.value)}
           placeholder="IT Support, System Administrator, Help Desk" className={inputCls} />

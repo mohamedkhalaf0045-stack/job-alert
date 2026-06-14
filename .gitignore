@@ -21,3 +21,4 @@ startup_error.txt
 __pycache__/
 *.pyc
 .ruff_cache/
+.vercel
