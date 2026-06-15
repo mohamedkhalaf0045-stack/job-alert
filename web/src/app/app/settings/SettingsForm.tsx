@@ -55,6 +55,8 @@ export default function SettingsForm({
   const [cvProfile,  setCvProfile]  = useState<CVProfile | null>(null)
   const [cvSuggested, setCvSuggested] = useState<string[]>([])
   const [saving,     setSaving]     = useState(false)
+  const [tgTesting,  setTgTesting]  = useState(false)
+  const [tgTestMsg,  setTgTestMsg]  = useState('')
 
   useEffect(() => {
     fetch('/api/app/cv/profile')
@@ -68,6 +70,14 @@ export default function SettingsForm({
   function handleCVAnalyzed(data: CVData) {
     const titles = (data.job_titles ?? []).filter(Boolean)
     if (titles.length > 0) setCvSuggested(titles)
+  }
+
+  async function testTelegram() {
+    setTgTesting(true); setTgTestMsg('')
+    const r = await fetch('/api/app/alerts/test-telegram', { method: 'POST' })
+    const d = await r.json()
+    setTgTestMsg(r.ok ? '✓ Test message sent — check Telegram!' : (d.error ?? 'Send failed'))
+    setTgTesting(false)
   }
 
   function applyCVTitles() {
@@ -237,6 +247,21 @@ export default function SettingsForm({
           >
             <input value={tgChatId} onChange={e => setTgChatId(e.target.value)}
               placeholder="941885724" className={inputCls} />
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={testTelegram}
+                disabled={tgTesting || !tgChatId}
+                className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition"
+              >
+                {tgTesting ? 'Sending…' : 'Send test message'}
+              </button>
+              {tgTestMsg && (
+                <span className={`text-xs font-medium ${tgTestMsg.startsWith('✓') ? 'text-green-600' : 'text-red-600'}`}>
+                  {tgTestMsg}
+                </span>
+              )}
+            </div>
           </Field>
         )}
       </div>
