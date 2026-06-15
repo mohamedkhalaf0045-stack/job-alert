@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import CVUploadCard, { CVData } from '@/components/CVUploadCard'
@@ -31,6 +31,10 @@ export default function OnboardingPage() {
   const [keywordInput, setKeywordInput] = useState('')
   const [keywords, setKeywords] = useState<string[]>([])
   const [suggestedKeywords, setSuggestedKeywords] = useState<string[]>([])
+  const [recommendedKeywords, setRecommendedKeywords] = useState<string[]>([])
+
+  // Step 3 — Locations
+  const [recommendedLocations, setRecommendedLocations] = useState<string[]>([])
 
   // Step 3 — Locations + finish
   const [locations, setLocations] = useState<string[]>([])
@@ -39,6 +43,17 @@ export default function OnboardingPage() {
   const [frequency, setFrequency] = useState<'instant' | 'daily' | 'off'>('daily')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // Load admin's recommended settings once on mount
+  useEffect(() => {
+    fetch('/api/app/recommended-settings')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.keywords) && data.keywords.length > 0) setRecommendedKeywords(data.keywords)
+        if (Array.isArray(data.locations) && data.locations.length > 0) setRecommendedLocations(data.locations)
+      })
+      .catch(() => {})
+  }, [])
 
   // ── CV step handlers ─────────────────────────────────────────────────────
   function handleCVAnalyzed(data: CVData) {
@@ -196,6 +211,29 @@ export default function OnboardingPage() {
               Add job titles you want to find. Press Enter or comma to add each one.
             </p>
 
+            {/* Admin recommended keywords */}
+            {recommendedKeywords.length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-medium text-gray-500 mb-2">Popular searches:</p>
+                <div className="flex flex-wrap gap-2">
+                  {recommendedKeywords.map(kw => (
+                    <button
+                      key={kw}
+                      onClick={() => addKeyword(kw)}
+                      disabled={keywords.includes(kw)}
+                      className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                        keywords.includes(kw)
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'border-blue-300 text-blue-600 hover:bg-blue-50'
+                      }`}
+                    >
+                      {keywords.includes(kw) ? '✓ ' : '+ '}{kw}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* CV suggestions */}
             {suggestedKeywords.length > 0 && (
               <div className="mb-4">
@@ -275,20 +313,44 @@ export default function OnboardingPage() {
 
             {/* Location chips */}
             <div className="flex flex-wrap gap-2 mb-4">
-              {UAE_LOCATIONS.map(loc => (
-                <button
-                  key={loc}
-                  onClick={() => toggleLocation(loc)}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                    locations.includes(loc)
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
-                  }`}
-                >
-                  {locations.includes(loc) ? '✓ ' : ''}{loc}
-                </button>
-              ))}
+              {UAE_LOCATIONS.map(loc => {
+                const isSelected = locations.includes(loc)
+                const isRecommended = recommendedLocations.includes(loc)
+                return (
+                  <button
+                    key={loc}
+                    onClick={() => toggleLocation(loc)}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                      isSelected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : isRecommended
+                          ? 'border-blue-300 text-blue-600 hover:bg-blue-50'
+                          : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
+                    }`}
+                  >
+                    {isSelected ? '✓ ' : ''}{loc}
+                  </button>
+                )
+              })}
             </div>
+            {/* Admin-recommended locations not in the preset list */}
+            {recommendedLocations.filter(l => !UAE_LOCATIONS.includes(l)).length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {recommendedLocations.filter(l => !UAE_LOCATIONS.includes(l)).map(loc => (
+                  <button
+                    key={loc}
+                    onClick={() => toggleLocation(loc)}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                      locations.includes(loc)
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-blue-300 text-blue-600 hover:bg-blue-50'
+                    }`}
+                  >
+                    {locations.includes(loc) ? '✓ ' : ''}{loc}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Custom location input */}
             <input

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import AdminForm from './AdminForm'
+import AdminTabs from './AdminTabs'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +17,14 @@ const BOT_KEYS = [
   'setting_search_naukrigulf',
   'setting_search_web',
   'setting_legacy_telegram',
+  'recommended_keywords',
+  'recommended_locations',
 ]
+
+function parseList(raw: string | undefined): string[] {
+  if (!raw) return []
+  try { return JSON.parse(raw) } catch { return [] }
+}
 
 export default async function AdminPage() {
   const supabase = await createClient()
@@ -35,13 +42,21 @@ export default async function AdminPage() {
     state[row.key] = row.value
   }
 
+  const scraperState = Object.fromEntries(
+    Object.entries(state).filter(([k]) => !k.startsWith('recommended_'))
+  )
+
   return (
     <div>
-      <h1 className="text-xl font-bold mb-1">Admin — Scraper settings</h1>
+      <h1 className="text-xl font-bold mb-1">Admin</h1>
       <p className="text-sm text-gray-500 mb-6">
-        Controls the scraper that runs every 15 min on GitHub Actions.
+        Manage scraper settings, users, and onboarding recommendations.
       </p>
-      <AdminForm state={state} />
+      <AdminTabs
+        scraperState={scraperState}
+        recommendedKeywords={parseList(state.recommended_keywords)}
+        recommendedLocations={parseList(state.recommended_locations)}
+      />
     </div>
   )
 }
