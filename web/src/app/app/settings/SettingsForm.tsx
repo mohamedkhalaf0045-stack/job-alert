@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import CVUploadCard from '@/components/CVUploadCard'
+import CVUploadCard, { CVData } from '@/components/CVUploadCard'
 import type { UserPreferences, Profile } from '@/lib/types'
 
 const inputCls = 'w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -35,9 +35,22 @@ export default function SettingsForm({
   const [alertEmail, setAlertEmail] = useState(profile?.alert_email    ?? true)
   const [alertTg,    setAlertTg]    = useState(profile?.alert_telegram  ?? false)
   const [tgChatId,   setTgChatId]   = useState(profile?.telegram_chat_id ?? '')
+  const [cvSuggested, setCvSuggested] = useState<string[]>([])
   const [saving,     setSaving]     = useState(false)
   const [saved,      setSaved]      = useState(false)
   const [error,      setError]      = useState('')
+
+  function handleCVAnalyzed(data: CVData) {
+    const titles = (data.job_titles ?? []).filter(Boolean)
+    if (titles.length > 0) setCvSuggested(titles)
+  }
+
+  function applyCVTitles() {
+    const current = keywords.split(',').map(s => s.trim()).filter(Boolean)
+    const merged = Array.from(new Set([...current, ...cvSuggested]))
+    setKeywords(merged.join(', '))
+    setCvSuggested([])
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -77,7 +90,29 @@ export default function SettingsForm({
 
   return (
     <form onSubmit={handleSave} className="space-y-6 max-w-lg">
-      <CVUploadCard />
+      <CVUploadCard onAnalysisComplete={handleCVAnalyzed} />
+
+      {cvSuggested.length > 0 && (
+        <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+          <p className="text-sm font-medium text-blue-800 mb-2">
+            CV detected these job titles:
+          </p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {cvSuggested.map(t => (
+              <span key={t} className="px-2 py-1 bg-white border border-blue-200 text-blue-700 rounded-full text-xs font-medium">
+                {t}
+              </span>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={applyCVTitles}
+            className="text-sm bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 font-medium"
+          >
+            Add to my keywords →
+          </button>
+        </div>
+      )}
 
       <hr className="border-gray-100" />
       <h2 className="text-base font-semibold">Filter Settings</h2>
