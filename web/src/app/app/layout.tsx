@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import NavBar from '@/components/NavBar'
+import ChatWidget from '@/components/ChatWidget'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -13,6 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-gray-50">
       <NavBar email={user.email ?? ''} isAdmin={isAdmin} />
       <main className="max-w-3xl mx-auto px-4 py-8">{children}</main>
+      <ChatWidget />
     </div>
   )
 }
