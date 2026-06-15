@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 
-interface CVData {
+export interface CVData {
   skills: string[]
   years_experience: number | null
   job_titles: string[]

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import CVUploadCard from '@/components/CVUploadCard'
+import CVUploadCard, { CVData } from '@/components/CVUploadCard'
 
 type Step = 1 | 2 | 3
 
@@ -41,7 +41,7 @@ export default function OnboardingPage() {
   const [error, setError] = useState('')
 
   // ── CV step handlers ─────────────────────────────────────────────────────
-  function handleCVAnalyzed(data: { skills: string[]; job_titles: string[]; [k: string]: unknown }) {
+  function handleCVAnalyzed(data: CVData) {
     setCvUploaded(true)
     const titles = (data.job_titles ?? []).slice(0, 5)
     setSuggestedKeywords(titles)
