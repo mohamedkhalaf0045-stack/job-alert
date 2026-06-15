@@ -15,6 +15,17 @@ export default async function FeedPage({
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  // Gate: force onboarding if user has no keywords or locations set
+  const { data: prefs } = await supabase
+    .from('user_preferences')
+    .select('keywords, locations')
+    .eq('user_id', user.id)
+    .single()
+
+  const hasKeywords = Array.isArray(prefs?.keywords) && prefs.keywords.length > 0
+  const hasLocations = Array.isArray(prefs?.locations) && prefs.locations.length > 0
+  if (!hasKeywords || !hasLocations) redirect('/onboarding')
+
   const { before } = await searchParams
 
   const { data: jobs, error } = await supabase.rpc('user_jobs_feed', {

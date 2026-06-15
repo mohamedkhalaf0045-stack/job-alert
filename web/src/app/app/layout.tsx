@@ -8,6 +8,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  // Redirect to onboarding if setup is incomplete
+  const { data: prefs } = await supabase
+    .from('user_preferences')
+    .select('keywords, locations')
+    .eq('user_id', user.id)
+    .single()
+
+  const hasKeywords = Array.isArray(prefs?.keywords) && prefs.keywords.length > 0
+  const hasLocations = Array.isArray(prefs?.locations) && prefs.locations.length > 0
+  if (!hasKeywords || !hasLocations) redirect('/onboarding')
+
   const isAdmin = user.email === process.env.ADMIN_EMAIL
 
   return (
