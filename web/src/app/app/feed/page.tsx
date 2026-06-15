@@ -1,8 +1,30 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import JobCard from '@/components/JobCard'
 import type { Job } from '@/lib/types'
 import Link from 'next/link'
+
+async function getUserCVSkills(userId: string): Promise<string[]> {
+  const admin = createAdminClient()
+
+  // Try per-user web upload first
+  const { data: perUser } = await admin
+    .from('bot_state').select('value').eq('key', `cv_data:${userId}`).single()
+  if (perUser?.value) {
+    try {
+      const cv = JSON.parse(perUser.value)
+      if (Array.isArray(cv.skills) && cv.skills.length) return cv.skills
+    } catch { /* fall through */ }
+  }
+
+  // Fall back to Windows desktop app global keys
+  const { data } = await admin
+    .from('bot_state').select('value').eq('key', 'cv_skills').single()
+  if (data?.value) return data.value.split(',').map((s: string) => s.trim()).filter(Boolean)
+
+  return []
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -51,6 +73,7 @@ export default async function FeedPage({
 
   const jobList = (jobs as Job[]) ?? []
   const nextCursor = jobList.length === 20 ? jobList[jobList.length - 1].date_collected : null
+  const userSkills = await getUserCVSkills(user.id)
 
   if (!jobList.length && !before) {
     return (
@@ -87,7 +110,7 @@ export default async function FeedPage({
 
       <div className="space-y-3">
         {jobList.map(job => (
-          <JobCard key={job.job_id} job={job} />
+          <JobCard key={job.job_id} job={job} userSkills={userSkills} />
         ))}
       </div>
 

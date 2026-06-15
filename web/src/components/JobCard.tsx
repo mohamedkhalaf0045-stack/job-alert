@@ -23,7 +23,14 @@ function salaryLine(job: Job): string | null {
   return `${cur} ${val.toLocaleString()}${per}`
 }
 
-export default function JobCard({ job }: { job: Job }) {
+function skillMatchScore(userSkills: string[], job: Job): { matched: string[]; pct: number } {
+  if (!userSkills.length) return { matched: [], pct: 0 }
+  const haystack = [job.title, job.llm_summary ?? '', ...(job.matched_skills ?? [])].join(' ').toLowerCase()
+  const matched = userSkills.filter(s => haystack.includes(s.toLowerCase()))
+  return { matched, pct: Math.round((matched.length / userSkills.length) * 100) }
+}
+
+export default function JobCard({ job, userSkills }: { job: Job; userSkills?: string[] }) {
   const [status,  setStatus]  = useState<JobStatus | null>(job.my_status)
   const [saving,  setSaving]  = useState(false)
   const [removed, setRemoved] = useState(false)
@@ -59,6 +66,7 @@ export default function JobCard({ job }: { job: Job }) {
   if (removed) return null
 
   const salary = salaryLine(job)
+  const skillMatch = userSkills?.length ? skillMatchScore(userSkills, job) : null
   const posted = job.date_collected
     ? new Date(job.date_collected).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     : ''
@@ -91,6 +99,28 @@ export default function JobCard({ job }: { job: Job }) {
 
       {job.llm_summary && (
         <p className="text-xs text-gray-600 mt-2 line-clamp-2">{job.llm_summary}</p>
+      )}
+
+      {skillMatch && skillMatch.matched.length > 0 && (
+        <div className="mt-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${
+              skillMatch.pct >= 60 ? 'bg-green-100 text-green-700' :
+              skillMatch.pct >= 30 ? 'bg-yellow-100 text-yellow-700' :
+              'bg-gray-100 text-gray-500'
+            }`}>
+              {skillMatch.pct}% skill match
+            </span>
+            {skillMatch.matched.slice(0, 4).map(s => (
+              <span key={s} className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-medium">
+                {s}
+              </span>
+            ))}
+            {skillMatch.matched.length > 4 && (
+              <span className="text-xs text-gray-400">+{skillMatch.matched.length - 4}</span>
+            )}
+          </div>
+        </div>
       )}
 
       {salary && (

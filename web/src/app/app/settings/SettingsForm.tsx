@@ -1,9 +1,26 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import CVUploadCard, { CVData } from '@/components/CVUploadCard'
 import type { UserPreferences, Profile } from '@/lib/types'
+
+interface CVProfile {
+  skills: string[]
+  job_titles: string[]
+  years_experience: number | null
+  certifications: string[]
+  summary: string
+  analyzed_at: string | null
+  source: 'web' | 'desktop' | null
+}
+
+function timeAgo(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+  if (days === 0) return 'today'
+  if (days === 1) return 'yesterday'
+  return `${days} days ago`
+}
 
 const inputCls = 'w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -35,8 +52,16 @@ export default function SettingsForm({
   const [alertEmail, setAlertEmail] = useState(profile?.alert_email    ?? true)
   const [alertTg,    setAlertTg]    = useState(profile?.alert_telegram  ?? false)
   const [tgChatId,   setTgChatId]   = useState(profile?.telegram_chat_id ?? '')
+  const [cvProfile,  setCvProfile]  = useState<CVProfile | null>(null)
   const [cvSuggested, setCvSuggested] = useState<string[]>([])
   const [saving,     setSaving]     = useState(false)
+
+  useEffect(() => {
+    fetch('/api/app/cv/profile')
+      .then(r => r.json())
+      .then((d: CVProfile) => { if (d.skills?.length || d.job_titles?.length) setCvProfile(d) })
+      .catch(() => {})
+  }, [])
   const [saved,      setSaved]      = useState(false)
   const [error,      setError]      = useState('')
 
@@ -90,6 +115,51 @@ export default function SettingsForm({
 
   return (
     <form onSubmit={handleSave} className="space-y-6 max-w-lg">
+      {/* Existing CV summary (loaded from bot_state) */}
+      {cvProfile && !cvSuggested.length && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-sm font-semibold text-gray-800">
+                CV on file — {cvProfile.skills.length} skills
+                {cvProfile.years_experience ? `, ${cvProfile.years_experience} yrs exp` : ''}
+              </p>
+              {cvProfile.analyzed_at && (
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {cvProfile.source === 'desktop' ? 'From desktop app · ' : ''}
+                  Analyzed {timeAgo(cvProfile.analyzed_at)}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {cvProfile.job_titles.length > 0 && (
+            <div className="mb-3">
+              <p className="text-xs font-medium text-gray-500 mb-1.5">Job titles</p>
+              <div className="flex flex-wrap gap-1.5">
+                {cvProfile.job_titles.map(t => (
+                  <span key={t} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full font-medium">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {cvProfile.skills.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-1.5">Skills used for job matching</p>
+              <div className="flex flex-wrap gap-1.5">
+                {cvProfile.skills.slice(0, 30).map(s => (
+                  <span key={s} className="text-xs px-2 py-0.5 bg-white border border-gray-200 text-gray-600 rounded-full">{s}</span>
+                ))}
+                {cvProfile.skills.length > 30 && (
+                  <span className="text-xs text-gray-400">+{cvProfile.skills.length - 30} more</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <CVUploadCard onAnalysisComplete={handleCVAnalyzed} />
 
       {cvSuggested.length > 0 && (
