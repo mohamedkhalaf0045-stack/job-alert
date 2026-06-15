@@ -3,15 +3,15 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import Groq from 'groq-sdk'
 
+import { extractText as pdfExtractText } from 'unpdf'
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const TEXT_LIMIT = 6000
 
 async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
   if (mimeType === 'application/pdf') {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
-    const pdf = await pdfParse(buffer)
-    return pdf.text
+    const { text } = await pdfExtractText(new Uint8Array(buffer), { mergePages: true })
+    return text as string
   }
   if (mimeType === 'text/plain') return buffer.toString('utf-8')
   throw new Error('Unsupported file type. Use PDF or TXT.')
