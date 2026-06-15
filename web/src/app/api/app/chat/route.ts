@@ -18,25 +18,24 @@ interface JobContext {
 
 async function getCVContext(userId: string): Promise<string> {
   const admin = createAdminClient()
-  const keys = ['cv_skills', 'cv_job_titles', 'cv_years_experience', 'cv_summary', 'cv_certifications']
-
   const { data } = await admin
     .from('bot_state')
-    .select('key, value')
-    .in('key', keys)
+    .select('value')
+    .eq('key', `cv_data:${userId}`)
+    .single()
 
-  if (!data || data.length === 0) return ''
+  if (!data?.value) return ''
 
-  const map = Object.fromEntries(data.map(r => [r.key, r.value]))
-  const parts: string[] = []
-
-  if (map.cv_summary) parts.push(`Professional summary: ${map.cv_summary}`)
-  if (map.cv_years_experience) parts.push(`Years of experience: ${map.cv_years_experience}`)
-  if (map.cv_job_titles) parts.push(`Past job titles: ${map.cv_job_titles}`)
-  if (map.cv_skills) parts.push(`Skills: ${map.cv_skills}`)
-  if (map.cv_certifications) parts.push(`Certifications: ${map.cv_certifications}`)
-
-  return parts.join('\n')
+  try {
+    const cv = JSON.parse(data.value)
+    const parts: string[] = []
+    if (cv.summary) parts.push(`Professional summary: ${cv.summary}`)
+    if (cv.years_experience) parts.push(`Years of experience: ${cv.years_experience}`)
+    if (Array.isArray(cv.job_titles) && cv.job_titles.length) parts.push(`Past job titles: ${cv.job_titles.join(', ')}`)
+    if (Array.isArray(cv.skills) && cv.skills.length) parts.push(`Skills: ${cv.skills.join(', ')}`)
+    if (Array.isArray(cv.certifications) && cv.certifications.length) parts.push(`Certifications: ${cv.certifications.join(', ')}`)
+    return parts.join('\n')
+  } catch { return '' }
 }
 
 function buildSystemPrompt(cvContext: string, job?: JobContext): string {

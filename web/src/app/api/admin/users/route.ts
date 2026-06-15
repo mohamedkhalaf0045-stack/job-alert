@@ -26,13 +26,14 @@ export async function GET() {
     .select('user_id, keywords, locations, alert_frequency, updated_at')
     .in('user_id', userIds)
 
+  const cvKeys = userIds.map(id => `cv_data:${id}`)
   const { data: cvRows } = await admin
     .from('bot_state')
-    .select('key, value')
-    .eq('key', 'cv_analyzed_at')
+    .select('key')
+    .in('key', cvKeys)
 
   const prefsMap = Object.fromEntries((prefs ?? []).map(p => [p.user_id, p]))
-  const cvSet = new Set((cvRows ?? []).map(r => r.value).filter(Boolean))
+  const cvSet = new Set((cvRows ?? []).map(r => r.key.replace('cv_data:', '')))
 
   const users = authUsers.users.map(u => ({
     id: u.id,
