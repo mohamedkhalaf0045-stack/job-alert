@@ -41,6 +41,7 @@ jobs:
         run: |
           python cloud/enricher.py \
             --prefer-cloud \
+            --verbose \
             --limit ${{ github.event.inputs.limit || '50' }} \
             --min-score 4
         env:

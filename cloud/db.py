@@ -201,7 +201,7 @@ def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> 
             sb.table("jobs")
             .select("job_id,title,company,location,url,source,telegram_sent_at,date_posted,date_collected")
             .is_("llm_score", "null")
-            .eq("status", "new")
+            .or_("status.eq.new,status.is.null")
             .order("date_collected", desc=True)
             .limit(fetch_limit)
             .execute()
