@@ -178,7 +178,7 @@ function Save-Settings-WithFeedback {
         }
         Add-LogLine "Settings saved."
         $script:StatusLabel.Text      = "Settings saved [OK]"
-        $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 140, 0)
+        $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(22, 163, 74)
         if ($null -ne $script:SettingsSaveTimer) {
             $script:SettingsSaveTimer.Stop()
             $script:SettingsSaveTimer.Dispose()
@@ -1013,10 +1013,10 @@ function Apply-JobRowStyle {
     $item.ForeColor = [System.Drawing.Color]::Black
 
     if ($hours -le 3) {
-        $item.BackColor = [System.Drawing.Color]::FromArgb(198, 239, 206)
+        $item.BackColor = [System.Drawing.Color]::FromArgb(240, 253, 244)
     }
     elseif ($hours -le 24) {
-        $item.BackColor = [System.Drawing.Color]::FromArgb(255, 235, 156)
+        $item.BackColor = [System.Drawing.Color]::FromArgb(255, 251, 235)
     }
     else {
         $item.BackColor = [System.Drawing.Color]::White
@@ -1081,12 +1081,12 @@ function Set-JobStatusInList {
     $url = [string]$Item.Tag
     if ([string]::IsNullOrWhiteSpace($url)) { return }
     if ($Status -eq "dismissed") {
-        $Item.ForeColor = [System.Drawing.Color]::FromArgb(180, 180, 180)
+        $Item.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
     } elseif ($Status -eq "applied") {
         $Item.SubItems[6].Text = "Yes"
-        $Item.ForeColor = [System.Drawing.Color]::FromArgb(100, 160, 100)
+        $Item.ForeColor = [System.Drawing.Color]::FromArgb(22, 163, 74)
     } elseif ($Status -eq "saved") {
-        $Item.ForeColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
+        $Item.ForeColor = [System.Drawing.Color]::FromArgb(94, 106, 210)
     }
     try {
         $conn = Open-JobDatabaseConnection
@@ -1625,15 +1625,15 @@ $script:SeenJobs       = Load-SeenJobs
 $script:HasPrimedState = $script:SeenJobs.Count -gt 0
 $savedSettings         = Load-Settings
 
-# ── Design tokens ────────────────────────────────────────────────────────────
-$clrBg     = [System.Drawing.Color]::FromArgb(243, 243, 243)
+# ── Design tokens — nexu-io/open-design Linear system ────────────────────────
+$clrBg     = [System.Drawing.Color]::FromArgb(250, 250, 250)  # #FAFAFA
 $clrCard   = [System.Drawing.Color]::White
-$clrHeader = [System.Drawing.Color]::FromArgb(0, 102, 204)
-$clrAccent = [System.Drawing.Color]::FromArgb(0, 102, 204)
-$clrGreen  = [System.Drawing.Color]::FromArgb(39, 174, 96)
-$clrRed    = [System.Drawing.Color]::FromArgb(192, 57, 43)
-$clrText   = [System.Drawing.Color]::FromArgb(32, 33, 36)
-$clrMuted  = [System.Drawing.Color]::FromArgb(100, 104, 110)
+$clrHeader = [System.Drawing.Color]::FromArgb(94, 106, 210)   # #5E6AD2 accent
+$clrAccent = [System.Drawing.Color]::FromArgb(94, 106, 210)   # #5E6AD2
+$clrGreen  = [System.Drawing.Color]::FromArgb(22, 163, 74)    # #16A34A success
+$clrRed    = [System.Drawing.Color]::FromArgb(220, 38, 38)    # #DC2626 danger
+$clrText   = [System.Drawing.Color]::FromArgb(15, 23, 42)     # #0F172A fg
+$clrMuted  = [System.Drawing.Color]::FromArgb(100, 116, 139)  # #64748B muted
 $fntUi     = New-Object System.Drawing.Font("Segoe UI", 9)
 $fntSm     = New-Object System.Drawing.Font("Segoe UI", 8)
 $fntHdr    = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
@@ -1648,9 +1648,9 @@ function New-Card {
     $p.BackColor = [System.Drawing.Color]::White
     $p.Add_Paint({
         param($s, $ev)
-        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(210, 212, 216), 1)
+        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(226, 232, 240), 1)
         $ev.Graphics.DrawRectangle($pen, 0, 0, $s.Width - 1, $s.Height - 1)
-        $shadowPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(230, 230, 230), 2)
+        $shadowPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(241, 245, 249), 2)
         $ev.Graphics.DrawLine($shadowPen, 1, $s.Height, $s.Width, $s.Height)
         $ev.Graphics.DrawLine($shadowPen, $s.Width, 1, $s.Width, $s.Height)
         $shadowPen.Dispose()
@@ -1660,7 +1660,7 @@ function New-Card {
         $lbl           = New-Object System.Windows.Forms.Label
         $lbl.Text      = $Title
         $lbl.Font      = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
-        $lbl.ForeColor = [System.Drawing.Color]::FromArgb(0, 102, 204)
+        $lbl.ForeColor = [System.Drawing.Color]::FromArgb(94, 106, 210)
         $lbl.Location  = New-Object System.Drawing.Point(12, 9)
         $lbl.AutoSize  = $true
         [void]$p.Controls.Add($lbl)
@@ -1679,24 +1679,24 @@ function New-Btn {
     $b.Cursor     = [System.Windows.Forms.Cursors]::Hand
     switch ($Style) {
         "green"   {
-            $b.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+            $b.BackColor = [System.Drawing.Color]::FromArgb(22, 163, 74)
             $b.ForeColor = [System.Drawing.Color]::White
             $b.FlatAppearance.BorderSize  = 0
         }
         "red"     {
-            $b.BackColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
+            $b.BackColor = [System.Drawing.Color]::FromArgb(220, 38, 38)
             $b.ForeColor = [System.Drawing.Color]::White
             $b.FlatAppearance.BorderSize  = 0
         }
         "accent"  {
-            $b.BackColor = [System.Drawing.Color]::FromArgb(0, 102, 204)
+            $b.BackColor = [System.Drawing.Color]::FromArgb(94, 106, 210)
             $b.ForeColor = [System.Drawing.Color]::White
             $b.FlatAppearance.BorderSize  = 0
         }
         "outline" {
             $b.BackColor = [System.Drawing.Color]::White
-            $b.ForeColor = [System.Drawing.Color]::FromArgb(0, 102, 204)
-            $b.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(0, 102, 204)
+            $b.ForeColor = [System.Drawing.Color]::FromArgb(94, 106, 210)
+            $b.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(94, 106, 210)
             $b.FlatAppearance.BorderSize  = 1
         }
     }
@@ -1709,7 +1709,7 @@ function New-Lbl {
     $l.Text      = $Text
     $l.Location  = New-Object System.Drawing.Point($X, $Y)
     $l.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
-    $l.ForeColor = [System.Drawing.Color]::FromArgb(100, 104, 110)
+    $l.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
     $l.AutoSize  = $true
     return $l
 }
@@ -1721,7 +1721,7 @@ function New-Tb {
     $t.Size         = New-Object System.Drawing.Size($W, $H)
     $t.Font         = New-Object System.Drawing.Font("Segoe UI", 9)
     $t.BorderStyle  = "FixedSingle"
-    $t.ForeColor    = [System.Drawing.Color]::FromArgb(32, 33, 36)
+    $t.ForeColor    = [System.Drawing.Color]::FromArgb(15, 23, 42)
     $t.BackColor    = [System.Drawing.Color]::White
     return $t
 }
@@ -1954,7 +1954,7 @@ $script:CvSkillsBox.Multiline    = $true
 $script:CvSkillsBox.ReadOnly     = $true
 $script:CvSkillsBox.ScrollBars   = "Vertical"
 $script:CvSkillsBox.Font         = $fntUi
-$script:CvSkillsBox.BackColor    = [System.Drawing.Color]::FromArgb(245, 247, 250)
+$script:CvSkillsBox.BackColor    = [System.Drawing.Color]::FromArgb(241, 245, 249)
 $script:CvSkillsBox.Text         = "(skills will appear here after analysis)"
 $script:CvSkillsBox.ForeColor    = [System.Drawing.Color]::Gray
 [void]$autoCard.Controls.Add($script:CvSkillsBox)
@@ -2263,7 +2263,7 @@ function Update-CvStatusLabel {
         $sKey = [string](Get-SettingValue -SettingsObject $settings -Name "SupabaseKey" -DefaultValue "")
         if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) {
             $script:CvStatusLabel.Text      = "CV: configure Supabase to enable CV analysis"
-            $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(160, 160, 160)
+            $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
             return
         }
         $headers = @{ "apikey" = $sKey; "Authorization" = "Bearer $sKey" }
@@ -2278,7 +2278,7 @@ function Update-CvStatusLabel {
 
         if ([string]::IsNullOrWhiteSpace($analyzedAt)) {
             $script:CvStatusLabel.Text      = "CV: not analyzed yet -- click Analyze CV to extract skills"
-            $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(160, 160, 160)
+            $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
             $script:CvSkillsBox.Text        = ""
             return
         }
@@ -2300,11 +2300,11 @@ function Update-CvStatusLabel {
         } catch {}
 
         $script:CvStatusLabel.Text      = "CV: $skillCount skills extracted  |  Analyzed $ageStr"
-        $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 160, 100)
+        $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(22, 163, 74)
         $script:CvSkillsBox.Text        = if ($cvSkills) { $cvSkills } else { "" }
     } catch {
         $script:CvStatusLabel.Text      = "CV: could not read profile -- check Supabase settings"
-        $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(180, 60, 60)
+        $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(220, 38, 38)
     }
 }
 
@@ -2353,7 +2353,7 @@ $script:LogBox.Multiline    = $true
 $script:LogBox.ScrollBars   = "Vertical"
 $script:LogBox.ReadOnly     = $true
 $script:LogBox.Font         = $fntUi
-$script:LogBox.BackColor    = [System.Drawing.Color]::FromArgb(250, 250, 252)
+$script:LogBox.BackColor    = [System.Drawing.Color]::FromArgb(250, 250, 250)
 $script:LogBox.BorderStyle  = "None"
 [void]$logCard.Controls.Add($script:LogBox)
 
@@ -2573,7 +2573,7 @@ $analyzeCvButton.Add_Click({
     }
     Add-LogLine "Analyzing CV: $(Split-Path $cvPath -Leaf) ..."
     $script:CvStatusLabel.Text      = "CV: analyzing..."
-    $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(240, 160, 0)
+    $script:CvStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(217, 119, 6)
     $analyzeCvButton.Enabled        = $false
     $script:Form.Cursor             = [System.Windows.Forms.Cursors]::WaitCursor
 
