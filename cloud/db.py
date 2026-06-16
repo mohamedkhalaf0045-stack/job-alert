@@ -583,6 +583,19 @@ def update_job_enrichment(
             return False
 
 
+def update_job_description(supabase_url: str, supabase_key: str, job_id: str, description: str) -> bool:
+    """Store a fetched description for a single job. Returns True on success."""
+    if not description or not job_id:
+        return False
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        sb.table("jobs").update({"description": description.replace("\x00", "")[:4000]}).eq("job_id", job_id).execute()
+        return True
+    except Exception as exc:
+        print(f"[DB] update_job_description({job_id}) error: {exc}")
+        return False
+
+
 def get_scores_for_urls(supabase_url: str, supabase_key: str, urls: list[str]) -> dict[str, dict]:
     """Return {url: {llm_score, llm_summary}} for already-enriched jobs."""
     if not urls:

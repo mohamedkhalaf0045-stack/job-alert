@@ -664,6 +664,17 @@ def main() -> None:
                                  + summary["seen"] + summary["invalid"])
                 all_new_jobs.extend(summary.get("new_jobs", []))
                 _alert_new(summary.get("new_jobs", []))
+                # Pre-fetch descriptions for newly inserted LinkedIn jobs (cap at 10)
+                for nj in summary.get("new_jobs", [])[:10]:
+                    nj_id = str(nj.get("Id", "")).strip()
+                    nj_url = nj.get("Url", "")
+                    if nj_id and nj_url:
+                        try:
+                            desc = li_scraper.fetch_job_description(nj_url, cookie_header)
+                            if desc:
+                                db.update_job_description(supabase_url, supabase_key, nj_id, desc)
+                        except Exception:
+                            pass
             except Exception as exc:
                 _log(f"LinkedIn error for '{keyword}': {exc}")
                 li_attempted = True
