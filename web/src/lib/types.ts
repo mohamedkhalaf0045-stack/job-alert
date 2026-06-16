@@ -21,6 +21,13 @@ export interface Job {
   my_status: JobStatus | null
 }
 
+export interface JobDetail extends Job {
+  description:        string | null
+  missing_skills:     string[] | null
+  red_flags:          string[] | null
+  cover_letter_draft: string | null
+}
+
 export interface UserPreferences {
   user_id: string
   keywords: string[]

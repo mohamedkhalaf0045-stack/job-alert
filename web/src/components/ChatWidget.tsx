@@ -15,10 +15,6 @@ interface JobContext {
   match_score?: number
 }
 
-interface ChatWidgetProps {
-  jobContext?: JobContext
-}
-
 const SUGGESTED_QUESTIONS = [
   'Am I a good fit for this job?',
   'What interview questions should I prepare?',
@@ -26,13 +22,26 @@ const SUGGESTED_QUESTIONS = [
   'How can I improve my application?',
 ]
 
-export default function ChatWidget({ jobContext }: ChatWidgetProps) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+export default function ChatWidget() {
+  const [isOpen,     setIsOpen]     = useState(false)
+  const [jobContext, setJobContext]  = useState<JobContext | undefined>(undefined)
+  const [messages,   setMessages]   = useState<Message[]>([])
+  const [input,      setInput]      = useState('')
+  const [isLoading,  setIsLoading]  = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef  = useRef<HTMLInputElement>(null)
+
+  // Listen for open-chat events dispatched by JobCard / JobDetailModal
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ctx = (e as CustomEvent<JobContext>).detail
+      setJobContext(ctx)
+      setMessages([])
+      setIsOpen(true)
+    }
+    window.addEventListener('open-chat', handler)
+    return () => window.removeEventListener('open-chat', handler)
+  }, [])
 
   useEffect(() => {
     if (isOpen && messages.length === 0) {
@@ -74,7 +83,7 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
       if (!res.ok) throw new Error(data.error || 'Failed')
 
       setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
-    } catch (err) {
+    } catch {
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: 'Sorry, something went wrong. Please try again.',
@@ -91,18 +100,16 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
     }
   }
 
-  const renderMessage = (content: string) => {
-    // Basic markdown: **bold**
-    return content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  }
+  const renderMessage = (content: string) =>
+    content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
       {/* Chat panel */}
       {isOpen && (
-        <div className="w-80 sm:w-96 h-[500px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
+        <div className="w-80 sm:w-96 h-[500px] bg-white rounded-2xl shadow-2xl border border-[var(--border)] flex flex-col overflow-hidden">
           {/* Header */}
-          <div className="bg-blue-600 px-4 py-3 flex items-center justify-between">
+          <div className="bg-[var(--accent)] px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
                 <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -111,7 +118,7 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
               </div>
               <div>
                 <p className="text-white text-sm font-semibold">Career Assistant</p>
-                <p className="text-blue-100 text-xs">Powered by AI</p>
+                <p className="text-white/70 text-xs">Powered by AI</p>
               </div>
             </div>
             <button
@@ -126,11 +133,11 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
 
           {/* Job context banner */}
           {jobContext?.title && (
-            <div className="bg-blue-50 border-b border-blue-100 px-4 py-2">
-              <p className="text-xs text-blue-700 font-medium truncate">
+            <div className="bg-[var(--accent-bg)] border-b border-[var(--border)] px-4 py-2">
+              <p className="text-xs text-[var(--accent)] font-medium truncate">
                 Discussing: {jobContext.title} {jobContext.company ? `@ ${jobContext.company}` : ''}
                 {jobContext.match_score != null && (
-                  <span className="ml-1 text-blue-500">({jobContext.match_score}% match)</span>
+                  <span className="ml-1 text-[var(--muted)]">({jobContext.match_score}/10 score)</span>
                 )}
               </p>
             </div>
@@ -143,8 +150,8 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
                 <div
                   className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm leading-relaxed ${
                     msg.role === 'user'
-                      ? 'bg-blue-600 text-white rounded-br-sm'
-                      : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                      ? 'bg-[var(--accent)] text-white rounded-br-sm'
+                      : 'bg-[var(--border-soft)] text-[var(--fg)] rounded-bl-sm'
                   }`}
                   dangerouslySetInnerHTML={{ __html: renderMessage(msg.content) }}
                 />
@@ -153,11 +160,11 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
 
             {isLoading && (
               <div className="flex justify-start">
-                <div className="bg-gray-100 px-3 py-2 rounded-2xl rounded-bl-sm">
+                <div className="bg-[var(--border-soft)] px-3 py-2 rounded-2xl rounded-bl-sm">
                   <div className="flex gap-1 items-center h-4">
-                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    <span className="w-1.5 h-1.5 bg-[var(--muted)] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 bg-[var(--muted)] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 bg-[var(--muted)] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
                 </div>
               </div>
@@ -170,7 +177,7 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
                   <button
                     key={i}
                     onClick={() => sendMessage(q)}
-                    className="w-full text-left px-3 py-2 text-xs text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors"
+                    className="w-full text-left px-3 py-2 text-xs text-[var(--accent)] bg-[var(--accent-bg)] hover:bg-[var(--accent)]/10 rounded-lg border border-[var(--accent)]/20 transition-colors"
                   >
                     {q}
                   </button>
@@ -182,7 +189,7 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
           </div>
 
           {/* Input */}
-          <div className="border-t border-gray-200 px-3 py-3 flex gap-2 items-center">
+          <div className="border-t border-[var(--border)] px-3 py-3 flex gap-2 items-center">
             <input
               ref={inputRef}
               type="text"
@@ -191,12 +198,12 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
               onKeyDown={handleKeyDown}
               placeholder="Ask anything about this job..."
               disabled={isLoading}
-              className="flex-1 text-sm px-3 py-2 rounded-full border border-gray-200 focus:outline-none focus:border-blue-400 disabled:opacity-50"
+              className="flex-1 text-sm px-3 py-2 rounded-full border border-[var(--border)] focus:outline-none focus:border-[var(--accent)] disabled:opacity-50"
             />
             <button
               onClick={() => sendMessage(input)}
               disabled={!input.trim() || isLoading}
-              className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+              className="w-8 h-8 bg-[var(--accent)] rounded-full flex items-center justify-center hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
             >
               <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -209,7 +216,7 @@ export default function ChatWidget({ jobContext }: ChatWidgetProps) {
       {/* Toggle button */}
       <button
         onClick={() => setIsOpen(prev => !prev)}
-        className="w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 hover:scale-105"
+        className="w-14 h-14 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 hover:scale-105"
         aria-label="Career assistant chat"
       >
         {isOpen ? (
