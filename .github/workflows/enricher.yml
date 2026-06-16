@@ -1,0 +1,52 @@
+name: Job Enricher
+
+on:
+  schedule:
+    # Run 2 minutes after each scrape cycle (scraper runs */5, enricher runs 2,7,12,...)
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Max jobs to enrich (default 50)'
+        required: false
+        default: '50'
+
+concurrency:
+  group: job-enricher
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  enrich:
+    name: Score & Enrich Jobs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r cloud/requirements.txt
+
+      - name: Run enricher (cloud/Groq mode)
+        run: |
+          python cloud/enricher.py \
+            --prefer-cloud \
+            --limit ${{ github.event.inputs.limit || '50' }} \
+            --min-score 4
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          LINKEDIN_COOKIE:    ${{ secrets.LINKEDIN_COOKIE }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
