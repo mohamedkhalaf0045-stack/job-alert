@@ -1,58 +1,59 @@
 import 'package:flutter/material.dart';
 import '../models/job.dart';
+import '../main.dart' show kAccent, kFg, kFg2, kMuted, kMeta, kSuccess, kWarn, kDanger;
 
 class JobCard extends StatelessWidget {
   final Job job;
   const JobCard({super.key, required this.job});
 
   Color get _statusColor => switch (job.status) {
-        'applied'   => Colors.blue,
-        'saved'     => Colors.green,
-        'dismissed' => Colors.grey,
-        _           => const Color(0xFFF0B400),
+        'applied'   => kSuccess,
+        'saved'     => kAccent,
+        'dismissed' => kMeta,
+        _           => kWarn,
       };
 
-  Color get _sourceColor =>
-      job.source.toLowerCase().contains('linkedin') ? Colors.blue : Colors.orange;
+  Color get _sourceColor {
+    final s = job.source.toLowerCase();
+    if (s.contains('linkedin')) return const Color(0xFF0A66C2);
+    if (s.contains('indeed'))   return const Color(0xFF2164F3);
+    if (s.contains('adzuna'))   return const Color(0xFFD1003F);
+    if (s.contains('gmail'))    return const Color(0xFFEA4335);
+    return kMuted;
+  }
 
   Color _scoreColor(int score) {
-    if (score >= 8) return Colors.green.shade600;
-    if (score >= 5) return const Color(0xFFF0B400);
-    return Colors.grey.shade500;
+    if (score >= 8) return kSuccess;
+    if (score >= 5) return kWarn;
+    return kMuted;
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final hasScore = job.llmScore != null;
+    final hasScore   = job.llmScore != null;
     final hasSummary = (job.llmSummary ?? '').isNotEmpty;
     final hasMissing = job.missingSkills.isNotEmpty;
     final hasFlags   = job.redFlags.isNotEmpty;
     final hasExtras  = hasMissing || hasFlags;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      elevation: 1.5,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: IntrinsicHeight(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Status colour bar
+            // Status bar
             Container(
-              width: 4,
+              width: 3,
               decoration: BoxDecoration(
                 color: _statusColor,
-                borderRadius:
-                    const BorderRadius.horizontal(left: Radius.circular(8)),
+                borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
               ),
             ),
 
-            // Main content
+            // Content
             Expanded(
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -64,8 +65,13 @@ class JobCard extends StatelessWidget {
                           // Title
                           Text(
                             job.title,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: kFg,
+                              letterSpacing: -0.2,
+                              height: 1.3,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -73,30 +79,35 @@ class JobCard extends StatelessWidget {
 
                           // Company · Location
                           Text(
-                            '${job.company}  •  ${job.location}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                                color: Colors.grey.shade600),
+                            '${job.company}  ·  ${job.location}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: kMuted,
+                              height: 1.3,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
 
-                          // AI summary — only when scored
+                          // AI summary
                           if (hasSummary) ...[
                             const SizedBox(height: 4),
                             Text(
                               job.llmSummary!,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: Colors.grey.shade700,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: kFg2,
                                 fontStyle: FontStyle.italic,
+                                height: 1.4,
                               ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ],
 
-                          // Missing skills + red flags hints
+                          // Missing skills / flags
                           if (hasExtras) ...[
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 5),
                             Wrap(
                               spacing: 4,
                               runSpacing: 2,
@@ -105,13 +116,13 @@ class JobCard extends StatelessWidget {
                                   _HintChip(
                                     icon: Icons.bookmark_remove_outlined,
                                     label: 'Missing: ${job.missingSkills.take(3).join(', ')}',
-                                    color: Colors.red.shade400,
+                                    color: kDanger,
                                   ),
                                 if (hasFlags)
                                   _HintChip(
                                     icon: Icons.warning_amber_outlined,
                                     label: '${job.redFlags.length} flag${job.redFlags.length > 1 ? "s" : ""}',
-                                    color: Colors.orange.shade600,
+                                    color: kWarn,
                                   ),
                               ],
                             ),
@@ -122,52 +133,57 @@ class JobCard extends StatelessWidget {
 
                     const SizedBox(width: 8),
 
-                    // Right column: badge + source + matched + date
+                    // Right column: score, source, matched, date
                     Column(
                       mainAxisAlignment: MainAxisAlignment.start,
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        // Score badge + source chip in a row
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (job.hasCoverLetter)
                               const Padding(
                                 padding: EdgeInsets.only(right: 4),
-                                child: Icon(Icons.description,
-                                    size: 16, color: Colors.blue),
+                                child: Icon(Icons.description, size: 14, color: kAccent),
                               ),
                             if (hasScore) ...[
                               _ScoreBadge(
-                                  score: job.llmScore!,
-                                  color: _scoreColor(job.llmScore!)),
+                                score: job.llmScore!,
+                                color: _scoreColor(job.llmScore!),
+                              ),
                               const SizedBox(width: 4),
                             ],
                             _SourceChip(
-                                label: _shortSource(job.source),
-                                color: _sourceColor),
+                              label: _shortSource(job.source),
+                              color: _sourceColor,
+                            ),
                           ],
                         ),
                         const SizedBox(height: 4),
 
-                        // Matched skills count
                         if (job.matchedSkills.isNotEmpty)
-                          Text(
-                            '✓ ${job.matchedSkills.length} matched',
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.green.shade700,
-                                fontWeight: FontWeight.w600),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.check_circle_outline, size: 10, color: kSuccess),
+                              const SizedBox(width: 2),
+                              Text(
+                                '${job.matchedSkills.length} matched',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: kSuccess,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
 
-                        // Date
                         if (job.datePosted != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child: Text(
                               _daysAgo(job.datePosted!),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                  color: Colors.grey.shade500),
+                              style: const TextStyle(fontSize: 11, color: kMeta),
                             ),
                           ),
                       ],
@@ -184,12 +200,12 @@ class JobCard extends StatelessWidget {
 
   String _shortSource(String source) {
     final s = source.toLowerCase();
-    if (s.contains('linkedin')) return 'LI';
-    if (s.contains('indeed'))   return 'IN';
-    if (s.contains('adzuna'))   return 'AZ';
-    if (s.contains('glassdoor')) return 'GD';
-    if (s.contains('gmail'))    return 'GM';
-    if (s.contains('web'))      return 'WB';
+    if (s.contains('linkedin'))   return 'LI';
+    if (s.contains('indeed'))     return 'IN';
+    if (s.contains('adzuna'))     return 'AZ';
+    if (s.contains('glassdoor'))  return 'GD';
+    if (s.contains('gmail'))      return 'GM';
+    if (s.contains('web'))        return 'WB';
     return source.substring(0, source.length.clamp(0, 2)).toUpperCase();
   }
 
@@ -201,7 +217,7 @@ class JobCard extends StatelessWidget {
   }
 }
 
-// ── Widgets ──────────────────────────────────────────────────────────────────
+// ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _ScoreBadge extends StatelessWidget {
   final int score;
@@ -211,26 +227,22 @@ class _ScoreBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 32,
-      height: 32,
+      width: 28,
+      height: 28,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: color,
-        boxShadow: [
-          BoxShadow(
-              color: color.withOpacity(0.35),
-              blurRadius: 4,
-              offset: const Offset(0, 1)),
-        ],
+        color: color.withValues(alpha: 0.12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       alignment: Alignment.center,
       child: Text(
         '$score',
-        style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            height: 1),
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          height: 1,
+        ),
       ),
     );
   }
@@ -244,17 +256,19 @@ class _SourceChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(10),
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
       ),
       child: Text(
         label,
-        style: const TextStyle(
-            color: Colors.white,
-            fontSize: 10,
-            fontWeight: FontWeight.w600),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -264,8 +278,7 @@ class _HintChip extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
-  const _HintChip(
-      {required this.icon, required this.label, required this.color});
+  const _HintChip({required this.icon, required this.label, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -276,8 +289,7 @@ class _HintChip extends StatelessWidget {
         const SizedBox(width: 2),
         Text(
           label,
-          style: TextStyle(
-              fontSize: 10, color: color, fontWeight: FontWeight.w500),
+          style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500),
         ),
       ],
     );

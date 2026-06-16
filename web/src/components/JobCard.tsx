@@ -4,11 +4,20 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Job, JobStatus } from '@/lib/types'
 
-function scoreColor(score: number | null): string {
-  if (score === null) return 'bg-gray-100 text-gray-500'
-  if (score >= 8)     return 'bg-green-100 text-green-700'
-  if (score >= 6)     return 'bg-yellow-100 text-yellow-700'
-  return 'bg-red-100 text-red-500'
+function scoreColors(score: number | null) {
+  if (score === null) return 'bg-[var(--border-soft)] text-[var(--muted)]'
+  if (score >= 8)     return 'bg-[var(--success-bg)] text-[var(--success)]'
+  if (score >= 6)     return 'bg-[var(--warn-bg)] text-[var(--warn)]'
+  return 'bg-[var(--danger-bg)] text-[var(--danger)]'
+}
+
+function sourceChip(url: string): { label: string; cls: string } {
+  const u = (url || '').toLowerCase()
+  if (u.includes('linkedin'))  return { label: 'LinkedIn', cls: 'bg-[#0a66c2] text-white' }
+  if (u.includes('indeed'))    return { label: 'Indeed',   cls: 'bg-[#2164f3] text-white' }
+  if (u.includes('adzuna'))    return { label: 'Adzuna',   cls: 'bg-[#d1003f] text-white' }
+  if (u.includes('gmail'))     return { label: 'Gmail',    cls: 'bg-[#ea4335] text-white' }
+  return { label: 'Web', cls: 'bg-[var(--muted)] text-white' }
 }
 
 function salaryLine(job: Job): string | null {
@@ -65,96 +74,111 @@ export default function JobCard({ job, userSkills }: { job: Job; userSkills?: st
 
   if (removed) return null
 
-  const salary = salaryLine(job)
+  const salary     = salaryLine(job)
   const skillMatch = userSkills?.length ? skillMatchScore(userSkills, job) : null
-  const posted = job.date_collected
+  const posted     = job.date_collected
     ? new Date(job.date_collected).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     : ''
+  const src = sourceChip(job.url || '')
 
   return (
     <article
-      className={`bg-white rounded-xl border p-4 transition ${
-        status === 'saved'    ? 'border-blue-200 bg-blue-50/30'  :
-        status === 'applied'  ? 'border-green-200 bg-green-50/30' : ''
+      className={`bg-white rounded-xl border transition-all duration-150 p-4 hover:shadow-sm ${
+        status === 'saved'
+          ? 'border-[var(--accent)]/30 bg-[var(--accent-bg)]'
+          : status === 'applied'
+            ? 'border-[#16a34a]/25 bg-[var(--success-bg)]/40'
+            : 'border-[var(--border)] hover:border-[#cbd5e1]'
       }`}
     >
+      {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <a
             href={job.url} target="_blank" rel="noopener noreferrer"
-            className="font-semibold text-sm hover:text-blue-600 hover:underline block truncate"
+            className="font-semibold text-sm text-[var(--fg)] hover:text-[var(--accent)] block truncate leading-snug transition-colors"
           >
             {job.title}
           </a>
-          <p className="text-xs text-gray-500 mt-0.5 truncate">
-            {job.company} · {job.location}
+          <p className="text-xs text-[var(--muted)] mt-0.5 truncate">
+            {job.company}
+            {job.location && <> &middot; {job.location}</>}
           </p>
         </div>
-        {job.llm_score !== null && (
-          <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${scoreColor(job.llm_score)}`}>
-            {job.llm_score}/10
+        <div className="flex items-center gap-1.5 shrink-0">
+          {job.llm_score !== null && (
+            <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md tabular-nums ${scoreColors(job.llm_score)}`}>
+              {job.llm_score}/10
+            </span>
+          )}
+          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-[4px] ${src.cls}`}>
+            {src.label}
           </span>
-        )}
+        </div>
       </div>
 
+      {/* AI summary */}
       {job.llm_summary && (
-        <p className="text-xs text-gray-600 mt-2 line-clamp-2">{job.llm_summary}</p>
+        <p className="text-xs text-[var(--fg-2)] mt-2 line-clamp-2 leading-relaxed">
+          {job.llm_summary}
+        </p>
       )}
 
+      {/* Skill match */}
       {skillMatch && skillMatch.matched.length > 0 && (
-        <div className="mt-2">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${
-              skillMatch.pct >= 60 ? 'bg-green-100 text-green-700' :
-              skillMatch.pct >= 30 ? 'bg-yellow-100 text-yellow-700' :
-              'bg-gray-100 text-gray-500'
-            }`}>
-              {skillMatch.pct}% skill match
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-pill shrink-0 ${
+            skillMatch.pct >= 60 ? 'bg-[var(--success-bg)] text-[var(--success)]' :
+            skillMatch.pct >= 30 ? 'bg-[var(--warn-bg)] text-[var(--warn)]'       :
+            'bg-[var(--border-soft)] text-[var(--muted)]'
+          }`}>
+            {skillMatch.pct}% match
+          </span>
+          {skillMatch.matched.slice(0, 4).map(s => (
+            <span key={s} className="text-[10px] px-1.5 py-0.5 bg-[var(--accent-bg)] text-[var(--accent)] rounded font-medium">
+              {s}
             </span>
-            {skillMatch.matched.slice(0, 4).map(s => (
-              <span key={s} className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-medium">
-                {s}
-              </span>
-            ))}
-            {skillMatch.matched.length > 4 && (
-              <span className="text-xs text-gray-400">+{skillMatch.matched.length - 4}</span>
-            )}
-          </div>
+          ))}
+          {skillMatch.matched.length > 4 && (
+            <span className="text-xs text-[var(--meta)]">+{skillMatch.matched.length - 4}</span>
+          )}
         </div>
       )}
 
+      {/* Salary */}
       {salary && (
-        <p className="text-xs text-green-700 font-medium mt-1">{salary}</p>
+        <p className="text-xs text-[var(--success)] font-medium mt-1.5">{salary}</p>
       )}
 
-      <div className="flex items-center gap-2 mt-3 flex-wrap">
+      {/* Action row */}
+      <div className="flex items-center gap-1.5 mt-3">
         <button
           onClick={() => interact('saved')} disabled={saving}
-          className={`text-xs px-2.5 py-1 rounded-lg border transition ${
+          className={`text-xs px-2.5 py-1 rounded-md border font-medium transition-colors duration-150 ${
             status === 'saved'
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'border-gray-200 hover:bg-gray-50'
+              ? 'bg-[var(--accent)] text-[var(--accent-on)] border-[var(--accent)]'
+              : 'border-[var(--border)] text-[var(--muted)] hover:border-[#cbd5e1] hover:bg-[var(--border-soft)]'
           }`}
         >
           {status === 'saved' ? '★ Saved' : '☆ Save'}
         </button>
         <button
           onClick={() => interact('applied')} disabled={saving}
-          className={`text-xs px-2.5 py-1 rounded-lg border transition ${
+          className={`text-xs px-2.5 py-1 rounded-md border font-medium transition-colors duration-150 ${
             status === 'applied'
-              ? 'bg-green-600 text-white border-green-600'
-              : 'border-gray-200 hover:bg-gray-50'
+              ? 'bg-[var(--success)] text-white border-[var(--success)]'
+              : 'border-[var(--border)] text-[var(--muted)] hover:border-[#cbd5e1] hover:bg-[var(--border-soft)]'
           }`}
         >
           {status === 'applied' ? '✓ Applied' : 'Applied'}
         </button>
         <button
           onClick={() => interact('dismissed')} disabled={saving}
-          className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-400"
+          className="text-xs px-2.5 py-1 rounded-md border border-[var(--border)] text-[var(--meta)] hover:border-[#cbd5e1] hover:bg-[var(--border-soft)] transition-colors duration-150"
         >
           Hide
         </button>
-        <span className="ml-auto text-xs text-gray-400">{posted}</span>
+        <span className="ml-auto text-xs text-[var(--meta)] tabular-nums">{posted}</span>
       </div>
     </article>
   )

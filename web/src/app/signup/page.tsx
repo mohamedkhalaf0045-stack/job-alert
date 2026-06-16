@@ -16,11 +16,11 @@ function GoogleIcon() {
 }
 
 export default function SignupPage() {
-  const [email,    setEmail]    = useState('')
-  const [password, setPassword] = useState('')
-  const [error,    setError]    = useState('')
-  const [loading,  setLoading]  = useState(false)
-  const [sent,     setSent]     = useState(false)
+  const [email,         setEmail]         = useState('')
+  const [password,      setPassword]      = useState('')
+  const [error,         setError]         = useState('')
+  const [loading,       setLoading]       = useState(false)
+  const [sent,          setSent]          = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -49,17 +49,22 @@ export default function SignupPage() {
     })
   }
 
-  const inputCls = 'w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+  const inputCls = [
+    'w-full border border-[var(--border)] rounded-lg px-3 py-2.5 text-sm',
+    'focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/25 focus:border-[var(--accent)]',
+    'bg-white placeholder:text-[var(--meta)] text-[var(--fg)] transition-all',
+  ].join(' ')
 
   if (sent) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4">
-        <div className="text-center max-w-sm">
+      <div className="min-h-screen flex flex-col items-center justify-center px-4 bg-[var(--bg)]">
+        <div className="text-center max-w-sm bg-white rounded-2xl border border-[var(--border)] shadow-sm p-10">
           <div className="text-4xl mb-4">📬</div>
-          <h2 className="text-2xl font-bold mb-2">Check your email</h2>
-          <p className="text-gray-500">
-            We sent a confirmation link to <strong>{email}</strong>. Click it to activate your
-            account and set up your preferences.
+          <h2 className="text-xl font-bold mb-2 text-[var(--fg)] tracking-tight">Check your email</h2>
+          <p className="text-sm text-[var(--muted)] leading-relaxed">
+            We sent a confirmation link to{' '}
+            <strong className="text-[var(--fg-2)]">{email}</strong>.
+            Click it to activate your account and set up your preferences.
           </p>
         </div>
       </div>
@@ -67,16 +72,23 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <h1 className="text-2xl font-bold mb-1">Create account</h1>
-        <p className="text-gray-500 text-sm mb-6">Free — no credit card required.</p>
+    <div className="min-h-screen flex flex-col items-center justify-center px-4 bg-[var(--bg)]">
+      {/* Logo */}
+      <Link href="/" className="flex items-center gap-2 mb-8 select-none">
+        <span className="w-8 h-8 rounded-lg bg-[var(--accent)] text-white text-sm font-bold flex items-center justify-center leading-none">
+          J
+        </span>
+        <span className="font-semibold text-[var(--fg)] text-lg tracking-tight">JobAlert</span>
+      </Link>
 
-        {/* Google button */}
+      <div className="w-full max-w-sm bg-white rounded-2xl border border-[var(--border)] shadow-sm p-8">
+        <h1 className="text-xl font-bold mb-1 text-[var(--fg)] tracking-tight">Create account</h1>
+        <p className="text-sm text-[var(--muted)] mb-6">Free — no credit card required.</p>
+
         <button
           onClick={handleGoogleSignIn}
           disabled={googleLoading}
-          className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors mb-4"
+          className="w-full flex items-center justify-center gap-3 border border-[var(--border)] rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--fg-2)] hover:bg-[var(--border-soft)] disabled:opacity-50 transition-colors mb-4"
         >
           <GoogleIcon />
           {googleLoading ? 'Redirecting…' : 'Continue with Google'}
@@ -84,14 +96,14 @@ export default function SignupPage() {
 
         <div className="relative mb-4">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-200" />
+            <div className="w-full border-t border-[var(--border)]" />
           </div>
           <div className="relative flex justify-center text-xs">
-            <span className="bg-white px-3 text-gray-400">or sign up with email</span>
+            <span className="bg-white px-3 text-[var(--meta)]">or</span>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3">
           <input
             type="email" placeholder="Email address" required autoFocus
             value={email} onChange={e => setEmail(e.target.value)}
@@ -102,17 +114,20 @@ export default function SignupPage() {
             value={password} onChange={e => setPassword(e.target.value)}
             className={inputCls}
           />
-          {error && <p className="text-red-600 text-sm">{error}</p>}
+          {error && <p className="text-[var(--danger)] text-xs">{error}</p>}
           <button
             type="submit" disabled={loading}
-            className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+            className="w-full bg-[var(--accent)] text-[var(--accent-on)] py-2.5 rounded-lg hover:bg-[var(--accent-hover)] disabled:opacity-50 font-medium text-sm transition-colors"
           >
             {loading ? 'Creating…' : 'Create account'}
           </button>
         </form>
-        <p className="mt-4 text-sm text-center text-gray-500">
+
+        <p className="mt-5 text-sm text-center text-[var(--muted)]">
           Already have an account?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline">Sign in</Link>
+          <Link href="/login" className="text-[var(--accent)] font-medium hover:underline">
+            Sign in
+          </Link>
         </p>
       </div>
     </div>
