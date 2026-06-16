@@ -75,6 +75,24 @@ export default async function FeedPage({
   const nextCursor = jobList.length === 20 ? jobList[jobList.length - 1].date_collected : null
   const userSkills = await getUserCVSkills(user.id)
 
+  // Group jobs by recency using server-side time (UTC, consistent with date_collected)
+  const now = Date.now()
+  const H24 = 24 * 60 * 60 * 1000
+  const H48 = 48 * 60 * 60 * 1000
+
+  function ageGroup(job: Job): 'today' | 'yesterday' | 'older' {
+    const age = now - new Date(job.date_collected).getTime()
+    if (age < H24)  return 'today'
+    if (age < H48)  return 'yesterday'
+    return 'older'
+  }
+
+  const sections: { label: string; key: string; jobs: Job[] }[] = [
+    { label: 'Today',     key: 'today',     jobs: jobList.filter(j => ageGroup(j) === 'today') },
+    { label: 'Yesterday', key: 'yesterday', jobs: jobList.filter(j => ageGroup(j) === 'yesterday') },
+    { label: 'Older',     key: 'older',     jobs: jobList.filter(j => ageGroup(j) === 'older') },
+  ].filter(s => s.jobs.length > 0)
+
   if (!jobList.length && !before) {
     return (
       <div>
@@ -108,9 +126,33 @@ export default async function FeedPage({
         )}
       </div>
 
-      <div className="space-y-3">
-        {jobList.map(job => (
-          <JobCard key={job.job_id} job={job} userSkills={userSkills} />
+      <div className="space-y-6">
+        {sections.map(section => (
+          <div key={section.key}>
+            <div className="flex items-center gap-3 mb-3">
+              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${
+                section.key === 'today'
+                  ? 'bg-[var(--success-bg)] text-[var(--success)]'
+                  : section.key === 'yesterday'
+                    ? 'bg-[var(--warn-bg)] text-[var(--warn)]'
+                    : 'bg-[var(--border-soft)] text-[var(--muted)]'
+              }`}>
+                {section.label}
+              </span>
+              <span className="text-xs text-[var(--meta)]">{section.jobs.length} job{section.jobs.length !== 1 ? 's' : ''}</span>
+              <div className="flex-1 h-px bg-[var(--border)]" />
+            </div>
+            <div className="space-y-3">
+              {section.jobs.map(job => (
+                <JobCard
+                  key={job.job_id}
+                  job={job}
+                  userSkills={userSkills}
+                  isNew={section.key === 'today'}
+                />
+              ))}
+            </div>
+          </div>
         ))}
       </div>
 

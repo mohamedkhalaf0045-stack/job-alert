@@ -40,7 +40,7 @@ function skillMatchScore(userSkills: string[], job: Job): { matched: string[]; p
   return { matched, pct: Math.round((matched.length / userSkills.length) * 100) }
 }
 
-export default function JobCard({ job, userSkills }: { job: Job; userSkills?: string[] }) {
+export default function JobCard({ job, userSkills, isNew }: { job: Job; userSkills?: string[]; isNew?: boolean }) {
   const [status,    setStatus]    = useState<JobStatus | null>(job.my_status)
   const [saving,    setSaving]    = useState(false)
   const [removed,   setRemoved]   = useState(false)
@@ -127,6 +127,11 @@ export default function JobCard({ job, userSkills }: { job: Job; userSkills?: st
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            {isNew && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-[4px] bg-[var(--success)] text-white tracking-wide">
+                NEW
+              </span>
+            )}
             {job.llm_score !== null && (
               <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md tabular-nums ${scoreColors(job.llm_score)}`}>
                 {job.llm_score}/10
