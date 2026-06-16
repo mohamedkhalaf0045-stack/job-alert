@@ -71,7 +71,10 @@ export default async function FeedPage({
     )
   }
 
-  const jobList = (jobs as Job[]) ?? []
+  // Sort newest-first; jobs in the same scrape batch can share near-identical
+  // date_collected values so Postgres order is non-deterministic without a tiebreaker.
+  const jobList = ((jobs as Job[]) ?? [])
+    .sort((a, b) => new Date(b.date_collected).getTime() - new Date(a.date_collected).getTime())
   const nextCursor = jobList.length === 20 ? jobList[jobList.length - 1].date_collected : null
   const userSkills = await getUserCVSkills(user.id)
 
