@@ -95,10 +95,18 @@ export default function JobCard({ job, userSkills, isNew }: { job: Job; userSkil
   const salary     = salaryLine(job)
   const skillMatch = userSkills?.length ? skillMatchScore(userSkills, job) : null
   // Use date_posted (when job was actually posted); fall back to date_collected
-  const dateRef    = job.date_posted ?? job.date_collected
-  const posted     = dateRef
-    ? new Date(dateRef).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-    : ''
+  const dateRef = job.date_posted ?? job.date_collected
+  function relativeTime(iso: string): string {
+    const diffMs = Date.now() - new Date(iso).getTime()
+    const mins  = Math.floor(diffMs / 60_000)
+    const hours = Math.floor(diffMs / 3_600_000)
+    const days  = Math.floor(diffMs / 86_400_000)
+    if (mins  < 60)  return `${mins}m ago`
+    if (hours < 24)  return `${hours}h ago`
+    if (days  < 7)   return `${days}d ago`
+    return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  }
+  const posted = dateRef ? relativeTime(dateRef) : ''
   const src = sourceChip(job.url || '')
 
   return (
