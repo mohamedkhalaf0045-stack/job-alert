@@ -48,9 +48,13 @@ export default function JobDetailModal({ job, onClose }: Props) {
 
   useEffect(() => {
     fetch(`/api/app/jobs/${job.job_id}`)
-      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(async r => {
+        const body = await r.json()
+        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+        return body
+      })
       .then(data => setDetail(data.job))
-      .catch(() => setFetchError('Could not load job details.'))
+      .catch(err => setFetchError(String(err?.message ?? err)))
       .finally(() => setLoading(false))
   }, [job.job_id])
 
@@ -274,14 +278,14 @@ export default function JobDetailModal({ job, onClose }: Props) {
             </section>
           )}
 
-          {!loading && !fetchError && !detail?.description && !detail?.llm_summary && !job.llm_summary && (
-            <div className="text-sm text-[var(--meta)] text-center py-6 space-y-2">
-              <p>No description or AI analysis available yet for this job.</p>
+          {!loading && !fetchError && !detail?.description && (
+            <div className="text-sm text-[var(--meta)] text-center py-4 space-y-2">
+              <p className="text-xs">Full description not yet available — view the original posting.</p>
               <a
                 href={job.url} target="_blank" rel="noopener noreferrer"
                 className="inline-block text-xs px-3 py-1.5 rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors"
               >
-                View original posting →
+                View on {sourceChip(job.url || '').label} →
               </a>
             </div>
           )}
