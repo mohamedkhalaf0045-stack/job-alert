@@ -8,11 +8,17 @@ interface Message {
 }
 
 interface JobContext {
-  title?: string
-  company?: string
-  location?: string
-  description?: string
-  match_score?: number
+  title?:          string
+  company?:        string
+  location?:       string
+  description?:    string
+  match_score?:    number
+  llm_summary?:    string
+  matched_skills?: string[]
+  missing_skills?: string[]
+  salary?:         string
+  source?:         string
+  date_posted?:    string
 }
 
 const SUGGESTED_QUESTIONS = [

@@ -8,12 +8,18 @@ interface Message {
   content: string
 }
 
-interface JobContext {
-  title?: string
-  company?: string
-  location?: string
-  description?: string
-  match_score?: number
+export interface JobContext {
+  title?:          string
+  company?:        string
+  location?:       string
+  description?:    string
+  match_score?:    number
+  llm_summary?:    string
+  matched_skills?: string[]
+  missing_skills?: string[]
+  salary?:         string
+  source?:         string
+  date_posted?:    string
 }
 
 async function getCVContext(userId: string): Promise<string> {
@@ -29,19 +35,38 @@ async function getCVContext(userId: string): Promise<string> {
   try {
     const cv = JSON.parse(data.value)
     const parts: string[] = []
-    if (cv.summary) parts.push(`Professional summary: ${cv.summary}`)
+    if (cv.summary)          parts.push(`Professional summary: ${cv.summary}`)
     if (cv.years_experience) parts.push(`Years of experience: ${cv.years_experience}`)
-    if (Array.isArray(cv.job_titles) && cv.job_titles.length) parts.push(`Past job titles: ${cv.job_titles.join(', ')}`)
-    if (Array.isArray(cv.skills) && cv.skills.length) parts.push(`Skills: ${cv.skills.join(', ')}`)
+    if (Array.isArray(cv.job_titles)     && cv.job_titles.length)     parts.push(`Past job titles: ${cv.job_titles.join(', ')}`)
+    if (Array.isArray(cv.skills)         && cv.skills.length)         parts.push(`Skills: ${cv.skills.join(', ')}`)
     if (Array.isArray(cv.certifications) && cv.certifications.length) parts.push(`Certifications: ${cv.certifications.join(', ')}`)
     return parts.join('\n')
   } catch { return '' }
 }
 
 function buildSystemPrompt(cvContext: string, job?: JobContext): string {
-  const jobSection = job
-    ? `\n\nCurrent job the user is asking about:\nTitle: ${job.title ?? 'Unknown'}\nCompany: ${job.company ?? 'Unknown'}\nLocation: ${job.location ?? 'Unknown'}\nMatch score: ${job.match_score != null ? job.match_score + '%' : 'N/A'}\nDescription:\n${(job.description ?? '').substring(0, 2000)}`
-    : ''
+  let jobSection = ''
+  if (job) {
+    const lines: string[] = ['\n\nCurrent job the user is asking about:']
+    if (job.title)    lines.push(`Title: ${job.title}`)
+    if (job.company)  lines.push(`Company: ${job.company}`)
+    if (job.location) lines.push(`Location: ${job.location}`)
+    if (job.source)   lines.push(`Posted on: ${job.source}`)
+    if (job.date_posted) lines.push(`Date posted: ${job.date_posted}`)
+    if (job.match_score != null) lines.push(`AI match score: ${job.match_score}/10`)
+    if (job.salary)   lines.push(`Salary: ${job.salary}`)
+    if (job.llm_summary) lines.push(`AI summary: ${job.llm_summary}`)
+    if (Array.isArray(job.matched_skills) && job.matched_skills.length) {
+      lines.push(`Matched skills (from CV): ${job.matched_skills.join(', ')}`)
+    }
+    if (Array.isArray(job.missing_skills) && job.missing_skills.length) {
+      lines.push(`Missing skills (not in CV): ${job.missing_skills.join(', ')}`)
+    }
+    if (job.description) {
+      lines.push(`\nJob description:\n${job.description.substring(0, 3000)}`)
+    }
+    jobSection = lines.join('\n')
+  }
 
   const cvSection = cvContext
     ? `\n\nUser's CV / background:\n${cvContext}`
@@ -58,7 +83,7 @@ function buildSystemPrompt(cvContext: string, job?: JobContext): string {
 
 Be concise, practical, and specific to the UAE job market. Respond in the same language the user writes in (Arabic or English).${cvSection}${jobSection}
 
-Important: If you don't have enough context to answer, ask one clarifying question. Keep responses under 250 words unless the user asks for detail.`
+Important: If you don't have enough context to answer, ask one clarifying question. Keep responses under 300 words unless the user asks for detail.`
 }
 
 export async function POST(req: NextRequest) {

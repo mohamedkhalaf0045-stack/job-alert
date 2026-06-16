@@ -77,10 +77,15 @@ export default function JobCard({ job, userSkills }: { job: Job; userSkills?: st
   function openChat() {
     window.dispatchEvent(new CustomEvent('open-chat', {
       detail: {
-        title:      job.title,
-        company:    job.company,
-        location:   job.location,
-        match_score: job.llm_score ?? undefined,
+        title:          job.title,
+        company:        job.company,
+        location:       job.location,
+        match_score:    job.llm_score ?? undefined,
+        llm_summary:    job.llm_summary ?? undefined,
+        matched_skills: job.matched_skills ?? undefined,
+        salary:         salaryLine(job) ?? undefined,
+        source:         job.source ?? undefined,
+        date_posted:    job.date_posted ?? undefined,
       },
     }))
   }

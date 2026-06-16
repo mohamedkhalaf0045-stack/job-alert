@@ -92,11 +92,17 @@ export default function JobDetailModal({ job, onClose }: Props) {
     const d = detail ?? job
     window.dispatchEvent(new CustomEvent('open-chat', {
       detail: {
-        title:       d.title,
-        company:     d.company,
-        location:    d.location,
-        description: (detail as JobDetail | null)?.description ?? undefined,
-        match_score: d.llm_score ?? undefined,
+        title:          d.title,
+        company:        d.company,
+        location:       d.location,
+        description:    detail?.description ?? undefined,
+        match_score:    d.llm_score ?? undefined,
+        llm_summary:    d.llm_summary ?? undefined,
+        matched_skills: (d.matched_skills ?? []).length ? d.matched_skills ?? undefined : undefined,
+        missing_skills: detail?.missing_skills?.length ? detail.missing_skills : undefined,
+        salary:         salaryLine(d) ?? undefined,
+        source:         d.source ?? undefined,
+        date_posted:    d.date_posted ?? undefined,
       },
     }))
     onClose()
@@ -186,8 +192,9 @@ export default function JobDetailModal({ job, onClose }: Props) {
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
           {loading && (
-            <div className="flex items-center justify-center py-12">
-              <div className="w-6 h-6 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+            <div className="flex items-center justify-center gap-3 py-12 text-sm text-[var(--muted)]">
+              <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin shrink-0" />
+              Fetching job details…
             </div>
           )}
 
@@ -268,7 +275,15 @@ export default function JobDetailModal({ job, onClose }: Props) {
           )}
 
           {!loading && !fetchError && !detail?.description && !detail?.llm_summary && !job.llm_summary && (
-            <p className="text-sm text-[var(--meta)] text-center py-4">No additional details available for this job.</p>
+            <div className="text-sm text-[var(--meta)] text-center py-6 space-y-2">
+              <p>No description or AI analysis available yet for this job.</p>
+              <a
+                href={job.url} target="_blank" rel="noopener noreferrer"
+                className="inline-block text-xs px-3 py-1.5 rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors"
+              >
+                View original posting →
+              </a>
+            </div>
           )}
         </div>
 
