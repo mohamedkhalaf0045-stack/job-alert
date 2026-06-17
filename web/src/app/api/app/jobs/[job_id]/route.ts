@@ -2,6 +2,32 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+// Explicit row shape so the concatenated select() string is typed correctly.
+// Without this, postgrest-js infers GenericStringError and the build fails.
+interface JobDetailRow {
+  job_id: string
+  title: string | null
+  company: string | null
+  location: string | null
+  url: string | null
+  source: string | null
+  date_posted: string | null
+  date_collected: string | null
+  llm_score: number | null
+  llm_summary: string | null
+  description: string | null
+  missing_skills: unknown
+  red_flags: unknown
+  matched_skills: unknown
+  salary_min: number | null
+  salary_max: number | null
+  salary_avg: number | null
+  salary_currency: string | null
+  salary_period: string | null
+  salary_source: string | null
+  cover_letter_draft: string | null
+}
+
 async function fetchLinkedInDescription(jobUrl: string): Promise<string> {
   try {
     const m = jobUrl.match(/\/(?:view|jobs\/view)\/(\d+)/)
@@ -49,7 +75,7 @@ export async function GET(
       'cover_letter_draft'
     )
     .eq('job_id', job_id)
-    .single()
+    .single<JobDetailRow>()
 
   if (error || !data) {
     console.error('[jobs detail] db error:', error?.message)
