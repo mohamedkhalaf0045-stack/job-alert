@@ -536,30 +536,40 @@ def cloud_score(prompt: str, cloud_key: str,
     """
     if not cloud_key:
         return -1, "", {}
-    try:
-        r = requests.post(
-            _GROQ_ENDPOINT,
-            headers={
-                "Authorization": f"Bearer {cloud_key}",
-                "Content-Type":  "application/json",
-            },
-            json={
-                "model": cloud_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-        raw = r.json()["choices"][0]["message"]["content"]
-        breakdown = _breakdown_from_json(raw)
-        if not breakdown:
+    for attempt in range(3):
+        try:
+            r = requests.post(
+                _GROQ_ENDPOINT,
+                headers={
+                    "Authorization": f"Bearer {cloud_key}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model": cloud_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=60,
+            )
+            if r.status_code == 429:
+                retry_after = int(r.headers.get("retry-after", 30))
+                _log(f"Cloud-fallback (Groq) rate-limited — sleeping {retry_after}s (attempt {attempt+1}/3)")
+                time.sleep(retry_after)
+                continue
+            r.raise_for_status()
+            raw = r.json()["choices"][0]["message"]["content"]
+            breakdown = _breakdown_from_json(raw)
+            if not breakdown:
+                return -1, "", {}
+            return breakdown["overall_score"], breakdown["reasoning"], breakdown
+        except requests.exceptions.HTTPError:
+            raise
+        except Exception as exc:
+            _log(f"Cloud-fallback (Groq) error: {exc}")
             return -1, "", {}
-        return breakdown["overall_score"], breakdown["reasoning"], breakdown
-    except Exception as exc:
-        _log(f"Cloud-fallback (Groq) error: {exc}")
-        return -1, "", {}
+    _log("Cloud-fallback (Groq) rate-limited on all retries — skipping this job")
+    return -1, "", {}
 
 
 def ollama_score(
@@ -915,6 +925,7 @@ def main() -> None:
     # SECURITY: the key comes from env / CLI only — never from bot_state,
     # which is readable with the public anon key shipped in the mobile app.
     cloud_key   = (_env("GROQ_API_KEY") or args.groq_key).strip()
+    _log(f"GROQ_API_KEY: {'SET ({} chars)'.format(len(cloud_key)) if cloud_key else 'NOT SET — cloud scoring disabled'}")
     # Phase 24: Adzuna credentials for real market-salary stats (optional —
     # when missing, the scoring LLM's salary estimate is used instead)
     adzuna_app_id  = _env("ADZUNA_APP_ID")
@@ -1031,6 +1042,7 @@ def main() -> None:
     _log(f"Found {len(jobs)} unscored job(s). Scoring...")
 
     scored = dismissed = failed = cover_letters_generated = tailored_cvs_generated = 0
+    consecutive_failures = 0
 
     for i, job in enumerate(jobs, 1):
         title   = job.get("title", "?")
@@ -1122,8 +1134,15 @@ def main() -> None:
                                                   prefer_cloud=prefer_cloud)
 
         if score == -1:
-            _log("          Scoring unavailable (Ollama down, no cloud fallback) - stopping enrichment")
-            break
+            consecutive_failures += 1
+            _log(f"          Scoring unavailable — skipping this job (consecutive failures: {consecutive_failures}/5)")
+            failed += 1
+            if consecutive_failures >= 5:
+                _log("          5 consecutive failures — stopping enrichment for this run")
+                break
+            time.sleep(5)
+            continue
+        consecutive_failures = 0
 
         # Auto-dismiss if LLM itself says "Wrong field" — score is irrelevant
         # when the model explicitly flags the job as the wrong profession.
