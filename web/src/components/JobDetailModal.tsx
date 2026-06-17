@@ -14,15 +14,18 @@ function sourceChip(url: string): { label: string; cls: string } {
 }
 
 function salaryLine(job: Job | JobDetail): string | null {
-  const { salary_min, salary_max, salary_avg, salary_currency, salary_period } = job
+  const { salary_min, salary_max, salary_avg, salary_currency, salary_period, salary_source } = job
   if (!salary_min && !salary_max && !salary_avg) return null
   const cur = salary_currency || 'AED'
   const per = salary_period === 'year' ? '/yr' : '/mo'
+  const s = (salary_source || '').toLowerCase()
+  const est = s.includes('estimate') || s.includes('ai') || s.includes('market')
+  const tag = est ? ' est.' : ''
   if (salary_min && salary_max) {
-    return `${cur} ${salary_min.toLocaleString()}–${salary_max.toLocaleString()}${per}`
+    return `${cur} ${salary_min.toLocaleString()}–${salary_max.toLocaleString()}${per}${tag}`
   }
   const val = salary_avg || salary_max || salary_min || 0
-  return `${cur} ${val.toLocaleString()}${per}`
+  return `~${cur} ${val.toLocaleString()}${per}${tag}`
 }
 
 function scoreColors(score: number | null) {

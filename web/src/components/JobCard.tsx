@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Job, JobStatus } from '@/lib/types'
 import JobDetailModal from './JobDetailModal'
+import CoverLetterModal from './CoverLetterModal'
 
 function scoreColors(score: number | null) {
   if (score === null) return 'bg-[var(--border-soft)] text-[var(--muted)]'
@@ -22,15 +23,20 @@ function sourceChip(url: string): { label: string; cls: string } {
 }
 
 function salaryLine(job: Job): string | null {
-  const { salary_min, salary_max, salary_avg, salary_currency, salary_period } = job
+  const { salary_min, salary_max, salary_avg, salary_currency, salary_period, salary_source } = job
   if (!salary_min && !salary_max && !salary_avg) return null
   const cur = salary_currency || 'AED'
   const per = salary_period === 'year' ? '/yr' : '/mo'
+  // AI/market estimates are not the employer's stated figure — label them honestly.
+  const est = (salary_source || '').toLowerCase().includes('estimate') ||
+              (salary_source || '').toLowerCase().includes('ai')      ||
+              (salary_source || '').toLowerCase().includes('market')
+  const tag = est ? ' est.' : ''
   if (salary_min && salary_max) {
-    return `${cur} ${salary_min.toLocaleString()}–${salary_max.toLocaleString()}${per}`
+    return `${cur} ${salary_min.toLocaleString()}–${salary_max.toLocaleString()}${per}${tag}`
   }
   const val = salary_avg || salary_max || salary_min || 0
-  return `${cur} ${val.toLocaleString()}${per}`
+  return `~${cur} ${val.toLocaleString()}${per}${tag}`
 }
 
 function skillMatchScore(userSkills: string[], job: Job): { matched: string[]; pct: number } {
@@ -45,6 +51,7 @@ export default function JobCard({ job, userSkills, isNew }: { job: Job; userSkil
   const [saving,    setSaving]    = useState(false)
   const [removed,   setRemoved]   = useState(false)
   const [showModal, setShowModal] = useState(false)
+  const [showCover, setShowCover] = useState(false)
 
   async function interact(newStatus: JobStatus) {
     if (saving) return
@@ -220,6 +227,12 @@ export default function JobCard({ job, userSkills, isNew }: { job: Job; userSkil
             Analyze
           </button>
           <button
+            onClick={() => setShowCover(true)}
+            className="text-xs px-2.5 py-1 rounded-md border border-[var(--border)] text-[var(--fg-2)] hover:border-[var(--accent)]/50 hover:bg-[var(--accent-bg)] hover:text-[var(--accent)] transition-colors duration-150 font-medium"
+          >
+            Cover Letter
+          </button>
+          <button
             onClick={openChat}
             className="text-xs px-2.5 py-1 rounded-md bg-[var(--accent)] text-white font-medium hover:bg-[var(--accent-hover)] transition-colors duration-150"
           >
@@ -231,6 +244,9 @@ export default function JobCard({ job, userSkills, isNew }: { job: Job; userSkil
 
       {showModal && (
         <JobDetailModal job={job} onClose={() => setShowModal(false)} />
+      )}
+      {showCover && (
+        <CoverLetterModal job={job} onClose={() => setShowCover(false)} />
       )}
     </>
   )
