@@ -127,6 +127,12 @@ export default function AdminUsers() {
                 >
                   View as
                 </a>
+                <a
+                  href={`/app/admin/users/${u.id}/edit`}
+                  className="text-xs px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors text-center"
+                >
+                  Edit
+                </a>
                 <button
                   onClick={() => deleteUser(u)}
                   disabled={deletingId === u.id}
