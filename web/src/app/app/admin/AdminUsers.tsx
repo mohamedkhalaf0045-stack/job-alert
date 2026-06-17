@@ -120,13 +120,21 @@ export default function AdminUsers() {
                 )}
               </div>
 
-              <button
-                onClick={() => deleteUser(u)}
-                disabled={deletingId === u.id}
-                className="flex-shrink-0 text-xs px-3 py-1.5 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-40 transition-colors"
-              >
-                {deletingId === u.id ? 'Deleting…' : 'Delete'}
-              </button>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <a
+                  href={`/app/feed?as=${u.id}`}
+                  className="text-xs px-3 py-1.5 border border-blue-200 text-blue-600 rounded-lg hover:bg-blue-50 transition-colors text-center"
+                >
+                  View as
+                </a>
+                <button
+                  onClick={() => deleteUser(u)}
+                  disabled={deletingId === u.id}
+                  className="text-xs px-3 py-1.5 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-40 transition-colors"
+                >
+                  {deletingId === u.id ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
             </div>
           </div>
         ))}

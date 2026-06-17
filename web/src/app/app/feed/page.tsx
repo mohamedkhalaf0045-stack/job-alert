@@ -31,27 +31,45 @@ export const dynamic = 'force-dynamic'
 export default async function FeedPage({
   searchParams,
 }: {
-  searchParams: Promise<{ before?: string }>
+  searchParams: Promise<{ before?: string; as?: string }>
 }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  const { before, as: viewAsId } = await searchParams
+
+  // Admin impersonation: if ?as=UUID is set and the requester is the admin,
+  // show the feed as that user. Otherwise fall back to the logged-in user.
+  const isAdmin = user.email === process.env.ADMIN_EMAIL
+  const targetUserId = (isAdmin && viewAsId) ? viewAsId : user.id
+  const isImpersonating = isAdmin && viewAsId && viewAsId !== user.id
+
+  // Fetch the impersonated user's email for the banner (admin client, server-side only)
+  let impersonatedEmail = ''
+  if (isImpersonating) {
+    const admin = createAdminClient()
+    const { data: authUser } = await admin.auth.admin.getUserById(targetUserId)
+    impersonatedEmail = authUser?.user?.email ?? targetUserId
+  }
+
   // Gate: force onboarding if user has no keywords or locations set
-  const { data: prefs } = await supabase
-    .from('user_preferences')
-    .select('keywords, locations')
-    .eq('user_id', user.id)
-    .single()
+  // Skip the gate when admin is impersonating (target may not have prefs yet)
+  if (!isImpersonating) {
+    const { data: prefs } = await supabase
+      .from('user_preferences')
+      .select('keywords, locations')
+      .eq('user_id', user.id)
+      .single()
 
-  const hasKeywords = Array.isArray(prefs?.keywords) && prefs.keywords.length > 0
-  const hasLocations = Array.isArray(prefs?.locations) && prefs.locations.length > 0
-  if (!hasKeywords || !hasLocations) redirect('/onboarding')
+    const hasKeywords = Array.isArray(prefs?.keywords) && prefs.keywords.length > 0
+    const hasLocations = Array.isArray(prefs?.locations) && prefs.locations.length > 0
+    if (!hasKeywords || !hasLocations) redirect('/onboarding')
+  }
 
-  const { before } = await searchParams
-
-  const { data: jobs, error } = await supabase.rpc('user_jobs_feed', {
-    p_user:  user.id,
+  const admin = createAdminClient()
+  const { data: jobs, error } = await admin.rpc('user_jobs_feed', {
+    p_user:  targetUserId,
     p_limit: 20,
     ...(before ? { p_before: before } : {}),
   })
@@ -76,7 +94,7 @@ export default async function FeedPage({
   const jobList = ((jobs as Job[]) ?? [])
     .sort((a, b) => new Date(b.date_collected).getTime() - new Date(a.date_collected).getTime())
   const nextCursor = jobList.length === 20 ? jobList[jobList.length - 1].date_collected : null
-  const userSkills = await getUserCVSkills(user.id)
+  const userSkills = await getUserCVSkills(targetUserId)
 
   // Group jobs by recency using server-side time (UTC, consistent with date_collected)
   const now = Date.now()
@@ -120,10 +138,20 @@ export default async function FeedPage({
 
   return (
     <div>
+      {isImpersonating && (
+        <div className="mb-4 flex items-center justify-between gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+          <span className="text-amber-800">
+            Viewing feed as <strong>{impersonatedEmail}</strong>
+          </span>
+          <Link href="/app/feed" className="text-xs font-medium text-amber-700 hover:underline shrink-0">
+            Exit
+          </Link>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">Your feed</h1>
         {before && (
-          <Link href="/app/feed" className="text-xs text-blue-600 hover:underline">
+          <Link href={isImpersonating ? `/app/feed?as=${viewAsId}` : '/app/feed'} className="text-xs text-blue-600 hover:underline">
             ← Back to latest
           </Link>
         )}
@@ -162,7 +190,7 @@ export default async function FeedPage({
       {nextCursor ? (
         <div className="mt-6 text-center">
           <Link
-            href={`/app/feed?before=${encodeURIComponent(nextCursor)}`}
+            href={`/app/feed?before=${encodeURIComponent(nextCursor)}${isImpersonating ? `&as=${viewAsId}` : ''}`}
             className="inline-block px-5 py-2 bg-white border rounded-lg text-sm hover:bg-gray-50 transition"
           >
             Load older jobs →
