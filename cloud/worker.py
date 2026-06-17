@@ -174,6 +174,12 @@ def main() -> None:
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
 
+    # scan_keywords / scan_location are the MERGED sets used for scraping
+    # (personal keywords + other users' keywords from setting_keywords_extra).
+    # They're initialized here as fallbacks in case the Supabase read below fails.
+    scan_keywords: list[str] = keywords
+    scan_location: str = location
+
     # --- Load settings from Supabase (set via mobile app / Windows GUI) ---
     # These override env vars so the laptop config is always respected even
     # when the GitHub Secret is stale or missing.
@@ -184,8 +190,10 @@ def main() -> None:
         # app. Secrets come from env vars (GitHub Actions Secrets) only.
         db.sync_scrape_keywords(supabase_url, supabase_key)
         db.sync_scrape_locations(supabase_url, supabase_key)
-        setting_kw      = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
-        setting_loc     = db.get_config(supabase_url, supabase_key, "setting_location", "")
+        setting_kw       = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
+        setting_loc      = db.get_config(supabase_url, supabase_key, "setting_location", "")
+        setting_kw_extra = db.get_config(supabase_url, supabase_key, "setting_keywords_extra", "")
+        setting_loc_extra= db.get_config(supabase_url, supabase_key, "setting_location_extra", "")
         setting_hours   = db.get_config(supabase_url, supabase_key, "setting_max_hours", "")
         setting_li      = db.get_config(supabase_url, supabase_key, "setting_search_linkedin", "")
         setting_indeed  = db.get_config(supabase_url, supabase_key, "setting_search_indeed", "")
@@ -197,9 +205,34 @@ def main() -> None:
 
         if setting_kw:
             keywords = [k.strip() for k in setting_kw.split(",") if k.strip()]
-            _log(f"Settings: {len(keywords)} keyword(s) from Supabase")
+            _log(f"Settings: {len(keywords)} personal keyword(s) from Supabase")
         if setting_loc:
             location = setting_loc
+
+        # Build merged scan sets (personal + extra from other users' prefs).
+        # `keywords` / `location` stay as the OWNER's personal settings and are
+        # used for legacy Telegram relevance filtering. `scan_keywords` /
+        # `scan_location` are the superset used for the actual scrape loop.
+        scan_kw_set = set(keywords)
+        if setting_kw_extra:
+            scan_kw_set.update(k.strip() for k in setting_kw_extra.split(",") if k.strip())
+        scan_keywords = sorted(scan_kw_set)
+
+        personal_locs = [l.strip() for l in location.split(",") if l.strip()]
+        seen_lower = {l.lower() for l in personal_locs}
+        scan_loc_parts = list(personal_locs)
+        for _el in (setting_loc_extra or "").split(","):
+            _el = _el.strip()
+            if _el and _el.lower() not in seen_lower:
+                scan_loc_parts.append(_el)
+                seen_lower.add(_el.lower())
+        scan_location = ",".join(scan_loc_parts)
+
+        if len(scan_keywords) > len(keywords):
+            _log(f"Settings: scan expanded to {len(scan_keywords)} keyword(s) "
+                 f"({len(scan_keywords) - len(keywords)} extra from other users)")
+        if scan_location != location:
+            _log(f"Settings: scan location expanded to '{scan_location}'")
         if setting_hours:
             max_hours = int(setting_hours)
         if setting_li:
@@ -278,7 +311,7 @@ def main() -> None:
     # makes sense for a single location, so it's applied only when there's
     # exactly one — multi-location runs rely on the text location + the
     # per-location _loc_filter instead.
-    locations = [loc.strip() for loc in (location or "").split(",") if loc.strip()] \
+    locations = [loc.strip() for loc in (scan_location or "").split(",") if loc.strip()] \
         or [_DEFAULT_LOCATION]
     if len(locations) == 1:
         location_pairs = [(locations[0], li_geo_id)]
@@ -575,6 +608,24 @@ def main() -> None:
             job_url = clean_url
             # ─────────────────────────────────────────────────────────────────
 
+            # ── Personal relevance gate ───────────────────────────────────────
+            # The scan may have found jobs for OTHER users (via scan_keywords).
+            # Only send the owner a Telegram/ntfy alert if the job matches one
+            # of their PERSONAL keywords (setting_keywords, not the merged set).
+            # Uses word-boundary matching so "IT" doesn't match "audit"/"credit".
+            if keywords:
+                import re as _re
+                _job_text = " ".join([
+                    job.get("Title") or job.get("title") or "",
+                    job.get("Company") or job.get("company") or "",
+                ]).lower()
+                _kw_pattern = "|".join(
+                    r"\b" + _re.escape(kw.lower()) + r"\b" for kw in keywords
+                )
+                if not _re.search(_kw_pattern, _job_text):
+                    continue
+            # ─────────────────────────────────────────────────────────────────
+
             # --- Telegram (with 📝 Cover Letter inline button) ---
             if tg_token and tg_chat:
                 job_id = job.get("Id") or job.get("id") or ""
@@ -619,7 +670,7 @@ def main() -> None:
     # One scan per (keyword, location). `location` and `li_geo_id` are rebound
     # each iteration — every scraper call and the _loc_filter closure already
     # read these names, so they transparently use the current location.
-    scan_targets = [(kw, loc, geo) for (loc, geo) in location_pairs for kw in keywords]
+    scan_targets = [(kw, loc, geo) for (loc, geo) in location_pairs for kw in scan_keywords]
     for idx, (keyword, location, li_geo_id) in enumerate(scan_targets):
         if idx > 0:
             # Fixed 1.5 s between scans (was 2.0 + 0.5*idx → up to 7 s).

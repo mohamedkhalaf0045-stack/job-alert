@@ -909,9 +909,12 @@ def log_user_alert(
 
 
 def sync_scrape_keywords(supabase_url: str, supabase_key: str) -> None:
-    """Update bot_state.setting_keywords to the union of all active users' keywords.
+    """Update bot_state.setting_keywords_extra with keywords from all active users.
 
-    Called once per worker cycle so every user's search terms are scraped.
+    Writes to setting_keywords_extra (NOT setting_keywords) so the owner's
+    personal keyword set (setting_keywords) is never polluted with other users'
+    terms. The worker merges both keys for scanning but uses only setting_keywords
+    for legacy single-user Telegram alerts.
     Only updates bot_state if the merged set differs from what's already stored.
     """
     sb = _get_client(supabase_url, supabase_key)
@@ -926,24 +929,27 @@ def sync_scrape_keywords(supabase_url: str, supabase_key: str) -> None:
         if not user_kws:
             return
 
-        current = sb.table("bot_state").select("value").eq("key", "setting_keywords").execute()
+        current = sb.table("bot_state").select("value").eq("key", "setting_keywords_extra").execute()
         existing = set(k.strip() for k in ((current.data or [{}])[0].get("value") or "").split(",") if k.strip())
 
         merged = existing | user_kws
         if merged == existing:
             return  # nothing new to add
 
-        sb.table("bot_state").update({"value": ",".join(sorted(merged))}).eq("key", "setting_keywords").execute()
+        # Upsert so the key is created on first run
+        sb.table("bot_state").upsert({"key": "setting_keywords_extra", "value": ",".join(sorted(merged))}).execute()
         new_kws = merged - existing
-        print(f"[DB] sync_scrape_keywords: added {len(new_kws)} new keyword(s): {', '.join(sorted(new_kws))}")
+        print(f"[DB] sync_scrape_keywords: added {len(new_kws)} keyword(s) to setting_keywords_extra: {', '.join(sorted(new_kws))}")
     except Exception as exc:
         print(f"[DB] sync_scrape_keywords error: {exc}")
 
 
 def sync_scrape_locations(supabase_url: str, supabase_key: str) -> None:
-    """Update bot_state.setting_location to the union of all active users' locations.
+    """Update bot_state.setting_location_extra with locations from all active users.
 
-    Called once per worker cycle so every user's preferred location is scraped.
+    Writes to setting_location_extra (NOT setting_location) so the owner's
+    personal location (setting_location) is never polluted with other users'
+    locations. The worker merges both keys for scanning.
     Only updates bot_state if the merged set differs from what's already stored.
     """
     sb = _get_client(supabase_url, supabase_key)
@@ -958,16 +964,17 @@ def sync_scrape_locations(supabase_url: str, supabase_key: str) -> None:
         if not user_locs:
             return
 
-        current = sb.table("bot_state").select("value").eq("key", "setting_location").execute()
+        current = sb.table("bot_state").select("value").eq("key", "setting_location_extra").execute()
         existing = set(l.strip() for l in ((current.data or [{}])[0].get("value") or "").split(",") if l.strip())
 
         merged = existing | user_locs
         if merged == existing:
             return
 
-        sb.table("bot_state").update({"value": ",".join(sorted(merged))}).eq("key", "setting_location").execute()
+        # Upsert so the key is created on first run
+        sb.table("bot_state").upsert({"key": "setting_location_extra", "value": ",".join(sorted(merged))}).execute()
         new_locs = merged - existing
-        print(f"[DB] sync_scrape_locations: added {len(new_locs)} new location(s): {', '.join(sorted(new_locs))}")
+        print(f"[DB] sync_scrape_locations: added {len(new_locs)} location(s) to setting_location_extra: {', '.join(sorted(new_locs))}")
     except Exception as exc:
         print(f"[DB] sync_scrape_locations error: {exc}")
 
