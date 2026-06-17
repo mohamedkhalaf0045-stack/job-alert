@@ -23,7 +23,7 @@ class _TabDef {
 
 const _tabs = [
   _TabDef('All',     null,      _Sort.date),
-  _TabDef('New',     'new',     _Sort.newFirst),
+  _TabDef('New',     'new',     _Sort.newFirst),  // myStatus == null
   _TabDef('Scored',  null,      _Sort.score,   scoredOnly: true),
   _TabDef('Applied', 'applied', _Sort.date),
   _TabDef('Saved',   'saved',   _Sort.date),
@@ -43,6 +43,9 @@ class _JobsScreenState extends State<JobsScreen>
   late TabController _tabCtrl;
   final List<Future<List<Job>>?> _futures = List.filled(_tabs.length, null);
 
+  // Shared feed — all tabs derive from this single network call.
+  Future<List<Job>>? _feedFuture;
+
   @override
   void initState() {
     super.initState();
@@ -59,12 +62,18 @@ class _JobsScreenState extends State<JobsScreen>
     super.dispose();
   }
 
-  Future<List<Job>> _loadTab(int idx) {
+  /// Filter the shared feed for a single tab.
+  List<Job> _filterForTab(List<Job> all, int idx) {
     final t = _tabs[idx];
-    if (t.scoredOnly) {
-      return SupabaseService.listScoredJobs();
-    }
-    return SupabaseService.listJobs(status: t.status);
+    if (t.scoredOnly) return all.where((j) => j.llmScore != null).toList();
+    if (t.status == null) return all;
+    if (t.status == 'new') return all.where((j) => j.myStatus == null).toList();
+    return all.where((j) => j.myStatus == t.status).toList();
+  }
+
+  Future<List<Job>> _loadTab(int idx) {
+    _feedFuture ??= SupabaseService.listUserFeed(limit: 200);
+    return _feedFuture!.then((all) => _filterForTab(all, idx));
   }
 
   void _ensureLoaded(int idx) {
@@ -74,10 +83,12 @@ class _JobsScreenState extends State<JobsScreen>
   }
 
   void _refreshTab(int idx) {
+    _feedFuture = SupabaseService.listUserFeed(limit: 200);
     setState(() => _futures[idx] = _loadTab(idx));
   }
 
   void _invalidateAll() {
+    _feedFuture = SupabaseService.listUserFeed(limit: 200);
     setState(() {
       for (int i = 0; i < _futures.length; i++) {
         _futures[i] = _loadTab(i);

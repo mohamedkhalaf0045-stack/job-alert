@@ -20,12 +20,12 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _status = widget.job.status;
+    _status = widget.job.myStatus ?? 'new';
   }
 
   Future<void> _setStatus(String newStatus) async {
     setState(() => _saving = true);
-    await SupabaseService.updateJobStatus(widget.job.url, newStatus);
+    await SupabaseService.updateJobInteraction(widget.job.jobId, newStatus);
     if (mounted) setState(() { _status = newStatus; _saving = false; });
   }
 

@@ -16,6 +16,7 @@ dependencies:
   open_filex: ^4.7.0
   path_provider: ^2.1.0
   flutter_local_notifications: ^18.0.0
+  supabase_flutter: ^2.0.0
 
 flutter:
   uses-material-design: true

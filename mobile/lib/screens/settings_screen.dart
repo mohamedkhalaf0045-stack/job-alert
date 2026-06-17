@@ -69,20 +69,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final info = await PackageInfo.fromPlatform();
-      final s    = await SupabaseService.getSettings();
-      final url  = await SupabaseService.getConfigValue('update_apk_url', '');
-      final ver  = await SupabaseService.getConfigValue('update_version_name', '');
-      final code = await SupabaseService.getConfigValue('update_version_code', '');
+      final results = await Future.wait([
+        PackageInfo.fromPlatform(),
+        SupabaseService.getSettings(),
+        SupabaseService.getConfigValue('update_apk_url', ''),
+        SupabaseService.getConfigValue('update_version_name', ''),
+        SupabaseService.getConfigValue('update_version_code', ''),
+        SupabaseService.getUserPreferences(),
+      ]);
+      final info  = results[0] as PackageInfo;
+      final s     = results[1] as AppSettings;
+      final url   = results[2] as String;
+      final ver   = results[3] as String;
+      final code  = results[4] as String;
+      final prefs = results[5] as Map<String, dynamic>;
+
       if (mounted) {
         setState(() {
-          _keywordsCtrl.text   = s.keywords.join(', ');
-          _locationCtrl.text   = s.location;
+          // Keywords / locations / excludes / minScore come from user_preferences
+          // when available (they are the source of truth for the per-user feed).
+          // Fall back to legacy bot_state values for first-time setup.
+          final prefKw   = (prefs['keywords']        as List?)?.cast<String>();
+          final prefLoc  = (prefs['locations']       as List?)?.cast<String>();
+          final prefExcl = (prefs['exclude_keywords'] as List?)?.cast<String>();
+          final prefMin  = prefs['min_score'] as int?;
+
+          _keywordsCtrl.text = prefKw != null && prefKw.isNotEmpty
+              ? prefKw.join(', ')
+              : s.keywords.join(', ');
+          _locationCtrl.text = prefLoc != null && prefLoc.isNotEmpty
+              ? prefLoc.join(', ')
+              : s.location;
+          _excludeCtrl.text  = prefExcl != null && prefExcl.isNotEmpty
+              ? prefExcl.join(', ')
+              : s.excludeKeywords;
+          _minScoreCtrl.text = (prefMin ?? s.minAiScore).toString();
+
           _maxHoursCtrl.text   = s.maxHours.toString();
-          _excludeCtrl.text    = s.excludeKeywords;
           _cookieCtrl.text     = s.linkedInCookie;
           _profileCtrl.text    = s.userProfile;
-          _minScoreCtrl.text   = s.minAiScore.toString();
           _ollamaCtrl.text     = s.ollamaUrl;
           _timezoneCtrl.text   = s.timezone;
           _searchLinkedIn      = s.searchLinkedIn;
@@ -137,11 +162,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // without needing an app restart.
     GitHubService.setToken(_ghTokenCtrl.text.trim());
 
+    final excludeKw = _excludeCtrl.text
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final locations = _locationCtrl.text
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final minScore = int.tryParse(_minScoreCtrl.text.trim());
+
     final results = await Future.wait([
       SupabaseService.saveSettings(settings),
       SupabaseService.setConfigValue('update_apk_url',      _updateUrlCtrl.text.trim()),
       SupabaseService.setConfigValue('update_version_name', _updateVerCtrl.text.trim()),
       SupabaseService.setConfigValue('update_version_code', _updateCodeCtrl.text.trim()),
+      SupabaseService.saveUserPreferences(
+        keywords:        keywords,
+        locations:       locations,
+        excludeKeywords: excludeKw,
+        minScore:        minScore,
+      ),
     ]);
     final ok = results.every((r) => r == true);
     if (mounted) {

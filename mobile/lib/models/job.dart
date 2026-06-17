@@ -6,6 +6,7 @@ class Job {
   final String url;
   final String source;
   final String status;
+  final String? myStatus;
   final DateTime? datePosted;
   final DateTime? dateCollected;
 
@@ -34,6 +35,7 @@ class Job {
     required this.url,
     required this.source,
     required this.status,
+    this.myStatus,
     this.datePosted,
     this.dateCollected,
     this.llmScore,
@@ -57,6 +59,7 @@ class Job {
         url:             json['url']       as String? ?? '',
         source:          json['source']    as String? ?? '',
         status:          json['status']    as String? ?? 'new',
+        myStatus:        json['my_status'] as String?,
         datePosted:      _parseDate(json['date_posted']),
         dateCollected:   _parseDate(json['date_collected']),
         llmScore:        json['llm_score']   as int?,
@@ -72,10 +75,11 @@ class Job {
         coverLetterDraft: json['cover_letter_draft'] as String?,
       );
 
-  Job copyWith({String? status}) => Job(
+  Job copyWith({String? status, String? myStatus}) => Job(
         jobId: jobId, title: title, company: company,
         location: location, url: url, source: source,
         status: status ?? this.status,
+        myStatus: myStatus ?? this.myStatus,
         datePosted: datePosted, dateCollected: dateCollected,
         llmScore: llmScore, llmSummary: llmSummary,
         skillsMatch: skillsMatch, experienceMatch: experienceMatch,

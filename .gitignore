@@ -22,3 +22,4 @@ __pycache__/
 *.pyc
 .ruff_cache/
 .vercel
+.gstack/

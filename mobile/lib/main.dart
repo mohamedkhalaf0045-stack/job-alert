@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/jobs_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/notification_service.dart';
 
@@ -22,6 +26,10 @@ const kDanger      = Color(0xFFDC2626);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Supabase.initialize(
+    url: Config.supabaseUrl,
+    anonKey: Config.supabaseKey,
+  );
   // SECURITY: the GitHub PAT comes from compile-time --dart-define only
   // (see build-apk.yml). It is never loaded from Supabase — bot_state is
   // readable with the public anon key, so a token stored there is public.
@@ -37,7 +45,7 @@ class JobAlertApp extends StatelessWidget {
       title: 'Job Alert',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
-      home: const _Shell(),
+      home: const _AuthGate(),
     );
   }
 
@@ -201,6 +209,22 @@ class JobAlertApp extends StatelessWidget {
   }
 }
 
+class _AuthGate extends StatelessWidget {
+  const _AuthGate();
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AuthState>(
+      stream: Supabase.instance.client.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        final session = Supabase.instance.client.auth.currentSession;
+        if (session != null) return const _Shell();
+        return const LoginScreen();
+      },
+    );
+  }
+}
+
 class _Shell extends StatefulWidget {
   const _Shell();
 
@@ -213,6 +237,9 @@ class _ShellState extends State<_Shell> {
 
   static const _titles = ['Cloud', 'Jobs', 'Settings'];
 
+  Timer? _notifyDebounce;
+  RealtimeChannel? _jobsChannel;
+
   @override
   void initState() {
     super.initState();
@@ -220,7 +247,36 @@ class _ShellState extends State<_Shell> {
       onUpdateTap: () {
         if (mounted) setState(() => _idx = 0);
       },
+      onJobTap: () {
+        if (mounted) setState(() => _idx = 1);
+      },
     );
+    _subscribeToNewJobs();
+  }
+
+  void _subscribeToNewJobs() {
+    _jobsChannel = Supabase.instance.client
+        .channel('jobs_new_inserts')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'jobs',
+          callback: (_) {
+            _notifyDebounce?.cancel();
+            _notifyDebounce = Timer(const Duration(seconds: 5), () {
+              NotificationService.showNewJob(
+                  'New jobs may match your keywords — check your feed.');
+            });
+          },
+        )
+        .subscribe();
+  }
+
+  @override
+  void dispose() {
+    _notifyDebounce?.cancel();
+    _jobsChannel?.unsubscribe();
+    super.dispose();
   }
 
   @override

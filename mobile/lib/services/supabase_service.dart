@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config.dart';
 import '../models/job.dart';
 import '../models/app_settings.dart';
@@ -7,11 +8,15 @@ import '../models/app_settings.dart';
 class SupabaseService {
   static const _base = '${Config.supabaseUrl}/rest/v1';
 
-  static Map<String, String> get _headers => {
-        'apikey': Config.supabaseKey,
-        'Authorization': 'Bearer ${Config.supabaseKey}',
-        'Content-Type': 'application/json',
-      };
+  static Map<String, String> get _headers {
+    final session = Supabase.instance.client.auth.currentSession;
+    final token = session?.accessToken ?? Config.supabaseKey;
+    return {
+      'apikey': Config.supabaseKey,
+      'Authorization': 'Bearer $token',
+      'Content-Type': 'application/json',
+    };
+  }
 
   // ── Jobs ──────────────────────────────────────────────────────────────────
 
@@ -77,6 +82,93 @@ class SupabaseService {
       headers: {..._headers, 'Prefer': 'return=minimal'},
       body: jsonEncode({'status': newStatus}),
     );
+  }
+
+  /// Per-user job feed filtered by the signed-in user's preferences.
+  static Future<List<Job>> listUserFeed({int limit = 200}) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$_base/rpc/user_jobs_feed'),
+        headers: _headers,
+        body: jsonEncode({'p_limit': limit}),
+      );
+      if (res.statusCode != 200) return [];
+      final list = jsonDecode(res.body) as List<dynamic>;
+      return list.map((e) => Job.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Upsert a per-user job status into user_job_interactions.
+  static Future<bool> updateJobInteraction(String jobId, String status) async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return false;
+    try {
+      final res = await http.post(
+        Uri.parse('$_base/user_job_interactions'),
+        headers: {
+          ..._headers,
+          'Prefer': 'resolution=merge-duplicates,return=minimal',
+        },
+        body: jsonEncode([
+          {'user_id': userId, 'job_id': jobId, 'status': status},
+        ]),
+      );
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Load the signed-in user's preferences row.
+  static Future<Map<String, dynamic>> getUserPreferences() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return {};
+    try {
+      final res = await http.get(
+        Uri.parse('$_base/user_preferences?user_id=eq.$userId&limit=1'),
+        headers: _headers,
+      );
+      if (res.statusCode != 200) return {};
+      final rows = jsonDecode(res.body) as List<dynamic>;
+      return rows.isEmpty ? {} : rows.first as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Upsert keywords, locations, and min_score for the signed-in user.
+  static Future<bool> saveUserPreferences({
+    required List<String> keywords,
+    required List<String> locations,
+    required List<String> excludeKeywords,
+    int? minScore,
+    String alertFrequency = 'instant',
+  }) async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return false;
+    try {
+      final body = <String, dynamic>{
+        'user_id': userId,
+        'keywords': keywords,
+        'locations': locations,
+        'exclude_keywords': excludeKeywords,
+        'alert_frequency': alertFrequency,
+      };
+      if (minScore != null) body['min_score'] = minScore;
+      final res = await http.post(
+        Uri.parse('$_base/user_preferences'),
+        headers: {
+          ..._headers,
+          'Prefer': 'resolution=merge-duplicates,return=minimal',
+        },
+        body: jsonEncode([body]),
+      );
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<Map<String, int>> getJobCounts() async {
