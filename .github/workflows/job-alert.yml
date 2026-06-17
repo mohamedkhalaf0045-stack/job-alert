@@ -43,7 +43,7 @@ jobs:
           KEYWORDS:            ${{ secrets.KEYWORDS }}
           LOCATION:            ${{ secrets.LOCATION }}
           SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           MAX_HOURS:           ${{ secrets.MAX_HOURS }}
@@ -63,3 +63,11 @@ jobs:
           SEARCH_GMAIL:        ${{ secrets.SEARCH_GMAIL }}
           GMAIL_EMAIL:         ${{ secrets.GMAIL_EMAIL }}
           GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+
+      - name: Send per-user instant alerts
+        run: python cloud/user_alerts.py --mode instant
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          RESEND_API_KEY:      ${{ secrets.RESEND_API_KEY }}

@@ -174,12 +174,6 @@ def main() -> None:
     # Verify jobs table exists
     db.initialize_database(supabase_url, supabase_key)
 
-    # scan_keywords / scan_location are the MERGED sets used for scraping
-    # (personal keywords + other users' keywords from setting_keywords_extra).
-    # They're initialized here as fallbacks in case the Supabase read below fails.
-    scan_keywords: list[str] = keywords
-    scan_location: str = location
-
     # --- Load settings from Supabase (set via mobile app / Windows GUI) ---
     # These override env vars so the laptop config is always respected even
     # when the GitHub Secret is stale or missing.
@@ -188,12 +182,8 @@ def main() -> None:
         # search-API keys) are intentionally NOT read from bot_state — that
         # table is readable with the public anon key shipped in the mobile
         # app. Secrets come from env vars (GitHub Actions Secrets) only.
-        db.sync_scrape_keywords(supabase_url, supabase_key)
-        db.sync_scrape_locations(supabase_url, supabase_key)
-        setting_kw       = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
-        setting_loc      = db.get_config(supabase_url, supabase_key, "setting_location", "")
-        setting_kw_extra = db.get_config(supabase_url, supabase_key, "setting_keywords_extra", "")
-        setting_loc_extra= db.get_config(supabase_url, supabase_key, "setting_location_extra", "")
+        setting_kw  = db.get_config(supabase_url, supabase_key, "setting_keywords", "")
+        setting_loc = db.get_config(supabase_url, supabase_key, "setting_location", "")
         setting_hours   = db.get_config(supabase_url, supabase_key, "setting_max_hours", "")
         setting_li      = db.get_config(supabase_url, supabase_key, "setting_search_linkedin", "")
         setting_indeed  = db.get_config(supabase_url, supabase_key, "setting_search_indeed", "")
@@ -209,30 +199,6 @@ def main() -> None:
         if setting_loc:
             location = setting_loc
 
-        # Build merged scan sets (personal + extra from other users' prefs).
-        # `keywords` / `location` stay as the OWNER's personal settings and are
-        # used for legacy Telegram relevance filtering. `scan_keywords` /
-        # `scan_location` are the superset used for the actual scrape loop.
-        scan_kw_set = set(keywords)
-        if setting_kw_extra:
-            scan_kw_set.update(k.strip() for k in setting_kw_extra.split(",") if k.strip())
-        scan_keywords = sorted(scan_kw_set)
-
-        personal_locs = [l.strip() for l in location.split(",") if l.strip()]
-        seen_lower = {l.lower() for l in personal_locs}
-        scan_loc_parts = list(personal_locs)
-        for _el in (setting_loc_extra or "").split(","):
-            _el = _el.strip()
-            if _el and _el.lower() not in seen_lower:
-                scan_loc_parts.append(_el)
-                seen_lower.add(_el.lower())
-        scan_location = ",".join(scan_loc_parts)
-
-        if len(scan_keywords) > len(keywords):
-            _log(f"Settings: scan expanded to {len(scan_keywords)} keyword(s) "
-                 f"({len(scan_keywords) - len(keywords)} extra from other users)")
-        if scan_location != location:
-            _log(f"Settings: scan location expanded to '{scan_location}'")
         if setting_hours:
             max_hours = int(setting_hours)
         if setting_li:
@@ -282,46 +248,55 @@ def main() -> None:
     except Exception as exc:
         _log(f"Could not read Supabase settings (using env vars): {exc}")
 
-    # Phase 6: legacy single-user Telegram gate.
-    # Once the owner is receiving alerts via user_alerts.py (the multi-user
-    # sender), set bot_state key "setting_legacy_telegram" = "false" in the
-    # Supabase SQL Editor to stop worker.py from sending a duplicate alert.
-    # Default is "true" (backward-compatible — keeps working until explicitly
-    # disabled).
+    # --- Build per-user scan targets ---
+    # Reads all active users' keyword/location preferences using the service_role
+    # key so all rows are visible regardless of RLS. Builds a deduplicated set of
+    # (keyword, location) pairs — shared pairs are scanned once; per-user filtering
+    # happens at alert time via user_jobs_feed RPC in user_alerts.py.
     try:
-        _legacy_tg = db.get_config(supabase_url, supabase_key, "setting_legacy_telegram", "true")
-        if _legacy_tg.strip().lower() in ("false", "0", "no", "off"):
-            tg_chat = ""   # disables all worker.py Telegram sends
-            _log("Phase 6: legacy Telegram disabled — alerts handled by user_alerts.py")
-    except Exception:
-        pass  # keep tg_chat as-is on any error
+        active_prefs = db.get_active_profiles(supabase_url, supabase_key)
+    except Exception as exc:
+        _log(f"Could not load active user profiles (falling back to env keywords): {exc}")
+        active_prefs = []
 
-    # --- Build relevance engine (CV-driven, replaces all hardcoded regex filters) ---
+    scan_target_set: set[tuple[str, str]] = set()
+    for user in active_prefs:
+        for kw in (user.get("keywords") or []):
+            for loc in (user.get("locations") or []):
+                if kw.strip() and loc.strip():
+                    scan_target_set.add((kw.strip(), loc.strip()))
+
+    if not scan_target_set:
+        _log("No active user profiles found — using env/settings keywords as fallback")
+        fallback_locs = [l.strip() for l in location.split(",") if l.strip()] or [_DEFAULT_LOCATION]
+        for kw in keywords:
+            for loc in fallback_locs:
+                scan_target_set.add((kw, loc))
+
+    all_scan_locs = sorted({loc for _, loc in scan_target_set})
+    all_scan_kws  = sorted({kw  for kw,  _ in scan_target_set})
+    scan_geo      = li_geo_id if len(all_scan_locs) == 1 else ""
+    scan_targets  = sorted([(kw, loc, scan_geo) for kw, loc in scan_target_set])
+    locations     = all_scan_locs  # used by _loc_filter and Gmail scan
+
+    geo_info = (f", geoId={li_geo_id}" if scan_geo
+                else " (text-location — set setting_linkedin_geoid for single-location runs)")
+    _log(
+        f"Starting scan: {len(active_prefs)} active user(s), "
+        f"{len(all_scan_kws)} keyword(s) × {len(all_scan_locs)} location(s) "
+        f"[{', '.join(all_scan_locs)}]{geo_info}, "
+        f"{len(scan_targets)} targets, max_hours={max_hours}"
+    )
+
+    # --- Build relevance engine with ALL scan keywords so jobs for any user pass
+    # the relevance filter; per-user filtering happens in user_alerts.py ---
     try:
         engine = relevance_engine.RelevanceEngine.from_supabase(
-            supabase_url, supabase_key, keywords
+            supabase_url, supabase_key, all_scan_kws
         )
     except Exception as exc:
         _log(f"RelevanceEngine load error (non-fatal, using keyword-only fallback): {exc}")
-        engine = relevance_engine.RelevanceEngine(keywords, set(), set(), set())
-
-    # Multiple locations: `location` may be a comma-separated list
-    # (e.g. "United Arab Emirates, Egypt"). Each location is searched
-    # independently for every keyword. The configured LinkedIn geo_id only
-    # makes sense for a single location, so it's applied only when there's
-    # exactly one — multi-location runs rely on the text location + the
-    # per-location _loc_filter instead.
-    locations = [loc.strip() for loc in (scan_location or "").split(",") if loc.strip()] \
-        or [_DEFAULT_LOCATION]
-    if len(locations) == 1:
-        location_pairs = [(locations[0], li_geo_id)]
-    else:
-        location_pairs = [(loc, "") for loc in locations]
-
-    geo_info = f", geoId={li_geo_id}" if (len(locations) == 1 and li_geo_id) \
-        else " (text-location fallback — set setting_linkedin_geoid for best results)"
-    _log(f"Starting scan: {len(keywords)} keyword(s) × {len(locations)} location(s) "
-         f"[{', '.join(locations)}]{geo_info}, max_hours={max_hours}")
+        engine = relevance_engine.RelevanceEngine(all_scan_kws, set(), set(), set())
 
     # --- Handle pending Telegram commands (/status etc.) and cover-letter button presses ---
     if tg_token and tg_chat:
@@ -411,12 +386,13 @@ def main() -> None:
             for cmd in commands:
                 if cmd["command"] == "/status":
                     job_count = db.get_job_count(supabase_url, supabase_key)
-                    kw_preview = ", ".join(keywords[:3]) + ("..." if len(keywords) > 3 else "")
+                    kw_preview = ", ".join(all_scan_kws[:3]) + ("..." if len(all_scan_kws) > 3 else "")
                     msg = (
                         f"Cloud worker — running OK\n"
                         f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
-                        f"Keywords ({len(keywords)}): {kw_preview}\n"
-                        f"Location: {location}\n"
+                        f"Active users: {len(active_prefs)}\n"
+                        f"Keywords ({len(all_scan_kws)}): {kw_preview}\n"
+                        f"Locations: {', '.join(all_scan_locs)}\n"
                         f"Jobs in DB: {job_count}\n"
                         f"Max age: {max_hours}h"
                     )
@@ -534,130 +510,6 @@ def main() -> None:
         except Exception as exc:
             _log(f"Heartbeat check error (non-fatal): {exc}")
 
-    # Load already-notified URLs BEFORE scanning starts so per-source instant
-    # alerts (below) never double-send a URL that was notified in a previous run.
-    already_sent: set[str] = set()
-    if tg_token and tg_chat:
-        try:
-            already_sent = db.get_telegram_sent_urls(supabase_url, supabase_key)
-        except Exception:
-            pass
-
-    ntfy_url = db.get_config(supabase_url, supabase_key, "setting_ntfy_url", "")
-
-    def _alert_new(new_jobs: list[dict]) -> None:
-        """Alert Telegram (and optionally ntfy.sh) immediately for freshly-inserted jobs.
-        Called right after each sync_jobs() so LinkedIn jobs reach the user's phone
-        within seconds of being found — not after waiting for all other sources to finish.
-        Every URL is validated by url_safety before being sent."""
-        if not new_jobs:
-            return
-        from datetime import timedelta
-        _alert_cutoff = datetime.now(timezone.utc) - timedelta(hours=max_hours) if max_hours > 0 else None
-        for job in new_jobs:
-            raw_url = job.get("Url", "") or job.get("url", "")
-            if not raw_url or raw_url in already_sent:
-                continue
-
-            # ── Age gate: never alert on jobs older than max_hours ────────────
-            # This is a second line of defence — the collection-time _age_filter
-            # passes jobs with unparseable dates through; this catches them here.
-            if _alert_cutoff:
-                posted_raw = (job.get("PostedDate") or job.get("date_collected") or "").strip()
-                if posted_raw:
-                    try:
-                        posted_dt = datetime.fromisoformat(posted_raw.replace("Z", "+00:00"))
-                        if posted_dt.tzinfo is None:
-                            posted_dt = posted_dt.replace(tzinfo=timezone.utc)
-                        # Date-only (no time) → treat as end-of-day so same-day
-                        # jobs aren't silently skipped when the clock passes midnight UTC.
-                        if len(posted_raw) == 10 and "T" not in posted_raw:
-                            posted_dt = posted_dt.replace(hour=23, minute=59, second=59)
-                        if posted_dt < _alert_cutoff:
-                            title = job.get("Title") or job.get("title") or "?"
-                            _log(f"  ALERT SKIPPED (stale {posted_raw[:10]}): {title[:60]}")
-                            # Mark as sent so we don't keep re-alerting it every run
-                            try:
-                                db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
-                            except Exception:
-                                pass
-                            already_sent.add(raw_url)
-                            continue
-                    except (ValueError, TypeError):
-                        pass   # unparseable date — allow through
-            # ─────────────────────────────────────────────────────────────────
-
-            llm_score = job.get("llm_score")
-            if llm_score is not None and llm_score < min_score:
-                continue
-
-            # ── URL safety check ─────────────────────────────────────────────
-            safe, reason = url_safety.check_url(raw_url)
-            if not safe:
-                _log(f"URL BLOCKED ({reason}): {raw_url[:120]}")
-                continue
-            if reason.startswith("unverified-domain:"):
-                _log(f"URL notice — {reason} (allowing, not in trusted list): {raw_url[:100]}")
-            # Strip tracking params before sending to user
-            clean_url = url_safety.sanitize_url(raw_url)
-            # Patch job dict so the sanitized URL is what the user receives
-            if clean_url != raw_url:
-                job = dict(job)   # shallow copy — don't mutate the original
-                key = "Url" if "Url" in job else "url"
-                job[key] = clean_url
-            job_url = clean_url
-            # ─────────────────────────────────────────────────────────────────
-
-            # ── Personal relevance gate ───────────────────────────────────────
-            # The scan may have found jobs for OTHER users (via scan_keywords).
-            # Only send the owner a Telegram/ntfy alert if the job matches one
-            # of their PERSONAL keywords (setting_keywords, not the merged set).
-            # Uses word-boundary matching so "IT" doesn't match "audit"/"credit".
-            if keywords:
-                import re as _re
-                _job_text = " ".join([
-                    job.get("Title") or job.get("title") or "",
-                    job.get("Company") or job.get("company") or "",
-                ]).lower()
-                _kw_pattern = "|".join(
-                    r"\b" + _re.escape(kw.lower()) + r"\b" for kw in keywords
-                )
-                if not _re.search(_kw_pattern, _job_text):
-                    continue
-            # ─────────────────────────────────────────────────────────────────
-
-            # --- Telegram (with 📝 Cover Letter inline button) ---
-            if tg_token and tg_chat:
-                job_id = job.get("Id") or job.get("id") or ""
-                ok = tg.send_job_alert_with_button(tg_token, tg_chat, job, job_id=job_id)
-                if ok:
-                    already_sent.add(raw_url)    # track original URL for dedup
-                    already_sent.add(job_url)    # also track clean URL
-                    try:
-                        db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
-                    except Exception:
-                        pass
-                    time.sleep(0.3)
-            # --- ntfy.sh push notification (optional, high-score jobs only) ---
-            if ntfy_url and (llm_score is None or llm_score >= 7):
-                try:
-                    title   = job.get("Title") or job.get("title") or "New Job"
-                    company = job.get("Company") or job.get("company") or ""
-                    score_tag = f" [{llm_score}/10]" if llm_score is not None else ""
-                    import requests as _req
-                    _req.post(
-                        ntfy_url,
-                        data=f"{title}{score_tag} @ {company}\n{job_url}".encode("utf-8"),
-                        headers={
-                            "Title": f"Job Alert{score_tag}",
-                            "Priority": "high" if (llm_score or 0) >= 8 else "default",
-                            "Tags": "briefcase",
-                        },
-                        timeout=8,
-                    )
-                except Exception:
-                    pass
-
     # Circuit-breaker: track consecutive failures per source.
     # If a source returns 0 results (blocked/timeout) on 2 keywords in a row,
     # disable it for the rest of this run so we don't waste time on dead sources.
@@ -670,7 +522,6 @@ def main() -> None:
     # One scan per (keyword, location). `location` and `li_geo_id` are rebound
     # each iteration — every scraper call and the _loc_filter closure already
     # read these names, so they transparently use the current location.
-    scan_targets = [(kw, loc, geo) for (loc, geo) in location_pairs for kw in scan_keywords]
     for idx, (keyword, location, li_geo_id) in enumerate(scan_targets):
         if idx > 0:
             # Fixed 1.5 s between scans (was 2.0 + 0.5*idx → up to 7 s).
@@ -714,7 +565,6 @@ def main() -> None:
                 li_run_total += (summary["inserted"] + summary["updated"]
                                  + summary["seen"] + summary["invalid"])
                 all_new_jobs.extend(summary.get("new_jobs", []))
-                _alert_new(summary.get("new_jobs", []))
                 # Pre-fetch descriptions for newly inserted LinkedIn jobs (cap at 10)
                 for nj in summary.get("new_jobs", [])[:10]:
                     nj_id = str(nj.get("Id", "")).strip()
@@ -754,7 +604,6 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
-                _alert_new(summary.get("new_jobs", []))
                 if summary["seen"] == 0 and summary["inserted"] == 0:
                     _source_fails["bayt"] += 1
                 else:
@@ -789,7 +638,6 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
-                _alert_new(summary.get("new_jobs", []))
                 if summary["seen"] == 0 and summary["inserted"] == 0:
                     _source_fails["gulftalent"] += 1
                 else:
@@ -824,7 +672,6 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
-                _alert_new(summary.get("new_jobs", []))
                 if summary["seen"] == 0 and summary["inserted"] == 0:
                     _source_fails["naukri"] += 1
                 else:
@@ -860,7 +707,6 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
-                _alert_new(summary.get("new_jobs", []))
                 if summary["seen"] == 0 and summary["inserted"] == 0:
                     _source_fails["indeed"] += 1
                 else:
@@ -897,7 +743,6 @@ def main() -> None:
                     f"seen={summary['seen']}, invalid={summary['invalid']}"
                 )
                 all_new_jobs.extend(summary.get("new_jobs", []))
-                _alert_new(summary.get("new_jobs", []))
                 if summary["seen"] == 0 and summary["inserted"] == 0:
                     _source_fails["adzuna"] += 1
                 else:
@@ -942,7 +787,6 @@ def main() -> None:
                         f"seen={summary['seen']}, invalid={summary['invalid']}"
                     )
                     all_new_jobs.extend(summary.get("new_jobs", []))
-                    _alert_new(summary.get("new_jobs", []))
                 if not web_jobs:
                     _source_fails["web"] += 1
                 else:
@@ -1035,166 +879,12 @@ def main() -> None:
                         f"seen={summary['seen']}, invalid={summary['invalid']}"
                     )
                     all_new_jobs.extend(summary.get("new_jobs", []))
-                    _alert_new(summary.get("new_jobs", []))
         except Exception as exc:
             _log(f"Gmail scan error: {exc}")
     elif not gmail_email:
         _log("Gmail skipped — GMAIL_EMAIL / GMAIL_APP_PASSWORD not set")
 
-    _log(f"Scan complete. {len(all_new_jobs)} new job(s) to alert.")
-
-    # Merge any pre-existing LLM scores (jobs enriched locally before this run)
-    if all_new_jobs:
-        try:
-            score_map = db.get_scores_for_urls(
-                supabase_url, supabase_key,
-                [j.get("Url", "") for j in all_new_jobs],
-            )
-            if score_map:
-                for job in all_new_jobs:
-                    canonical = db._canonical_url(job.get("Url", ""))
-                    if canonical in score_map:
-                        job["llm_score"]   = score_map[canonical].get("llm_score")
-                        job["llm_summary"] = score_map[canonical].get("llm_summary", "")
-                _log(f"Merged LLM scores for {len(score_map)} job(s).")
-        except Exception as exc:
-            _log(f"Score merge error (non-fatal): {exc}")
-
-    # Sort new jobs by source priority: LinkedIn P1 → Indeed P2 → Gmail P3 → Adzuna P4 → Web P5.
-    # This ensures the most reliable source (LinkedIn) always arrives first in Telegram,
-    # regardless of which source happened to finish scanning first.
-    if len(all_new_jobs) > 1:
-        def _src_rank(job: dict) -> int:
-            src = job.get("Source", "")
-            for prefix, rank in _SOURCE_PRIORITY.items():
-                if src.startswith(prefix):
-                    return rank
-            return 5  # Web/Tavily, Web/Brave, Web/Google, Web/Bing
-        all_new_jobs.sort(key=_src_rank)
-        _log(
-            f"Alert order (top {min(5, len(all_new_jobs))}): "
-            + " -> ".join(
-                f"{j.get('Source','?').split('/')[0]}:{j.get('Title','?')[:25]}"
-                for j in all_new_jobs[:5]
-            )
-            + ("..." if len(all_new_jobs) > 5 else "")
-        )
-
-    # --- Send Telegram alerts ---
-    # Worker sends a basic "new job" alert for every new relevant job immediately.
-    # Enricher (runs locally with Ollama) later sends a richer "scored" alert,
-    # but only for jobs scoring >= min_score that were NOT already notified here.
-    # This ensures the user always gets timely notifications — even when enricher
-    # isn't running — because non-IT junk is already filtered out by the
-    # relevance engine before jobs ever reach this point.
-    #
-    # Exception: if a job was pre-scored (rare) and its score is below min_score,
-    # it is suppressed here too — no alert at all.
-    if tg_token and tg_chat:
-        sent_count = 0
-        skipped_sent = 0
-        skipped_low_score = 0
-        # already_sent was loaded before the scan loop and updated live by _alert_new().
-        # This pass is a safety net for any jobs that slipped through (score merge, etc.)
-
-        for job in all_new_jobs:
-            raw_url = job.get("Url", "")
-
-            if raw_url in already_sent:
-                skipped_sent += 1
-                continue
-
-            llm_score = job.get("llm_score")
-
-            # Job was pre-scored (rare — enricher ran before this worker cycle)
-            # and score is below threshold. Suppress silently.
-            if llm_score is not None and llm_score < min_score:
-                skipped_low_score += 1
-                _log(f"Telegram: skipped pre-scored low-score job ({llm_score}/{min_score}) — {job.get('Title', '?')}")
-                continue
-
-            # URL safety check
-            safe, reason = url_safety.check_url(raw_url)
-            if not safe:
-                _log(f"Telegram: URL BLOCKED ({reason}): {raw_url[:100]}")
-                skipped_sent += 1
-                continue
-            clean_url = url_safety.sanitize_url(raw_url)
-            if clean_url != raw_url:
-                job = dict(job)
-                job["Url"] = clean_url
-
-            job_id = job.get("Id") or job.get("id") or ""
-            ok = tg.send_job_alert_with_button(tg_token, tg_chat, job, job_id=job_id)
-            if ok:
-                sent_count += 1
-                already_sent.add(raw_url)
-                try:
-                    db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
-                except Exception:
-                    pass
-                time.sleep(0.3)  # avoid Telegram flood limits
-            else:
-                _log(f"Failed to send Telegram alert for: {job.get('Title', '?')}")
-
-        if skipped_sent:
-            _log(f"Telegram: skipped {skipped_sent} already-notified job(s).")
-        if skipped_low_score:
-            _log(f"Telegram: suppressed {skipped_low_score} pre-scored low-score job(s) (score < {min_score}).")
-        _log(f"Telegram: sent {sent_count}/{len(all_new_jobs)} alert(s).")
-
-        # --- Re-alert scan: catch jobs that entered the DB but were never notified ---
-        # Covers: Telegram failure mid-run, worker crash after DB write, LinkedIn API
-        # returning a job on run N but not again (so it never appears in all_new_jobs again).
-        # Window: collected between (max_hours*2 ago) and (30 min ago) — recent enough
-        # to still be relevant, old enough to not race with the current run's inserts.
-        try:
-            catchup = db.get_unnotified_jobs(
-                supabase_url, supabase_key,
-                min_age_minutes=5,   # was 30 — retry stuck jobs after just 5 min
-                max_age_hours=max_hours * 2,
-                limit=20,
-            )
-            if catchup:
-                _log(f"Re-alert: {len(catchup)} unnotified job(s) found in DB — sending now")
-                catchup_sent = 0
-                for job in catchup:
-                    raw_url = job.get("url", "")
-                    if not raw_url or raw_url in already_sent:
-                        continue
-                    llm_score = job.get("llm_score")
-                    if llm_score is not None and llm_score < min_score:
-                        _log(f"Re-alert: skip low-score ({llm_score}/{min_score}) — {job.get('title','?')}")
-                        continue
-                    # URL safety check
-                    safe, reason = url_safety.check_url(raw_url)
-                    if not safe:
-                        _log(f"Re-alert: URL BLOCKED ({reason}): {raw_url[:100]}")
-                        continue
-                    clean_url = url_safety.sanitize_url(raw_url)
-                    if clean_url != raw_url:
-                        job = dict(job)
-                        job["url"] = clean_url
-                    ok = tg.send_job_alert(tg_token, tg_chat, job)
-                    if ok:
-                        catchup_sent += 1
-                        already_sent.add(raw_url)
-                        try:
-                            db.mark_telegram_sent(supabase_url, supabase_key, raw_url)
-                        except Exception:
-                            pass
-                        time.sleep(0.3)
-                    else:
-                        _log(f"Re-alert: failed to send — {job.get('title','?')}")
-                if catchup_sent:
-                    _log(f"Re-alert: sent {catchup_sent} late-find notification(s)")
-            else:
-                _log("Re-alert: all caught up — no unnotified jobs in DB")
-        except Exception as exc:
-            _log(f"Re-alert scan error (non-fatal): {exc}")
-
-    else:
-        _log("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing). Skipping alerts.")
+    _log(f"Scan complete. {len(all_new_jobs)} new job(s) inserted — user_alerts.py will send per-user notifications.")
 
     # --- Heartbeat: record this run + ping external dead-man's switch ----------
     # worker_last_run powers the downtime-detection alert at the top of the next
