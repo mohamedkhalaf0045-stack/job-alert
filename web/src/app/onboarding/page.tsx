@@ -94,6 +94,7 @@ export default function OnboardingPage() {
         })
       }
       const json = await res.json()
+      if (res.status === 401) throw new Error('Please sign in to use this feature.')
       if (!res.ok) throw new Error(json.error ?? 'Failed to parse profile')
       const { analysis } = json
       setSuggestedKeywords((analysis.job_titles ?? []).slice(0, 6))
@@ -238,7 +239,7 @@ export default function OnboardingPage() {
               >
                 <span className="text-2xl">💼</span>
                 LinkedIn
-                <span className="text-xs font-normal text-gray-400">Paste your profile</span>
+                <span className="text-xs font-normal text-gray-400">URL or paste text</span>
               </button>
             </div>
 
