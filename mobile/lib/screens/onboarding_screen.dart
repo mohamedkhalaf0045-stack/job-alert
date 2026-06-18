@@ -21,7 +21,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   // Step 1
   String _source = '';   // 'cv' | 'linkedin' | ''
-  final _textCtrl = TextEditingController();
+  String _linkedInMode = 'url'; // 'url' | 'text'
+  final _textCtrl    = TextEditingController();
+  final _urlCtrl     = TextEditingController();
   bool   _extracting   = false;
   String _extractError = '';
 
@@ -42,6 +44,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void dispose() {
     _textCtrl.dispose();
+    _urlCtrl.dispose();
     _kwCtrl.dispose();
     _locCtrl.dispose();
     super.dispose();
@@ -69,35 +72,54 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   });
 
-  // ── Step 1: Extract from pasted text ─────────────────────────────────────
+  // ── Step 1: Extract from LinkedIn URL or pasted text ─────────────────────
 
-  void _extractFromText() {
-    final text = _textCtrl.text.trim();
-    if (text.length < 20) {
-      setState(() => _extractError = 'Paste at least a few lines of text.');
-      return;
-    }
+  Future<void> _extractProfile() async {
     setState(() { _extracting = true; _extractError = ''; });
-
-    // Split on newlines / bullets / pipes and keep short capital-letter phrases
-    final candidates = text
-        .split(RegExp(r'[\n,·|•]'))
-        .map((s) => s.trim())
-        .where((s) => s.length > 3 && s.length < 50)
-        .where((s) => RegExp(r'^[A-Z]').hasMatch(s))
-        .take(8)
-        .toList();
-
-    // Auto-detect locations from the preset list
-    final autoLocs = _kLocations
-        .where((loc) => text.toLowerCase().contains(loc.toLowerCase()))
-        .toList();
-
-    setState(() {
-      _suggested    = candidates;
-      _suggestedLocs = autoLocs;
-      _extracting   = false;
-    });
+    try {
+      if (_source == 'linkedin' && _linkedInMode == 'url') {
+        final url = _urlCtrl.text.trim();
+        if (!url.contains('linkedin.com')) {
+          setState(() { _extractError = 'Enter a valid LinkedIn profile URL.'; _extracting = false; });
+          return;
+        }
+        // Fetch the public LinkedIn page
+        final response = await SupabaseService.fetchLinkedInUrl(url);
+        if (response == null) {
+          setState(() { _extractError = 'Could not fetch LinkedIn profile. Try the "Paste text" option instead.'; _extracting = false; });
+          return;
+        }
+        setState(() {
+          _suggested    = response.jobTitles;
+          _suggestedLocs = response.locations;
+          _extracting   = false;
+        });
+      } else {
+        // Text paste — client-side extraction
+        final text = _textCtrl.text.trim();
+        if (text.length < 20) {
+          setState(() { _extractError = 'Paste at least a few lines of text.'; _extracting = false; });
+          return;
+        }
+        final candidates = text
+            .split(RegExp(r'[\n,·|•]'))
+            .map((s) => s.trim())
+            .where((s) => s.length > 3 && s.length < 50)
+            .where((s) => RegExp(r'^[A-Z]').hasMatch(s))
+            .take(8)
+            .toList();
+        final autoLocs = _kLocations
+            .where((loc) => text.toLowerCase().contains(loc.toLowerCase()))
+            .toList();
+        setState(() {
+          _suggested     = candidates;
+          _suggestedLocs = autoLocs;
+          _extracting    = false;
+        });
+      }
+    } catch (e) {
+      setState(() { _extractError = 'Something went wrong. Try the "Paste text" option instead.'; _extracting = false; });
+    }
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────
@@ -174,33 +196,89 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       Row(children: [
         Expanded(child: _SourceCard(
           emoji: '📄', label: 'CV', selected: _source == 'cv',
-          onTap: () => setState(() { _source = 'cv'; _textCtrl.clear(); }),
+          onTap: () => setState(() { _source = 'cv'; _textCtrl.clear(); _extractError = ''; }),
         )),
         const SizedBox(width: 12),
         Expanded(child: _SourceCard(
           emoji: '💼', label: 'LinkedIn', selected: _source == 'linkedin',
-          onTap: () => setState(() { _source = 'linkedin'; _textCtrl.clear(); }),
+          onTap: () => setState(() { _source = 'linkedin'; _textCtrl.clear(); _urlCtrl.clear(); _extractError = ''; }),
         )),
       ]),
 
       if (_source.isNotEmpty) ...[
         const SizedBox(height: 16),
-        Text(
-          _source == 'cv'
-              ? 'Paste your CV text:'
-              : 'Copy your LinkedIn headline + experience and paste:',
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _textCtrl,
-          maxLines: 6,
-          decoration: InputDecoration(
-            hintText: _source == 'cv'
-                ? 'IT Support Engineer\n5 years experience\nWindows Server, Azure AD…'
-                : 'IT Support Engineer at Acme · Dubai\nSkills: Windows Server…',
+
+        // LinkedIn: URL / Text toggle
+        if (_source == 'linkedin') ...[
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: kBorder),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(children: [
+              Expanded(child: GestureDetector(
+                onTap: () => setState(() { _linkedInMode = 'url'; _extractError = ''; }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _linkedInMode == 'url' ? kAccent : Colors.transparent,
+                    borderRadius: const BorderRadius.horizontal(left: Radius.circular(7)),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text('Profile URL',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                      color: _linkedInMode == 'url' ? Colors.white : kMuted)),
+                ),
+              )),
+              Expanded(child: GestureDetector(
+                onTap: () => setState(() { _linkedInMode = 'text'; _extractError = ''; }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _linkedInMode == 'text' ? kAccent : Colors.transparent,
+                    borderRadius: const BorderRadius.horizontal(right: Radius.circular(7)),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text('Paste text',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                      color: _linkedInMode == 'text' ? Colors.white : kMuted)),
+                ),
+              )),
+            ]),
           ),
-        ),
+          const SizedBox(height: 12),
+        ],
+
+        if (_source == 'linkedin' && _linkedInMode == 'url') ...[
+          const Text('Your LinkedIn profile URL:',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _urlCtrl,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              hintText: 'https://www.linkedin.com/in/yourname',
+            ),
+          ),
+        ] else ...[
+          Text(
+            _source == 'cv'
+                ? 'Paste your CV text:'
+                : 'Copy your LinkedIn headline + experience and paste:',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _textCtrl,
+            maxLines: 6,
+            decoration: InputDecoration(
+              hintText: _source == 'cv'
+                  ? 'IT Support Engineer\n5 years experience\nWindows Server, Azure AD…'
+                  : 'IT Support Engineer at Acme · Dubai\nSkills: Windows Server…',
+            ),
+          ),
+        ],
+
         if (_extractError.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -208,7 +286,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         const SizedBox(height: 12),
         FilledButton(
-          onPressed: _extracting ? null : _extractFromText,
+          onPressed: _extracting ? null : _extractProfile,
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
           child: _extracting
               ? const SizedBox(height: 18, width: 18,

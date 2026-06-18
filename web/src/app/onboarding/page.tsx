@@ -26,6 +26,8 @@ export default function OnboardingPage() {
 
   // Step 1 — source
   const [source,            setSource]            = useState<Source>(null)
+  const [linkedInMode,      setLinkedInMode]      = useState<'url' | 'text'>('url')
+  const [linkedInUrl,       setLinkedInUrl]       = useState('')
   const [linkedInText,      setLinkedInText]      = useState('')
   const [linkedInLoading,   setLinkedInLoading]   = useState(false)
   const [linkedInError,     setLinkedInError]     = useState('')
@@ -66,18 +68,31 @@ export default function OnboardingPage() {
 
   // ── LinkedIn handler ──────────────────────────────────────────────────────
   async function handleLinkedInExtract() {
-    if (linkedInText.trim().length < 20) {
-      setLinkedInError('Paste at least a few lines from your LinkedIn profile.')
-      return
-    }
     setLinkedInLoading(true)
     setLinkedInError('')
     try {
-      const res  = await fetch('/api/app/linkedin/profile', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ text: linkedInText }),
-      })
+      let res: Response
+      if (linkedInMode === 'url') {
+        if (!linkedInUrl.trim().includes('linkedin.com')) {
+          setLinkedInError('Enter a valid LinkedIn profile URL (e.g. linkedin.com/in/yourname)')
+          return
+        }
+        res = await fetch('/api/app/linkedin/fetch-url', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ url: linkedInUrl.trim() }),
+        })
+      } else {
+        if (linkedInText.trim().length < 20) {
+          setLinkedInError('Paste at least a few lines from your LinkedIn profile.')
+          return
+        }
+        res = await fetch('/api/app/linkedin/profile', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ text: linkedInText }),
+        })
+      }
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to parse profile')
       const { analysis } = json
@@ -214,7 +229,7 @@ export default function OnboardingPage() {
                 <span className="text-xs font-normal text-gray-400">PDF or TXT</span>
               </button>
               <button
-                onClick={() => { setSource('linkedin'); setLinkedInDone(false) }}
+                onClick={() => { setSource('linkedin'); setLinkedInDone(false); setLinkedInError('') }}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-colors text-sm font-medium ${
                   source === 'linkedin'
                     ? 'border-blue-600 bg-blue-50 text-blue-700'
@@ -237,26 +252,63 @@ export default function OnboardingPage() {
             {/* LinkedIn panel */}
             {source === 'linkedin' && !linkedInDone && (
               <div className="mb-4">
-                <p className="text-xs text-gray-500 mb-2">
-                  Open your LinkedIn profile → copy your <strong>About</strong> section and/or
-                  recent job titles, then paste below.
-                </p>
-                <textarea
-                  value={linkedInText}
-                  onChange={e => setLinkedInText(e.target.value)}
-                  placeholder="IT Support Engineer at Acme Corp · Dubai, UAE&#10;Skills: Windows Server, Active Directory, Azure AD…"
-                  rows={5}
-                  className={`${inputCls} resize-none`}
-                />
+                {/* URL / Text toggle */}
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-3 text-xs font-medium">
+                  <button
+                    onClick={() => { setLinkedInMode('url'); setLinkedInError('') }}
+                    className={`flex-1 py-2 transition-colors ${linkedInMode === 'url' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                  >
+                    Profile URL
+                  </button>
+                  <button
+                    onClick={() => { setLinkedInMode('text'); setLinkedInError('') }}
+                    className={`flex-1 py-2 transition-colors ${linkedInMode === 'text' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                  >
+                    Paste text
+                  </button>
+                </div>
+
+                {linkedInMode === 'url' ? (
+                  <>
+                    <p className="text-xs text-gray-500 mb-2">
+                      Paste your LinkedIn profile URL and we&apos;ll extract your job titles automatically.
+                    </p>
+                    <input
+                      value={linkedInUrl}
+                      onChange={e => setLinkedInUrl(e.target.value)}
+                      placeholder="https://www.linkedin.com/in/yourname"
+                      className={inputCls}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-gray-500 mb-2">
+                      Open your LinkedIn profile → copy your <strong>About</strong> section and/or
+                      recent job titles, then paste below.
+                    </p>
+                    <textarea
+                      value={linkedInText}
+                      onChange={e => setLinkedInText(e.target.value)}
+                      placeholder="IT Support Engineer at Acme Corp · Dubai, UAE&#10;Skills: Windows Server, Active Directory, Azure AD…"
+                      rows={5}
+                      className={`${inputCls} resize-none`}
+                    />
+                  </>
+                )}
+
                 {linkedInError && (
                   <p className="text-xs text-red-500 mt-1">{linkedInError}</p>
                 )}
                 <button
                   onClick={handleLinkedInExtract}
-                  disabled={linkedInLoading || linkedInText.trim().length < 20}
+                  disabled={
+                    linkedInLoading ||
+                    (linkedInMode === 'url'  && !linkedInUrl.trim().includes('linkedin.com')) ||
+                    (linkedInMode === 'text' && linkedInText.trim().length < 20)
+                  }
                   className="mt-3 w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  {linkedInLoading ? 'Extracting…' : 'Extract keywords →'}
+                  {linkedInLoading ? 'Fetching…' : 'Extract keywords →'}
                 </button>
               </div>
             )}

@@ -5,6 +5,12 @@ import '../config.dart';
 import '../models/job.dart';
 import '../models/app_settings.dart';
 
+class LinkedInProfile {
+  final List<String> jobTitles;
+  final List<String> locations;
+  const LinkedInProfile({required this.jobTitles, required this.locations});
+}
+
 class SupabaseService {
   static const _base = '${Config.supabaseUrl}/rest/v1';
 
@@ -293,6 +299,53 @@ class SupabaseService {
     if (raw.isEmpty) return null;
     try {
       return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── LinkedIn URL fetch (onboarding) ─────────────────────────────────────
+
+  /// Fetches a LinkedIn public profile page and extracts job title candidates
+  /// and locations using client-side text parsing.
+  static Future<LinkedInProfile?> fetchLinkedInUrl(String url) async {
+    try {
+      final res = await http.get(
+        Uri.parse(url),
+        headers: {
+          'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept':          'text/html,application/xhtml+xml,*/*;q=0.8',
+        },
+      ).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) return null;
+
+      // Strip HTML tags to get plain text
+      final text = res.body
+          .replaceAll(RegExp(r'<script[\s\S]*?</script>', caseSensitive: false), ' ')
+          .replaceAll(RegExp(r'<style[\s\S]*?</style>',   caseSensitive: false), ' ')
+          .replaceAll(RegExp(r'<[^>]+>'), ' ')
+          .replaceAll(RegExp(r'&amp;'),  '&')
+          .replaceAll(RegExp(r'&nbsp;'), ' ')
+          .replaceAll(RegExp(r'\s{2,}'), ' ')
+          .trim();
+
+      if (text.length < 50) return null;
+
+      final candidates = text
+          .split(RegExp(r'[\n,·|•]'))
+          .map((s) => s.trim())
+          .where((s) => s.length > 3 && s.length < 50)
+          .where((s) => RegExp(r'^[A-Z]').hasMatch(s))
+          .take(8)
+          .toList();
+
+      final autoLocs = const [
+        'United Arab Emirates', 'Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman',
+        'Egypt', 'Saudi Arabia', 'Qatar', 'Kuwait',
+      ].where((loc) => text.toLowerCase().contains(loc.toLowerCase())).toList();
+
+      return LinkedInProfile(jobTitles: candidates, locations: autoLocs);
     } catch (_) {
       return null;
     }
