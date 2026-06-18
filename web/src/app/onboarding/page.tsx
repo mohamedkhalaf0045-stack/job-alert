@@ -32,6 +32,7 @@ export default function OnboardingPage() {
   const [linkedInLoading,   setLinkedInLoading]   = useState(false)
   const [linkedInError,     setLinkedInError]     = useState('')
   const [linkedInDone,      setLinkedInDone]      = useState(false)
+  const [linkedInOAuthName, setLinkedInOAuthName] = useState('')
   const [suggestedLocations, setSuggestedLocations] = useState<string[]>([])
 
   // Step 2 — keywords
@@ -58,6 +59,37 @@ export default function OnboardingPage() {
       })
       .catch(() => {})
   }, [])
+
+  // Handle LinkedIn OAuth callback — reads ?li_data=<base64> from URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const raw    = params.get('li_data')
+    const err    = params.get('li_error')
+    if (raw) {
+      try {
+        const { name, headline, jobTitle } = JSON.parse(atob(raw)) as {
+          name: string; headline: string; jobTitle: string
+        }
+        setSource('linkedin')
+        if (jobTitle) {
+          setSuggestedKeywords([jobTitle])
+          setLinkedInDone(true)
+        } else if (name) {
+          // Got name but no headline — prompt text paste
+          setLinkedInOAuthName(name)
+          setSource('linkedin')
+        }
+      } catch { /* ignore */ }
+      router.replace('/onboarding')
+    }
+    if (err) {
+      setLinkedInError(
+        err === 'denied' ? 'LinkedIn authorization was cancelled.' : 'LinkedIn connection failed — try another method.'
+      )
+      setSource('linkedin')
+      router.replace('/onboarding')
+    }
+  }, [router])
 
   // ── CV handler ────────────────────────────────────────────────────────────
   function handleCVAnalyzed(data: CVData) {
@@ -253,6 +285,31 @@ export default function OnboardingPage() {
             {/* LinkedIn panel */}
             {source === 'linkedin' && !linkedInDone && (
               <div className="mb-4">
+
+                {/* OAuth — Connect with LinkedIn button */}
+                {linkedInOAuthName ? (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 border border-green-200 mb-3 text-sm text-green-800">
+                    <span>✓</span>
+                    <span>Connected as <strong>{linkedInOAuthName}</strong> — paste your profile text below to extract job titles.</span>
+                  </div>
+                ) : (
+                  <a
+                    href="/api/auth/linkedin"
+                    className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-[#0A66C2] hover:bg-[#004182] text-white text-sm font-medium transition-colors mb-3"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.32 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.79M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/>
+                    </svg>
+                    Connect with LinkedIn
+                  </a>
+                )}
+
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex-1 h-px bg-gray-200" />
+                  <span className="text-xs text-gray-400">or</span>
+                  <div className="flex-1 h-px bg-gray-200" />
+                </div>
+
                 {/* URL / Text toggle */}
                 <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-3 text-xs font-medium">
                   <button
