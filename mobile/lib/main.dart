@@ -5,8 +5,10 @@ import 'config.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/jobs_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/notification_service.dart';
+import 'services/supabase_service.dart';
 
 // Design tokens from nexu-io/open-design — Linear system
 // Accent: Linear indigo #5E6AD2
@@ -26,10 +28,8 @@ const kDanger      = Color(0xFFDC2626);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Supabase.initialize(
-    url: Config.supabaseUrl,
-    anonKey: Config.supabaseKey,
-  );
+  // ignore: deprecated_member_use
+  await Supabase.initialize(url: Config.supabaseUrl, anonKey: Config.supabaseKey);
   // SECURITY: the GitHub PAT comes from compile-time --dart-define only
   // (see build-apk.yml). It is never loaded from Supabase — bot_state is
   // readable with the public anon key, so a token stored there is public.
@@ -218,10 +218,44 @@ class _AuthGate extends StatelessWidget {
       stream: Supabase.instance.client.auth.onAuthStateChange,
       builder: (context, snapshot) {
         final session = Supabase.instance.client.auth.currentSession;
-        if (session != null) return const _Shell();
+        if (session != null) return const _PrefsGate();
         return const LoginScreen();
       },
     );
+  }
+}
+
+// Checks whether the signed-in user has set up their preferences.
+// If not, shows OnboardingScreen; otherwise shows _Shell.
+class _PrefsGate extends StatefulWidget {
+  const _PrefsGate();
+
+  @override
+  State<_PrefsGate> createState() => _PrefsGateState();
+}
+
+class _PrefsGateState extends State<_PrefsGate> {
+  bool? _hasPrefs; // null = loading
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    final prefs    = await SupabaseService.getUserPreferences();
+    final keywords = prefs['keywords'] as List?;
+    if (mounted) setState(() => _hasPrefs = keywords != null && keywords.isNotEmpty);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hasPrefs == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_hasPrefs == true) return const _Shell();
+    return OnboardingScreen(onComplete: _check);
   }
 }
 
