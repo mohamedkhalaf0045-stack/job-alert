@@ -410,9 +410,13 @@ def build_and_run_crew(cfg: _Config) -> None:
         _log("WARNING: GROQ_API_KEY not set — jobs will be scraped but not scored by AI")
         _log("Add GROQ_API_KEY to GitHub Actions secrets for scoring + smart alerts")
 
+    # Route CrewAI's native OpenAI provider to Groq's OpenAI-compatible API.
+    # This avoids the litellm dependency (crewai 1.x removed it as a default dep).
+    os.environ["OPENAI_API_KEY"] = GROQ_API_KEY or "placeholder"
+    os.environ["OPENAI_BASE_URL"] = "https://api.groq.com/openai/v1"
+
     groq_llm = LLM(
-        model="groq/llama-3.3-70b-versatile",
-        api_key=GROQ_API_KEY or "placeholder",
+        model="llama-3.3-70b-versatile",
         temperature=0.1,
     )
 
