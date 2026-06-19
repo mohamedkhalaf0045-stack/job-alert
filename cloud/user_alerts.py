@@ -54,7 +54,7 @@ _SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 
 
 def _cfg(env_key: str, default: str = "") -> str:
-    val = os.environ.get(env_key, "")
+    val = os.environ.get(env_key, "").strip()
     if val:
         return val
     json_key = _ENV_TO_JSON.get(env_key, "")

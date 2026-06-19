@@ -103,6 +103,8 @@ def salary_line(job: dict | None = None, breakdown: dict | None = None,
 
 
 def send_message(bot_token: str, chat_id: str, text: str) -> bool:
+    bot_token = (bot_token or "").strip()
+    chat_id = (chat_id or "").strip()
     if not bot_token or not chat_id or not text:
         return False
 
