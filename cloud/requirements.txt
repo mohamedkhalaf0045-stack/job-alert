@@ -3,5 +3,4 @@ supabase==2.10.0
 beautifulsoup4==4.12.3
 playwright>=1.44.0
 crewai>=0.80.0,<2.0.0
-langchain-groq>=0.2.0,<1.0.0
 groq>=0.9.0,<1.0.0

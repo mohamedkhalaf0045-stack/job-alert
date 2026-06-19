@@ -43,9 +43,8 @@ import relevance_engine
 
 os.environ.setdefault("OPENAI_API_KEY", "not-used-groq-handles-llm")
 
-from crewai import Agent, Task, Crew, Process
+from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import tool
-from langchain_groq import ChatGroq
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -411,8 +410,8 @@ def build_and_run_crew(cfg: _Config) -> None:
         _log("WARNING: GROQ_API_KEY not set — jobs will be scraped but not scored by AI")
         _log("Add GROQ_API_KEY to GitHub Actions secrets for scoring + smart alerts")
 
-    groq_llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
+    groq_llm = LLM(
+        model="groq/llama-3.3-70b-versatile",
         api_key=GROQ_API_KEY or "placeholder",
         temperature=0.1,
     )
