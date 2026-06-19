@@ -41,7 +41,7 @@ import naukri_gulf as naukri_scraper
 import telegram_notify as tg
 import relevance_engine
 
-os.environ.setdefault("OPENAI_API_KEY", "not-used-groq-handles-llm")
+os.environ.setdefault("OPENAI_API_KEY", "placeholder")
 
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import tool
@@ -71,6 +71,7 @@ TG_TOKEN        = _e("TELEGRAM_BOT_TOKEN")
 TG_CHAT         = _e("TELEGRAM_CHAT_ID")
 LI_COOKIE       = _e("LINKEDIN_COOKIE")
 GROQ_API_KEY    = _e("GROQ_API_KEY")
+OPENAI_API_KEY  = _e("OPENAI_API_KEY")
 MAX_HOURS       = int(_e("MAX_HOURS", "72"))
 _DEFAULT_MIN    = 4
 
@@ -407,16 +408,17 @@ def score_and_dispatch_alerts(payload_json: str) -> str:
 
 def build_and_run_crew(cfg: _Config) -> None:
     if not GROQ_API_KEY:
-        _log("WARNING: GROQ_API_KEY not set — jobs will be scraped but not scored by AI")
-        _log("Add GROQ_API_KEY to GitHub Actions secrets for scoring + smart alerts")
+        _log("WARNING: GROQ_API_KEY not set — jobs will not be scored by AI")
+    if not OPENAI_API_KEY:
+        _log("WARNING: OPENAI_API_KEY not set — CrewAI agents need it")
 
-    # Route CrewAI's native OpenAI provider to Groq's OpenAI-compatible API.
-    # This avoids the litellm dependency (crewai 1.x removed it as a default dep).
-    os.environ["OPENAI_API_KEY"] = GROQ_API_KEY or "placeholder"
-    os.environ["OPENAI_BASE_URL"] = "https://api.groq.com/openai/v1"
+    # OpenAI for agent reasoning (native crewai support, no litellm needed)
+    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY or "placeholder"
+    # Unset any Groq base URL override from previous runs in same process
+    os.environ.pop("OPENAI_BASE_URL", None)
 
-    groq_llm = LLM(
-        model="llama-3.3-70b-versatile",
+    agent_llm = LLM(
+        model="gpt-4o-mini",
         temperature=0.1,
     )
 
@@ -433,7 +435,7 @@ def build_and_run_crew(cfg: _Config) -> None:
             "results in minutes, not hours."
         ),
         tools=[parallel_scrape_all_sources],
-        llm=groq_llm,
+        llm=agent_llm,
         verbose=True,
         allow_delegation=False,
     )
@@ -452,7 +454,7 @@ def build_and_run_crew(cfg: _Config) -> None:
             "so the candidate applies to strong matches before they close."
         ),
         tools=[score_and_dispatch_alerts],
-        llm=groq_llm,
+        llm=agent_llm,
         verbose=True,
         allow_delegation=False,
     )

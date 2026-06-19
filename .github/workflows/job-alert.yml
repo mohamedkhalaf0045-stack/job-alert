@@ -47,6 +47,7 @@ jobs:
           MAX_HOURS:           ${{ secrets.MAX_HOURS }}
           LINKEDIN_COOKIE:     ${{ secrets.LINKEDIN_COOKIE }}
           GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
           # Legacy passthrough env vars (read by db.py / scrapers)
           KEYWORDS:            ${{ secrets.KEYWORDS }}
           LOCATION:            ${{ secrets.LOCATION }}
