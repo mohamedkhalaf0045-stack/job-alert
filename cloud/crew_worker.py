@@ -41,6 +41,8 @@ import naukri_gulf as naukri_scraper
 import telegram_notify as tg
 import relevance_engine
 
+os.environ.setdefault("OPENAI_API_KEY", "not-used-groq-handles-llm")
+
 from crewai import Agent, Task, Crew, Process
 from crewai.tools import tool
 from langchain_groq import ChatGroq
