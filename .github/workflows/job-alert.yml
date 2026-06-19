@@ -37,17 +37,19 @@ jobs:
       # GITHUB_ACTIONS=true. Indeed is scraped only by the local (residential)
       # worker. Installing Chromium here would just add ~150MB/run for nothing.
 
-      - name: Run job alert worker
-        run: python cloud/worker.py
+      - name: Run CrewAI multi-agent worker
+        run: python cloud/crew_worker.py
         env:
-          KEYWORDS:            ${{ secrets.KEYWORDS }}
-          LOCATION:            ${{ secrets.LOCATION }}
           SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:        ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           MAX_HOURS:           ${{ secrets.MAX_HOURS }}
           LINKEDIN_COOKIE:     ${{ secrets.LINKEDIN_COOKIE }}
+          GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
+          # Legacy passthrough env vars (read by db.py / scrapers)
+          KEYWORDS:            ${{ secrets.KEYWORDS }}
+          LOCATION:            ${{ secrets.LOCATION }}
           HIDE_APPLIED:        ${{ secrets.HIDE_APPLIED }}
           SEARCH_LINKEDIN:     ${{ secrets.SEARCH_LINKEDIN }}
           SEARCH_INDEED:       ${{ secrets.SEARCH_INDEED }}
@@ -55,16 +57,11 @@ jobs:
           ADZUNA_APP_ID:       ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY:      ${{ secrets.ADZUNA_APP_KEY }}
           SEARCH_WEB:          ${{ secrets.SEARCH_WEB }}
-          TAVILY_API_KEY:      ${{ secrets.TAVILY_API_KEY }}
-          BRAVE_API_KEY:       ${{ secrets.BRAVE_API_KEY }}
-          GOOGLE_API_KEY:      ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_CX:           ${{ secrets.GOOGLE_CX }}
-          BING_API_KEY:        ${{ secrets.BING_API_KEY }}
           SEARCH_GMAIL:        ${{ secrets.SEARCH_GMAIL }}
           GMAIL_EMAIL:         ${{ secrets.GMAIL_EMAIL }}
           GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
 
-      - name: Send per-user instant alerts
+      - name: Send per-user instant alerts (fallback for email users)
         run: python cloud/user_alerts.py --mode instant
         env:
           SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
