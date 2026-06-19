@@ -50,7 +50,7 @@ jobs:
       - name: Send alerts
         env:
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           RESEND_API_KEY:     ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL:  ${{ secrets.RESEND_FROM_EMAIL }}
