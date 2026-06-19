@@ -410,7 +410,7 @@ def build_and_run_crew(cfg: _Config) -> None:
         _log("Add GROQ_API_KEY to GitHub Actions secrets for scoring + smart alerts")
 
     groq_llm = ChatGroq(
-        model="groq/llama-3.3-70b-versatile",
+        model="llama-3.3-70b-versatile",
         api_key=GROQ_API_KEY or "placeholder",
         temperature=0.1,
     )
