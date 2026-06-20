@@ -108,6 +108,107 @@ function Invoke-EnricherAsync {
     }
 }
 
+function Invoke-CloudPipelineAsync {
+    <#
+    Fire-and-forget: worker.py (Supabase sync) → enricher.py (AI score) → user_alerts.py (Telegram).
+    Runs after every scan so Telegram delivery happens within minutes, not 30+ min GitHub Actions delay.
+    Guarded by cloud-pipeline.pid to prevent concurrent runs.
+    #>
+    $workerPath  = Join-Path $script:AppRoot "cloud\worker.py"
+    $enrichPath  = Join-Path $script:AppRoot "cloud\enricher.py"
+    $alertsPath  = Join-Path $script:AppRoot "cloud\user_alerts.py"
+    if (-not (Test-Path -LiteralPath $workerPath)) { return }
+    if (-not (Test-Path -LiteralPath $alertsPath)) { return }
+
+    $pidFile = Join-Path $script:AppRoot "cloud-pipeline.pid"
+    if (Test-Path -LiteralPath $pidFile) {
+        try {
+            $oldPid = [int](Get-Content -LiteralPath $pidFile -Raw)
+            if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {
+                Write-WorkerLog "Cloud pipeline already running (PID $oldPid). Skipping."
+                return
+            }
+            Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        } catch {
+            Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    try {
+        $s       = Load-SettingsObject
+        $sUrl    = [string](Get-SettingValue -SettingsObject $s -Name "SupabaseUrl"      -DefaultValue "")
+        $sKey    = [string](Get-SettingValue -SettingsObject $s -Name "SupabaseKey"      -DefaultValue "")
+        $tgToken = [string](Get-SettingValue -SettingsObject $s -Name "TelegramBotToken" -DefaultValue "")
+        $tgChat  = [string](Get-SettingValue -SettingsObject $s -Name "TelegramChatId"   -DefaultValue "")
+        $cookie  = [string](Get-SettingValue -SettingsObject $s -Name "LinkedInCookie"   -DefaultValue "")
+        $groqKey = [string](Get-SettingValue -SettingsObject $s -Name "GroqApiKey"       -DefaultValue "")
+        $resend  = [string](Get-SettingValue -SettingsObject $s -Name "ResendApiKey"     -DefaultValue "")
+
+        if ([string]::IsNullOrWhiteSpace($sUrl) -or [string]::IsNullOrWhiteSpace($sKey)) {
+            Write-WorkerLog "Cloud pipeline: Supabase credentials missing — skipping."
+            return
+        }
+
+        # Set env vars so child process inherits them
+        $envBackup = @{
+            SUPABASE_URL       = $env:SUPABASE_URL
+            SUPABASE_KEY       = $env:SUPABASE_KEY
+            TELEGRAM_BOT_TOKEN = $env:TELEGRAM_BOT_TOKEN
+            TELEGRAM_CHAT_ID   = $env:TELEGRAM_CHAT_ID
+            LINKEDIN_COOKIE    = $env:LINKEDIN_COOKIE
+            GROQ_API_KEY       = $env:GROQ_API_KEY
+            RESEND_API_KEY     = $env:RESEND_API_KEY
+        }
+        $env:SUPABASE_URL       = $sUrl
+        $env:SUPABASE_KEY       = $sKey
+        $env:TELEGRAM_BOT_TOKEN = $tgToken
+        $env:TELEGRAM_CHAT_ID   = $tgChat
+        $env:LINKEDIN_COOKIE    = $cookie
+        $env:GROQ_API_KEY       = $groqKey
+        $env:RESEND_API_KEY     = $resend
+
+        $logPath     = Join-Path $script:AppRoot "cloud-pipeline.log"
+        $pidFilePath = $pidFile  # capture for launcher script
+
+        # Launcher script runs the 3-step pipeline and removes its own PID file when done
+        $launcherPath = Join-Path $script:AppRoot "cloud-pipeline-launcher.ps1"
+        $enrichCmd = if (Test-Path -LiteralPath $enrichPath) {
+            "python '$enrichPath' --prefer-cloud --limit 20 --min-score 4 2>&1 | Add-Content -LiteralPath '$logPath'"
+        } else { "" }
+
+        $launcher = @"
+`$ErrorActionPreference = 'Continue'
+Set-Location '$($script:AppRoot)'
+python '$workerPath' 2>&1 | Add-Content -LiteralPath '$logPath'
+$enrichCmd
+python '$alertsPath' --mode instant 2>&1 | Add-Content -LiteralPath '$logPath'
+Remove-Item -LiteralPath '$pidFilePath' -Force -ErrorAction SilentlyContinue
+"@
+        Set-Content -LiteralPath $launcherPath -Value $launcher -Encoding UTF8
+
+        try {
+            $proc = Start-Process -FilePath "powershell.exe" `
+                -ArgumentList @("-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $launcherPath) `
+                -WorkingDirectory $script:AppRoot `
+                -WindowStyle Hidden `
+                -PassThru
+            if ($proc -and $proc.Id) {
+                Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
+                Write-WorkerLog "Cloud pipeline launched (PID $($proc.Id)): worker → enricher → user_alerts"
+            }
+        } catch {
+            Write-WorkerLog "Cloud pipeline Start-Process failed: $($_.Exception.Message)"
+        }
+    } catch {
+        Write-WorkerLog "Cloud pipeline launch failed: $($_.Exception.Message)"
+    } finally {
+        foreach ($k in $envBackup.Keys) {
+            if ($null -eq $envBackup[$k]) { Remove-Item "Env:\$k" -ErrorAction SilentlyContinue }
+            else { Set-Item "Env:\$k" $envBackup[$k] }
+        }
+    }
+}
+
 function Get-WorkerSettingsSummary {
     try {
         $s = Load-SettingsObject
@@ -455,6 +556,10 @@ try {
         if ($script:WorkerLastScanInserted -gt 0) {
             Invoke-EnricherAsync
         }
+
+        # Always run cloud pipeline: syncs to Supabase, scores with Groq, sends Telegram immediately.
+        # This eliminates the 10-30 min GitHub Actions scheduling delay.
+        Invoke-CloudPipelineAsync
 
         # Send scan result to Telegram if this iteration was triggered by /scan command
         if (-not [string]::IsNullOrWhiteSpace($tgScanToken) -and -not [string]::IsNullOrWhiteSpace($script:WorkerLastScanSummary)) {
