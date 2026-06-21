@@ -62,6 +62,7 @@ import gulftalent as gt_scraper
 import naukri_gulf as naukri_scraper
 import indeed as indeed_scraper
 import adzuna as adzuna_scraper
+import careerjet as careerjet_scraper
 import websearch
 import gmail_scan
 import telegram_notify as tg
@@ -78,6 +79,7 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "Indeed":     5,
     "Gmail":      6,
     "Adzuna":     7,
+    "CareerJet":  8,
 }
 # Web search sources (Web/Tavily, Web/Brave, Web/Google, Web/Bing) → priority 8.
 
@@ -231,6 +233,8 @@ def main() -> None:
     search_adzuna  = _env_bool("SEARCH_ADZUNA",  default=False)
     adzuna_app_id  = _env("ADZUNA_APP_ID")
     adzuna_app_key = _env("ADZUNA_APP_KEY")
+    search_careerjet  = _env_bool("SEARCH_CAREERJET", default=True)
+    careerjet_affid   = _env("CAREERJET_AFFID")
     search_web     = _env_bool("SEARCH_WEB",     default=False)
     tavily_key     = _env("TAVILY_API_KEY")
     brave_key      = _env("BRAVE_API_KEY")
@@ -291,6 +295,10 @@ def main() -> None:
             search_adzuna = setting_adzuna.lower() not in ("false", "0", "no", "off")
         if setting_adzuna_id:
             adzuna_app_id = setting_adzuna_id
+
+        setting_careerjet = db.get_config(supabase_url, supabase_key, "setting_search_careerjet", "")
+        if setting_careerjet:
+            search_careerjet = setting_careerjet.lower() not in ("false", "0", "no", "off")
         if setting_min_score:
             try:
                 min_score = int(setting_min_score)
@@ -626,7 +634,7 @@ def main() -> None:
     # disable it for the rest of this run so we don't waste time on dead sources.
     _source_fails: dict[str, int] = {
         "bayt": 0, "gulftalent": 0, "naukri": 0,
-        "indeed": 0, "adzuna": 0, "web": 0,
+        "indeed": 0, "adzuna": 0, "careerjet": 0, "web": 0,
     }
     _FAIL_THRESHOLD = 2   # disable after this many consecutive zero-result attempts
 
@@ -865,6 +873,43 @@ def main() -> None:
             _log("Adzuna skipped — ADZUNA_APP_ID or ADZUNA_APP_KEY not set")
         elif search_adzuna:
             _log(f"Adzuna: skipped (blocked on previous keywords)")
+
+        # --- CareerJet ---
+        if search_careerjet and careerjet_affid and _source_fails["careerjet"] < _FAIL_THRESHOLD:
+            try:
+                cj_jobs = careerjet_scraper.scrape_careerjet(
+                    keyword=keyword,
+                    location=location,
+                    affid=careerjet_affid,
+                )
+                cj_jobs, cj_age_dropped = _age_filter(cj_jobs, f"CareerJet '{keyword}'")
+                if cj_age_dropped:
+                    _log(f"CareerJet '{keyword}': dropped {cj_age_dropped} stale job(s) (>{max_hours}h old)")
+                cj_jobs, cj_loc_dropped = _loc_filter(cj_jobs)
+                if cj_loc_dropped:
+                    _log(f"CareerJet '{keyword}': dropped {cj_loc_dropped} job(s) outside '{location}'")
+                cj_jobs = _nat_filter(cj_jobs, f"CareerJet '{keyword}'")
+                cj_jobs, cj_kw_dropped = engine.filter_jobs(cj_jobs, log_prefix=f"CareerJet '{keyword}'")
+                if cj_kw_dropped:
+                    _log(f"CareerJet '{keyword}': dropped {cj_kw_dropped} unrelated job(s)")
+                summary = db.sync_jobs(supabase_url, supabase_key, cj_jobs, source="CareerJet")
+                _log(
+                    f"CareerJet '{keyword}': "
+                    f"inserted={summary['inserted']}, updated={summary['updated']}, "
+                    f"seen={summary['seen']}, invalid={summary['invalid']}"
+                )
+                all_new_jobs.extend(summary.get("new_jobs", []))
+                if summary["seen"] == 0 and summary["inserted"] == 0:
+                    _source_fails["careerjet"] += 1
+                else:
+                    _source_fails["careerjet"] = 0
+            except Exception as exc:
+                _log(f"CareerJet error for '{keyword}': {exc}")
+                _source_fails["careerjet"] += 1
+        elif search_careerjet and not careerjet_affid:
+            _log("CareerJet skipped — CAREERJET_AFFID not set")
+        elif search_careerjet:
+            _log(f"CareerJet: skipped (blocked on previous keywords)")
 
         # --- Web search (Tavily → Brave → Google → Bing cascade) ---
         if search_web and _source_fails["web"] < _FAIL_THRESHOLD:

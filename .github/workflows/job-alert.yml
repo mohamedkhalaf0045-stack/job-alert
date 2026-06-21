@@ -55,6 +55,8 @@ jobs:
           SEARCH_ADZUNA:       ${{ secrets.SEARCH_ADZUNA }}
           ADZUNA_APP_ID:       ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY:      ${{ secrets.ADZUNA_APP_KEY }}
+          SEARCH_CAREERJET:    ${{ secrets.SEARCH_CAREERJET }}
+          CAREERJET_AFFID:     ${{ secrets.CAREERJET_AFFID }}
           SEARCH_WEB:          ${{ secrets.SEARCH_WEB }}
           SEARCH_GMAIL:        ${{ secrets.SEARCH_GMAIL }}
           GMAIL_EMAIL:         ${{ secrets.GMAIL_EMAIL }}

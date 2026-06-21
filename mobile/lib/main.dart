@@ -42,7 +42,7 @@ class JobAlertApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Job Alert',
+      title: 'Job Alert UAE',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
       home: const _AuthGate(),
