@@ -557,11 +557,11 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
       ),
       body: IndexedStack(
         index: _idx,
-        children: const [
-          DashboardScreen(),
-          JobsScreen(),
+        children: [
+          const DashboardScreen(),
+          const JobsScreen(),
           ChatScreen(key: _chatKey),
-          SettingsScreen(),
+          const SettingsScreen(),
         ],
       ),
       bottomNavigationBar: Column(
