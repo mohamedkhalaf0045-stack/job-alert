@@ -53,7 +53,8 @@ jobs:
         # can update the token without rebuilding the APK.
         run: |
           flutter build apk --release --split-per-abi \
-            --dart-define=GITHUB_TOKEN=${{ secrets.GH_PAT }}
+            --dart-define=GITHUB_TOKEN=${{ secrets.GH_PAT }} \
+            --dart-define=WEB_APP_URL=${{ secrets.WEB_APP_URL }}
 
       - name: Resolve tag name
         id: tag

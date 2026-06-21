@@ -351,6 +351,58 @@ class SupabaseService {
     }
   }
 
+  // ── FCM token ─────────────────────────────────────────────────────────────
+
+  /// Saves (or updates) the FCM device token in the user's profiles row so
+  /// the Python worker can send push notifications when the app is closed.
+  static Future<void> saveFcmToken(String token) async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null || token.isEmpty) return;
+    try {
+      await http.patch(
+        Uri.parse('$_base/profiles?id=eq.$userId'),
+        headers: {..._headers, 'Prefer': 'return=minimal'},
+        body: jsonEncode({'fcm_token': token}),
+      );
+    } catch (_) {}
+  }
+
+  // ── Catch-up: jobs inserted since a given timestamp ─────────────────────────
+
+  /// Returns jobs inserted after [since] whose title contains at least one
+  /// keyword from [keywords]. Used on app open/resume to catch jobs that
+  /// arrived while the app was closed (Realtime WebSocket was not connected).
+  static Future<List<Map<String, dynamic>>> getNewJobsSince(
+    DateTime since,
+    List<String> keywords,
+  ) async {
+    try {
+      final iso = since.toUtc().toIso8601String();
+      final encoded = Uri.encodeComponent(iso);
+      final res = await http.get(
+        Uri.parse(
+          '$_base/jobs'
+          '?select=job_id,title,company,location'
+          '&date_collected=gt.$encoded'
+          '&order=date_collected.asc'
+          '&limit=50',
+        ),
+        headers: _headers,
+      );
+      if (res.statusCode != 200) return [];
+      final list = jsonDecode(res.body) as List<dynamic>;
+      final rows = list.cast<Map<String, dynamic>>();
+      if (keywords.isEmpty) return rows;
+      final kwLower = keywords.map((k) => k.toLowerCase()).toList();
+      return rows.where((r) {
+        final title = (r['title'] as String? ?? '').toLowerCase();
+        return kwLower.any((kw) => title.contains(kw));
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   // SECURITY: these fields are never uploaded — bot_state is readable with
   // the public anon key that ships in this app, so anything written here is
   // world-readable. Secrets live in GitHub Actions Secrets (cloud workers)

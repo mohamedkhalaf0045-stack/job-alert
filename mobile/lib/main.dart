@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config.dart';
+import 'screens/chat_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/jobs_screen.dart';
 import 'screens/login_screen.dart';
@@ -36,8 +40,19 @@ const kSuccess     = Color(0xFF16A34A);
 const kWarn        = Color(0xFFD97706);
 const kDanger      = Color(0xFFDC2626);
 
+// Handles FCM messages that arrive while the app is terminated.
+// Must be a top-level function (not a closure or method).
+@pragma('vm:entry-point')
+Future<void> _fcmBackgroundHandler(RemoteMessage message) async {
+  // Firebase is already initialised by the OS before this is called.
+  // flutter_local_notifications is NOT available here; FCM shows the
+  // system tray notification automatically from the notification payload.
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_fcmBackgroundHandler);
   // ignore: deprecated_member_use
   await Supabase.initialize(url: Config.supabaseUrl, anonKey: Config.supabaseKey);
   // SECURITY: the GitHub PAT comes from compile-time --dart-define only
@@ -276,10 +291,12 @@ class _Shell extends StatefulWidget {
   State<_Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<_Shell> {
+class _ShellState extends State<_Shell> with WidgetsBindingObserver {
   int _idx = 0;
 
-  static const _titles = ['Cloud', 'Jobs', 'Settings'];
+  static const _titles = ['Cloud', 'Jobs', 'Chat', 'Settings'];
+  static const _kLastSeenKey = 'last_seen_jobs_ts';
+  Key _chatKey = UniqueKey();
 
   RealtimeChannel? _jobsChannel;
 
@@ -293,12 +310,108 @@ class _ShellState extends State<_Shell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     NotificationService.init(
       onUpdateTap: () { if (mounted) setState(() => _idx = 0); },
       onJobTap:    () { if (mounted) setState(() => _idx = 1); },
     );
-    _loadKeywords();
+    _loadKeywords().then((_) => _catchUpNotifications());
     _subscribeToNewJobs();
+    _initFcm();
+  }
+
+  // Register device with FCM so the server can push notifications when app is closed.
+  Future<void> _initFcm() async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      final settings  = await messaging.requestPermission(alert: true, badge: true, sound: true);
+      if (settings.authorizationStatus == AuthorizationStatus.denied) return;
+
+      final token = await messaging.getToken();
+      if (token != null) {
+        await SupabaseService.saveFcmToken(token);
+      }
+
+      // Refresh token when FCM rotates it.
+      messaging.onTokenRefresh.listen((newToken) {
+        SupabaseService.saveFcmToken(newToken);
+      });
+
+      // Foreground messages: FCM doesn't auto-show them on Android — show via local notification.
+      FirebaseMessaging.onMessage.listen((msg) {
+        final n = msg.notification;
+        if (n == null || !mounted) return;
+        NotificationService.showJobAlert(
+          notifId:  msg.hashCode & 0x7FFFFFFF,
+          title:    n.title ?? 'New job',
+          company:  msg.data['company'] ?? '',
+          location: msg.data['location'] ?? '',
+          jobId:    msg.data['job_id'] ?? '',
+        );
+      });
+    } catch (_) {
+      // FCM setup is best-effort — don't crash if Firebase not configured yet.
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _catchUpNotifications();
+    }
+  }
+
+  // Queries for jobs that arrived while the app was closed and notifies.
+  Future<void> _catchUpNotifications() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastSeenMs = prefs.getInt(_kLastSeenKey);
+      final since = lastSeenMs != null
+          ? DateTime.fromMillisecondsSinceEpoch(lastSeenMs, isUtc: true)
+          : DateTime.now().toUtc().subtract(const Duration(hours: 2));
+
+      final now = DateTime.now().toUtc();
+      await prefs.setInt(_kLastSeenKey, now.millisecondsSinceEpoch);
+
+      if (_userKeywords.isEmpty) return;
+
+      final missed = await SupabaseService.getNewJobsSince(since, _userKeywords);
+      if (missed.isEmpty || !mounted) return;
+
+      final toShow = missed.take(_kMaxIndividualNotifs).toList();
+      final extra  = missed.length - toShow.length;
+
+      for (int i = 0; i < toShow.length; i++) {
+        final job      = toShow[i];
+        final jobTitle = (job['title']    as String? ?? 'New job').trim();
+        final company  = (job['company']  as String? ?? '').trim();
+        final location = (job['location'] as String? ?? '').trim();
+        final jobId    = (job['job_id']   as String? ?? '').trim();
+        final notifId  = jobId.isNotEmpty
+            ? (jobId.hashCode & 0x7FFFFFFF) + 3000
+            : (4000 + i);
+
+        await NotificationService.showJobAlert(
+          notifId:  notifId,
+          title:    jobTitle,
+          company:  company,
+          location: location,
+          jobId:    jobId,
+        );
+        if (i < toShow.length - 1) {
+          await Future.delayed(const Duration(milliseconds: 350));
+        }
+      }
+
+      if (extra > 0) {
+        await Future.delayed(const Duration(milliseconds: 350));
+        await NotificationService.showNewJob(
+          '$extra more missed job${extra == 1 ? '' : 's'} matching your keywords.',
+        );
+      }
+    } catch (_) {
+      // Catch-up is best-effort; never crash the app.
+    }
   }
 
   // Load the user's keywords so we only notify for relevant jobs.
@@ -390,6 +503,7 @@ class _ShellState extends State<_Shell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _drainTimer?.cancel();
     _jobsChannel?.unsubscribe();
     super.dispose();
@@ -400,6 +514,20 @@ class _ShellState extends State<_Shell> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_titles[_idx]),
+        actions: _idx == 2
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Clear chat',
+                  onPressed: () {
+                    final state = context
+                        .findAncestorStateOfType<_ShellState>();
+                    // Rebuild chat screen with a new key to reset state
+                    setState(() => _chatKey = UniqueKey());
+                  },
+                ),
+              ]
+            : null,
         leading: Padding(
           padding: const EdgeInsets.only(left: 14),
           child: Container(
@@ -432,6 +560,7 @@ class _ShellState extends State<_Shell> {
         children: const [
           DashboardScreen(),
           JobsScreen(),
+          ChatScreen(key: _chatKey),
           SettingsScreen(),
         ],
       ),
@@ -452,6 +581,11 @@ class _ShellState extends State<_Shell> {
                 icon: Icon(Icons.work_outline),
                 selectedIcon: Icon(Icons.work, color: kAccent),
                 label: 'Jobs',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.chat_bubble_outline),
+                selectedIcon: Icon(Icons.chat_bubble, color: kAccent),
+                label: 'Chat',
               ),
               NavigationDestination(
                 icon: Icon(Icons.settings_outlined),

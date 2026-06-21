@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import db
 import email_notify
+import push_notify
 import telegram_notify
 
 try:
@@ -135,6 +136,8 @@ def run(mode: str, dry_run: bool = False) -> None:
             channels.append("email")
         if profile.get("alert_telegram") and profile.get("telegram_chat_id") and bot_token:
             channels.append("telegram")
+        if profile.get("fcm_token"):
+            channels.append("fcm")
         if not channels:
             continue
 
@@ -183,6 +186,34 @@ def run(mode: str, dry_run: bool = False) -> None:
                         )
                     except Exception:
                         pass
+
+            if ch == "fcm":
+                # Send up to 3 individual pushes + a "+N more" summary.
+                fcm_token = profile["fcm_token"]
+                individual = new_jobs[:3]
+                extra      = len(new_jobs) - len(individual)
+                for job in individual:
+                    push_notify.send(
+                        fcm_token,
+                        title=job.get("title", "New job"),
+                        body=f"{job.get('company','') or ''} · {job.get('location','') or ''}".strip(" ·"),
+                        data={
+                            "job_id":  job.get("job_id", ""),
+                            "channel": "fcm",
+                        },
+                    )
+                if extra > 0:
+                    push_notify.send(
+                        fcm_token,
+                        title=f"+{extra} more new job{'s' if extra != 1 else ''}",
+                        body="Tap to see all matches in the app.",
+                    )
+                db.log_user_alert(
+                    supabase_url, supabase_key, uid,
+                    [j["job_id"] for j in new_jobs], ch,
+                )
+                total_sent += len(new_jobs)
+                continue
 
             if sent:
                 db.log_user_alert(

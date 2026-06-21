@@ -755,7 +755,7 @@ def get_active_profiles(
 
         profiles_resp = (
             sb.table("profiles")
-            .select("id,email,display_name,telegram_chat_id,alert_email,alert_telegram,timezone")
+            .select("id,email,display_name,telegram_chat_id,alert_email,alert_telegram,timezone,fcm_token")
             .in_("id", list(prefs_by_user.keys()))
             .execute()
         )
@@ -782,6 +782,7 @@ def get_active_profiles(
                 "telegram_chat_id": prof.get("telegram_chat_id"),
                 "alert_email":      prof.get("alert_email", True),
                 "alert_telegram":   prof.get("alert_telegram", False),
+                "fcm_token":        prof.get("fcm_token"),
                 "timezone":         prof.get("timezone", "Asia/Dubai"),
                 "keywords":         kw,
                 "locations":        loc,

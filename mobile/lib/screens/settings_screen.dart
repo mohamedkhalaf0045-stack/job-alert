@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/app_settings.dart';
 import '../services/supabase_service.dart';
 import '../services/github_service.dart';
@@ -473,9 +474,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 32),
+          const Divider(),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _confirmLogout,
+            icon: const Icon(Icons.logout, color: Colors.red),
+            label: const Text('Sign Out', style: TextStyle(color: Colors.red)),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+              side: const BorderSide(color: Colors.red),
+            ),
+          ),
+          const SizedBox(height: 32),
         ],
       ),
     );
+  }
+
+  Future<void> _confirmLogout() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text('You will be returned to the login screen.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await Supabase.instance.client.auth.signOut();
+      // _AuthGate reacts to onAuthStateChange and navigates to LoginScreen.
+    }
   }
 }
 

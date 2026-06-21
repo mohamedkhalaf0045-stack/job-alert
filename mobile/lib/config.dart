@@ -1,6 +1,10 @@
 class Config {
   static const githubToken = String.fromEnvironment('GITHUB_TOKEN', defaultValue: '');
   static const githubRepo  = 'mohamedkhalaf0045-stack/job-alert';
+  static const webAppUrl = String.fromEnvironment(
+    'WEB_APP_URL',
+    defaultValue: 'https://job-alert-git-main-mohamedkhalaf0045-stacks-projects.vercel.app',
+  );
   static const supabaseUrl = 'https://xsuqhjmonzcguedekqjt.supabase.co';
   static const supabaseKey =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
