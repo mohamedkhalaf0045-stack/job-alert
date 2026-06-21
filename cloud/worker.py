@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import time
+import requests as _http
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -132,6 +133,73 @@ def _log(msg: str) -> None:
         print(line.encode("ascii", errors="replace").decode("ascii"), flush=True)
 
 
+_GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+_GROQ_MODEL    = "llama-3.3-70b-versatile"
+
+
+def _groq_quick_score(groq_key: str, job: dict) -> str:
+    """Call Groq on-demand and return a formatted score reply for Telegram.
+
+    Used by the analyze_ callback handler so the user can request AI scoring
+    at any time without waiting for the enricher workflow to run.
+    """
+    if not groq_key:
+        return "❌ GROQ_API_KEY not set — can't analyze on demand."
+
+    title   = (job.get("title")   or "").strip()
+    company = (job.get("company") or "").strip()
+    desc    = (job.get("description") or "")[:2500]
+    summary = (job.get("llm_summary") or "")
+
+    context = desc if desc else (f"Role summary: {summary}" if summary else "")
+
+    prompt = (
+        "You are a job-fit scorer for an IT professional in the UAE "
+        "(skills: IT Support, System Administration, Help Desk, M365, Active Directory, Networking).\n"
+        f"Job title: {title}\nCompany: {company}\n"
+        + (f"Context:\n{context}\n\n" if context else "")
+        + "Return STRICT JSON only:\n"
+        '{"score":0-10,"summary":"one sentence why","matched":["skill1"],'
+        '"missing":["skill2"],"red_flags":["flag1"]}'
+    )
+
+    try:
+        r = _http.post(
+            _GROQ_ENDPOINT,
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={
+                "model": _GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=45,
+        )
+        r.raise_for_status()
+        data = json.loads(r.json()["choices"][0]["message"]["content"])
+    except Exception as exc:
+        return f"❌ Groq error: {exc}"
+
+    score   = data.get("score", "?")
+    sm      = (data.get("summary") or "").strip()
+    matched = ", ".join(str(s) for s in (data.get("matched") or [])[:5])
+    missing = ", ".join(str(s) for s in (data.get("missing") or [])[:4])
+    flags   = " | ".join(str(f) for f in (data.get("red_flags") or [])[:2])
+
+    try:
+        s = int(score)
+        star = "🌟" if s >= 8 else "✅" if s >= 6 else "🔵" if s >= 4 else "⚪"
+    except (ValueError, TypeError):
+        star = "📊"
+
+    lines = [f"{star} AI Score: {score}/10 — {title} @ {company}"]
+    if sm:      lines.append(sm)
+    if matched: lines.append(f"✅ Matched: {matched}")
+    if missing: lines.append(f"❌ Missing: {missing}")
+    if flags:   lines.append(f"⚠️ {flags}")
+    return "\n".join(lines)
+
+
 _DEFAULT_KEYWORDS = "IT Support,IT Helpdesk,System Administrator,IT Infrastructure"
 _DEFAULT_LOCATION = "United Arab Emirates"
 
@@ -141,6 +209,7 @@ def main() -> None:
     supabase_key   = _env("SUPABASE_KEY")
     tg_token       = _env("TELEGRAM_BOT_TOKEN")
     tg_chat        = _env("TELEGRAM_CHAT_ID")
+    groq_key       = _env("GROQ_API_KEY")
 
     if not supabase_url or not supabase_key:
         _log("ERROR: SUPABASE_URL or SUPABASE_KEY env var is not set. Exiting.")
@@ -354,6 +423,48 @@ def main() -> None:
                             "It will generate tailored CVs for all high-scoring jobs automatically.",
                         )
                         _log(f"Tailored CV not in DB yet for job_id={job_id} — sent instructions")
+
+                elif data.startswith("analyze_"):
+                    job_id  = data[len("analyze_"):]
+                    tg.answer_callback_query(
+                        tg_token, cb["callback_query_id"],
+                        text="🔍 Analyzing… (may take a few seconds)",
+                    )
+                    job_row = db.get_job_by_id(supabase_url, supabase_key, job_id)
+                    if not job_row:
+                        tg.send_message(tg_token, cb["chat_id"], "❌ Job not found in database.")
+                    elif job_row.get("llm_score") is not None:
+                        # Already scored — return the cached result instantly
+                        score   = job_row["llm_score"]
+                        summary = job_row.get("llm_summary") or ""
+                        matched = job_row.get("matched_skills") or []
+                        missing = job_row.get("missing_skills") or []
+                        flags   = job_row.get("red_flags") or []
+                        try:
+                            s = int(score)
+                            star = "🌟" if s >= 8 else "✅" if s >= 6 else "🔵" if s >= 4 else "⚪"
+                        except (ValueError, TypeError):
+                            star = "📊"
+                        lines = [
+                            f"{star} AI Score: {score}/10 — "
+                            f"{job_row.get('title','')} @ {job_row.get('company','')}",
+                        ]
+                        if summary:
+                            lines.append(summary)
+                        if matched:
+                            lines.append("✅ Matched: " + ", ".join(str(x) for x in matched[:5]))
+                        if missing:
+                            lines.append("❌ Missing: " + ", ".join(str(x) for x in missing[:4]))
+                        if flags:
+                            lines.append("⚠️ " + " | ".join(str(x) for x in flags[:2]))
+                        tg.send_message(tg_token, cb["chat_id"], "\n".join(lines))
+                        _log(f"Analyze (cached score={score}) job_id={job_id}")
+                    else:
+                        # Not yet scored — call Groq on demand
+                        _log(f"Analyze on-demand (no score yet) job_id={job_id}")
+                        reply = _groq_quick_score(groq_key, job_row)
+                        tg.send_message(tg_token, cb["chat_id"], reply)
+                        _log(f"Analyze reply sent for job_id={job_id}")
 
                 elif data.startswith("bad_") or data.startswith("good_"):
                     # 👍 / 👎 feedback → set job status, which feeds the
@@ -884,7 +995,36 @@ def main() -> None:
     elif not gmail_email:
         _log("Gmail skipped — GMAIL_EMAIL / GMAIL_APP_PASSWORD not set")
 
-    _log(f"Scan complete. {len(all_new_jobs)} new job(s) inserted — user_alerts.py will send per-user notifications.")
+    _log(f"Scan complete. {len(all_new_jobs)} new job(s) inserted.")
+
+    # ── Immediate per-job Telegram alerts ────────────────────────────────────
+    # Send one card per new job RIGHT NOW — no waiting for the enricher.
+    # Jobs arrive on your phone within seconds of being scraped.
+    # LinkedIn (P1) is always first. The enricher will send a follow-up
+    # score update later via send_score_update() when it finishes.
+    if tg_token and tg_chat and all_new_jobs:
+        _SRC_PRI = {
+            "LinkedIn": 1, "Bayt": 2, "GulfTalent": 3,
+            "NaukriGulf": 4, "Indeed": 5, "Gmail": 6, "Adzuna": 7,
+        }
+        sorted_jobs = sorted(
+            all_new_jobs,
+            key=lambda j: _SRC_PRI.get(j.get("Source", ""), 8),
+        )
+        alerted = 0
+        for job in sorted_jobs:
+            job_id = str(job.get("Id", "")).strip()
+            url    = job.get("Url", "")
+            try:
+                ok = tg.send_job_alert_with_button(tg_token, tg_chat, job, job_id=job_id)
+                if ok:
+                    if url:
+                        db.mark_telegram_sent(supabase_url, supabase_key, url)
+                    alerted += 1
+                time.sleep(0.4)   # avoid Telegram flood-control (30 msg/s limit)
+            except Exception as exc:
+                _log(f"Telegram alert error job_id={job_id}: {exc}")
+        _log(f"Telegram: sent {alerted}/{len(sorted_jobs)} instant alert(s)")
 
     # --- Heartbeat: record this run + ping external dead-man's switch ----------
     # worker_last_run powers the downtime-detection alert at the top of the next

@@ -171,6 +171,12 @@ def send_job_alert_with_button(bot_token: str, chat_id: str, job: dict,
                 ],
                 [
                     {
+                        "text":          "\U0001f50d Analyze",        # 🔍
+                        "callback_data": f"analyze_{job_id}",
+                    },
+                ],
+                [
+                    {
                         "text":          "\U0001f44d Good match",     # 👍
                         "callback_data": f"good_{job_id}",
                     },

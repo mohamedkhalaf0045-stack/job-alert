@@ -926,6 +926,34 @@ def save_telegram_history(
         print(f"[DB] save_telegram_history error for chat {chat_id}: {exc}")
 
 
+def get_job_by_id(
+    supabase_url: str,
+    supabase_key: str,
+    job_id: str,
+) -> dict | None:
+    """Fetch a single job row by job_id. Returns None if not found."""
+    if not job_id:
+        return None
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("jobs")
+            .select(
+                "job_id,title,company,location,url,source,"
+                "date_posted,llm_score,llm_summary,description,"
+                "matched_skills,missing_skills,red_flags"
+            )
+            .eq("job_id", job_id)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        return rows[0] if rows else None
+    except Exception as exc:
+        print(f"[DB] get_job_by_id error: {exc}")
+        return None
+
+
 def upsert_user_interaction(
     supabase_url: str,
     supabase_key: str,
