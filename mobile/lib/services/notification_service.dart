@@ -6,7 +6,12 @@ class NotificationService {
   static Function()? _onUpdateTap;
   static Function()? _onJobTap;
 
-  static Future<void> init({Function()? onUpdateTap, Function()? onJobTap}) async {
+  // ── Init ─────────────────────────────────────────────────────────────────
+
+  static Future<void> init({
+    Function()? onUpdateTap,
+    Function()? onJobTap,
+  }) async {
     _onUpdateTap = onUpdateTap;
     _onJobTap    = onJobTap;
 
@@ -16,9 +21,11 @@ class NotificationService {
     await _plugin.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (details) {
-        if (details.payload == 'update') {
+        final payload = details.payload ?? '';
+        if (payload == 'update') {
           _onUpdateTap?.call();
-        } else if (details.payload == 'jobs') {
+        } else {
+          // 'jobs' generic tap OR 'job:<id>' specific tap — both open Jobs tab
           _onJobTap?.call();
         }
       },
@@ -29,6 +36,42 @@ class NotificationService {
             AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
   }
+
+  // ── Per-job notification ──────────────────────────────────────────────────
+
+  /// Shows a single job-specific notification.
+  /// [notifId] must be unique per job to avoid replacing other notifications.
+  static Future<void> showJobAlert({
+    required int notifId,
+    required String title,
+    required String company,
+    required String location,
+    required String jobId,
+  }) async {
+    final subtitle = [
+      if (company.isNotEmpty) company,
+      if (location.isNotEmpty) location,
+    ].join(' · ');
+
+    const channel = AndroidNotificationDetails(
+      'job_alerts',
+      'Job Alerts',
+      channelDescription: 'New job matches for your keywords',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+    );
+
+    await _plugin.show(
+      notifId,
+      title,
+      subtitle.isNotEmpty ? subtitle : 'New job found',
+      const NotificationDetails(android: channel),
+      payload: 'job:$jobId',
+    );
+  }
+
+  // ── Summary notification (used when a burst has many jobs) ────────────────
 
   static Future<void> showNewJob(String summary) async {
     const channel = AndroidNotificationDetails(
@@ -48,6 +91,8 @@ class NotificationService {
     );
   }
 
+  // ── Update notification ───────────────────────────────────────────────────
+
   static Future<void> showUpdateAvailable(String versionName) async {
     const channel = AndroidNotificationDetails(
       'update_channel',
@@ -58,7 +103,6 @@ class NotificationService {
       icon: '@mipmap/ic_launcher',
       ticker: 'Update available',
     );
-
     await _plugin.show(
       1,
       'Update available — $versionName',

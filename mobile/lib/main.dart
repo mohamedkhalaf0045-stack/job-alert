@@ -10,6 +10,16 @@ import 'screens/settings_screen.dart';
 import 'services/notification_service.dart';
 import 'services/supabase_service.dart';
 
+// Maximum individual job notifications to fire in one burst.
+// If more arrive within the accumulation window, the rest become a
+// single "+N more" summary so the drawer doesn't get flooded.
+const _kMaxIndividualNotifs = 3;
+
+// How long to wait after the last insert before draining the queue.
+// The worker inserts jobs one-by-one; a 4-second window batches a
+// typical scraper run into one flush.
+const _kAccumulationWindow = Duration(seconds: 4);
+
 // Design tokens from nexu-io/open-design — Linear system
 // Accent: Linear indigo #5E6AD2
 const kAccent      = Color(0xFF5E6AD2);
@@ -271,21 +281,35 @@ class _ShellState extends State<_Shell> {
 
   static const _titles = ['Cloud', 'Jobs', 'Settings'];
 
-  Timer? _notifyDebounce;
   RealtimeChannel? _jobsChannel;
+
+  // User keywords (lowercase) — loaded once; used to filter realtime inserts.
+  List<String> _userKeywords = [];
+
+  // Pending inserts waiting for the accumulation window to close.
+  final List<Map<String, dynamic>> _pendingJobs = [];
+  Timer? _drainTimer;
 
   @override
   void initState() {
     super.initState();
     NotificationService.init(
-      onUpdateTap: () {
-        if (mounted) setState(() => _idx = 0);
-      },
-      onJobTap: () {
-        if (mounted) setState(() => _idx = 1);
-      },
+      onUpdateTap: () { if (mounted) setState(() => _idx = 0); },
+      onJobTap:    () { if (mounted) setState(() => _idx = 1); },
     );
+    _loadKeywords();
     _subscribeToNewJobs();
+  }
+
+  // Load the user's keywords so we only notify for relevant jobs.
+  Future<void> _loadKeywords() async {
+    final prefs = await SupabaseService.getUserPreferences();
+    final kws = (prefs['keywords'] as List?)?.cast<String>() ?? [];
+    if (mounted) {
+      setState(() {
+        _userKeywords = kws.map((k) => k.toLowerCase()).toList();
+      });
+    }
   }
 
   void _subscribeToNewJobs() {
@@ -295,20 +319,76 @@ class _ShellState extends State<_Shell> {
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: 'jobs',
-          callback: (_) {
-            _notifyDebounce?.cancel();
-            _notifyDebounce = Timer(const Duration(seconds: 5), () {
-              NotificationService.showNewJob(
-                  'New jobs may match your keywords — check your feed.');
-            });
-          },
+          callback: _onJobInserted,
         )
         .subscribe();
   }
 
+  void _onJobInserted(PostgresChangePayload payload) {
+    final rec   = payload.newRecord;
+    final title = (rec['title'] as String? ?? '').toLowerCase();
+
+    // If user keywords are loaded, only queue jobs that match at least one.
+    // If keywords haven't loaded yet, let everything through.
+    if (_userKeywords.isNotEmpty) {
+      final matches = _userKeywords.any((kw) => title.contains(kw));
+      if (!matches) return;
+    }
+
+    _pendingJobs.add(rec);
+
+    // Reset the drain timer on every new insert so we accumulate rapid bursts.
+    _drainTimer?.cancel();
+    _drainTimer = Timer(_kAccumulationWindow, _drainNotifications);
+  }
+
+  Future<void> _drainNotifications() async {
+    if (!mounted || _pendingJobs.isEmpty) return;
+
+    final jobs = List<Map<String, dynamic>>.from(_pendingJobs);
+    _pendingJobs.clear();
+
+    final toShow = jobs.take(_kMaxIndividualNotifs).toList();
+    final extra  = jobs.length - toShow.length;
+
+    for (int i = 0; i < toShow.length; i++) {
+      final job      = toShow[i];
+      final jobTitle = (job['title']    as String? ?? 'New job').trim();
+      final company  = (job['company']  as String? ?? '').trim();
+      final location = (job['location'] as String? ?? '').trim();
+      final jobId    = (job['job_id']   as String? ?? '').trim();
+
+      // Use the job_id hash as notification ID so each job gets its own slot
+      // in the status bar instead of replacing the previous one.
+      final notifId = jobId.isNotEmpty
+          ? (jobId.hashCode & 0x7FFFFFFF) + 1000
+          : (2000 + i);
+
+      await NotificationService.showJobAlert(
+        notifId:  notifId,
+        title:    jobTitle,
+        company:  company,
+        location: location,
+        jobId:    jobId,
+      );
+
+      // Small gap so Android doesn't coalesce rapid notifications.
+      if (i < toShow.length - 1) {
+        await Future.delayed(const Duration(milliseconds: 350));
+      }
+    }
+
+    if (extra > 0) {
+      await Future.delayed(const Duration(milliseconds: 350));
+      await NotificationService.showNewJob(
+        '$extra more new job${extra == 1 ? '' : 's'} matching your keywords.',
+      );
+    }
+  }
+
   @override
   void dispose() {
-    _notifyDebounce?.cancel();
+    _drainTimer?.cancel();
     _jobsChannel?.unsubscribe();
     super.dispose();
   }
