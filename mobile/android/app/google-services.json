@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "522894391534",
+    "project_id": "job-alert-uae",
+    "storage_bucket": "job-alert-uae.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:522894391534:android:5f2d54935ca8d49d099bff",
+        "android_client_info": {
+          "package_name": "com.khalaf.jobalert"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBIc_5_OQokDOwfnaEoVIFTzsdQ0SFGiNI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
