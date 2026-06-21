@@ -325,11 +325,13 @@ class _ShellState extends State<_Shell> {
   }
 
   void _onJobInserted(PostgresChangePayload payload) {
-    final rec   = payload.newRecord;
+    final rec = payload.newRecord;
+    // Empty newRecord means REPLICA IDENTITY isn't FULL — skip silently.
+    if (rec.isEmpty) return;
+
     final title = (rec['title'] as String? ?? '').toLowerCase();
 
-    // If user keywords are loaded, only queue jobs that match at least one.
-    // If keywords haven't loaded yet, let everything through.
+    // Filter by keywords only when loaded; pass everything through while loading.
     if (_userKeywords.isNotEmpty) {
       final matches = _userKeywords.any((kw) => title.contains(kw));
       if (!matches) return;

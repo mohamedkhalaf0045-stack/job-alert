@@ -150,6 +150,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       () => GitHubService.toggleSchedule(
                           s.workflowId, s.scheduleActive)),
                 ),
+              const SizedBox(height: 16),
+              _TestNotificationButton(),
             ],
           );
         },
@@ -434,6 +436,43 @@ class _ControlButtons extends StatelessWidget {
           ),
         ]),
       ],
+    );
+  }
+}
+
+// ── Test notification button ──────────────────────────────────────────────────
+
+class _TestNotificationButton extends StatefulWidget {
+  @override
+  State<_TestNotificationButton> createState() =>
+      _TestNotificationButtonState();
+}
+
+class _TestNotificationButtonState extends State<_TestNotificationButton> {
+  bool _sent = false;
+
+  Future<void> _fire() async {
+    await NotificationService.showJobAlert(
+      notifId:  9999,
+      title:    'IT Support Engineer (TEST)',
+      company:  'Test Company LLC',
+      location: 'Dubai, UAE',
+      jobId:    'test_local',
+    );
+    if (mounted) setState(() => _sent = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: _sent ? null : _fire,
+      icon: Icon(_sent ? Icons.check_circle : Icons.notifications_active,
+          color: _sent ? Colors.green : null),
+      label: Text(_sent ? 'Notification sent!' : 'Test Notification'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size.fromHeight(44),
+        foregroundColor: _sent ? Colors.green : null,
+      ),
     );
   }
 }
