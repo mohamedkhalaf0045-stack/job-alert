@@ -8,6 +8,57 @@ interface Message {
   content: string
 }
 
+// ── Web search via Tavily (set TAVILY_API_KEY in Vercel env vars) ─────────────
+async function searchWeb(query: string): Promise<string> {
+  const apiKey = process.env.TAVILY_API_KEY
+  if (!apiKey) return 'Web search not configured (TAVILY_API_KEY missing).'
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        search_depth: 'basic',
+        max_results: 5,
+        include_answer: true,
+      }),
+    })
+    if (!res.ok) return `Search failed (${res.status}).`
+    const data = await res.json() as {
+      answer?: string
+      results?: { title: string; content: string; url: string }[]
+    }
+    const parts: string[] = []
+    if (data.answer) parts.push(`Summary: ${data.answer}`)
+    for (const r of (data.results ?? []).slice(0, 4)) {
+      parts.push(`• ${r.title}: ${r.content.substring(0, 400)}`)
+    }
+    return parts.join('\n') || 'No results found.'
+  } catch {
+    return 'Search request failed.'
+  }
+}
+
+const SEARCH_TOOL: Groq.Chat.Completions.ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'search_web',
+    description:
+      'Search the web for up-to-date information about a company, industry, salary data, or any topic the user asks about that you may not have in your training data. Always use this when asked about a specific company you are not sure about.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Concise search query, e.g. "UMO company UAE what do they do"',
+        },
+      },
+      required: ['query'],
+    },
+  },
+}
+
 export interface JobContext {
   title?:          string
   company?:        string
@@ -79,11 +130,20 @@ function buildSystemPrompt(cvContext: string, job?: JobContext): string {
 - Whether the user is a good fit for a specific role
 - Cover letter tips
 - Application strategy (should they apply, how to stand out)
+- Company research (culture, reputation, what they do, interview process)
 - General career advice
+
+You have a search_web tool. Use it whenever:
+- The user asks about a company you don't have confident knowledge of
+- The user asks for current salary ranges or market data
+- The user asks about a company's culture, reputation, recent news, or interview process
+- You would otherwise say "I don't have information about this company"
+
+Never say you cannot find company info without first calling search_web. Search first, then answer.
 
 Be concise, practical, and specific to the UAE job market. Respond in the same language the user writes in (Arabic or English).${cvSection}${jobSection}
 
-Important: If you don't have enough context to answer, ask one clarifying question. Keep responses under 300 words unless the user asks for detail.`
+Keep responses under 300 words unless the user asks for detail.`
 }
 
 export async function POST(req: NextRequest) {
@@ -99,23 +159,65 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 })
     }
 
-    const cvContext = await getCVContext(user.id)
+    const cvContext    = await getCVContext(user.id)
     const systemPrompt = buildSystemPrompt(cvContext, job)
+    const groq         = new Groq({ apiKey: process.env.GROQ_API_KEY })
+    const hasTavily    = !!process.env.TAVILY_API_KEY
 
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+    const baseMessages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content }) as Groq.Chat.Completions.ChatCompletionMessageParam),
+    ]
 
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 512,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages.map(m => ({ role: m.role, content: m.content })),
-      ],
+    // ── Pass 1: let the model decide if it needs to search ───────────────────
+    const first = await groq.chat.completions.create({
+      model:       'llama-3.3-70b-versatile',
+      max_tokens:  512,
+      messages:    baseMessages,
+      ...(hasTavily && { tools: [SEARCH_TOOL], tool_choice: 'auto' }),
     })
 
-    const reply = response.choices[0]?.message?.content ?? 'Sorry, I could not generate a response.'
+    const firstMsg = first.choices[0]?.message
 
+    // ── Pass 2: if search tool was called, run it and get final answer ────────
+    if (
+      hasTavily &&
+      first.choices[0]?.finish_reason === 'tool_calls' &&
+      firstMsg?.tool_calls?.length
+    ) {
+      const toolCall = firstMsg.tool_calls[0]
+      let searchResult = 'No results.'
+      try {
+        const args = JSON.parse(toolCall.function.arguments) as { query: string }
+        searchResult = await searchWeb(args.query)
+      } catch { /* bad JSON — fall through with empty result */ }
+
+      const second = await groq.chat.completions.create({
+        model:     'llama-3.3-70b-versatile',
+        max_tokens: 600,
+        messages: [
+          ...baseMessages,
+          {
+            role:       'assistant',
+            content:    null,
+            tool_calls: firstMsg.tool_calls,
+          } as Groq.Chat.Completions.ChatCompletionMessageParam,
+          {
+            role:         'tool',
+            content:      searchResult,
+            tool_call_id: toolCall.id,
+          } as Groq.Chat.Completions.ChatCompletionMessageParam,
+        ],
+      })
+
+      const reply = second.choices[0]?.message?.content ?? 'Sorry, could not generate a response.'
+      return NextResponse.json({ reply })
+    }
+
+    // ── No tool call — return first response directly ─────────────────────────
+    const reply = firstMsg?.content ?? 'Sorry, could not generate a response.'
     return NextResponse.json({ reply })
+
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
     console.error('Chat error:', message)

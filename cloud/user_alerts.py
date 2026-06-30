@@ -69,6 +69,17 @@ def _cfg(env_key: str, default: str = "") -> str:
 
 # ── Timezone helper ───────────────────────────────────────────────────────────
 
+def _parse_dt(s: str | None) -> datetime | None:
+    """Parse an ISO-8601 string to an aware datetime, tolerating missing tz."""
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
 def _local_hour(tz_name: str) -> int:
     """Current hour in an IANA timezone, falling back to UTC on error."""
     if not _HAS_ZONEINFO:
@@ -150,10 +161,11 @@ def run(mode: str, dry_run: bool = False) -> None:
             alerted = db.get_alerted_job_ids(supabase_url, supabase_key, uid, ch)
             last_at = db.get_last_alert_at(supabase_url, supabase_key, uid, ch)
 
+            last_at_dt = _parse_dt(last_at)
             new_jobs = [
                 j for j in matches
                 if j["job_id"] not in alerted
-                and (last_at is None or (j.get("date_collected") or "") > last_at)
+                and (last_at_dt is None or (_parse_dt(j.get("date_collected")) or datetime.min.replace(tzinfo=timezone.utc)) > last_at_dt)
             ]
             if not new_jobs:
                 continue
@@ -189,11 +201,14 @@ def run(mode: str, dry_run: bool = False) -> None:
 
             if ch == "fcm":
                 # Send up to 3 individual pushes + a "+N more" summary.
+                # Only log as alerted if at least one push actually succeeded,
+                # so failed deliveries are retried on the next alert cycle.
                 fcm_token = profile["fcm_token"]
                 individual = new_jobs[:3]
                 extra      = len(new_jobs) - len(individual)
+                any_sent = False
                 for job in individual:
-                    push_notify.send(
+                    ok = push_notify.send(
                         fcm_token,
                         title=job.get("title", "New job"),
                         body=f"{job.get('company','') or ''} · {job.get('location','') or ''}".strip(" ·"),
@@ -202,17 +217,21 @@ def run(mode: str, dry_run: bool = False) -> None:
                             "channel": "fcm",
                         },
                     )
+                    any_sent = any_sent or ok
                 if extra > 0:
                     push_notify.send(
                         fcm_token,
                         title=f"+{extra} more new job{'s' if extra != 1 else ''}",
                         body="Tap to see all matches in the app.",
                     )
-                db.log_user_alert(
-                    supabase_url, supabase_key, uid,
-                    [j["job_id"] for j in new_jobs], ch,
-                )
-                total_sent += len(new_jobs)
+                if any_sent:
+                    db.log_user_alert(
+                        supabase_url, supabase_key, uid,
+                        [j["job_id"] for j in new_jobs], ch,
+                    )
+                    total_sent += len(new_jobs)
+                else:
+                    print(f"[Alerts]   fcm send FAILED for {label}")
                 continue
 
             if sent:

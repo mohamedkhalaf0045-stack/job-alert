@@ -302,6 +302,9 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
 
   // User keywords (lowercase) — loaded once; used to filter realtime inserts.
   List<String> _userKeywords = [];
+  // True once _loadKeywords() has completed. Before that, suppress Realtime
+  // notifications so we don't fire on jobs that don't match user keywords.
+  bool _keywordsLoaded = false;
 
   // Pending inserts waiting for the accumulation window to close.
   final List<Map<String, dynamic>> _pendingJobs = [];
@@ -370,45 +373,16 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
           ? DateTime.fromMillisecondsSinceEpoch(lastSeenMs, isUtc: true)
           : DateTime.now().toUtc().subtract(const Duration(hours: 2));
 
-      final now = DateTime.now().toUtc();
-      await prefs.setInt(_kLastSeenKey, now.millisecondsSinceEpoch);
-
       if (_userKeywords.isEmpty) return;
 
+      final now    = DateTime.now().toUtc();
       final missed = await SupabaseService.getNewJobsSince(since, _userKeywords);
+      // Save timestamp only after a successful query so a network error
+      // doesn't advance the window and permanently skip those jobs.
+      await prefs.setInt(_kLastSeenKey, now.millisecondsSinceEpoch);
       if (missed.isEmpty || !mounted) return;
 
-      final toShow = missed.take(_kMaxIndividualNotifs).toList();
-      final extra  = missed.length - toShow.length;
-
-      for (int i = 0; i < toShow.length; i++) {
-        final job      = toShow[i];
-        final jobTitle = (job['title']    as String? ?? 'New job').trim();
-        final company  = (job['company']  as String? ?? '').trim();
-        final location = (job['location'] as String? ?? '').trim();
-        final jobId    = (job['job_id']   as String? ?? '').trim();
-        final notifId  = jobId.isNotEmpty
-            ? (jobId.hashCode & 0x7FFFFFFF) + 3000
-            : (4000 + i);
-
-        await NotificationService.showJobAlert(
-          notifId:  notifId,
-          title:    jobTitle,
-          company:  company,
-          location: location,
-          jobId:    jobId,
-        );
-        if (i < toShow.length - 1) {
-          await Future.delayed(const Duration(milliseconds: 350));
-        }
-      }
-
-      if (extra > 0) {
-        await Future.delayed(const Duration(milliseconds: 350));
-        await NotificationService.showNewJob(
-          '$extra more missed job${extra == 1 ? '' : 's'} matching your keywords.',
-        );
-      }
+      await _showJobBurst(missed, idOffset: 3000, moreLabel: 'missed');
     } catch (_) {
       // Catch-up is best-effort; never crash the app.
     }
@@ -420,7 +394,8 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
     final kws = (prefs['keywords'] as List?)?.cast<String>() ?? [];
     if (mounted) {
       setState(() {
-        _userKeywords = kws.map((k) => k.toLowerCase()).toList();
+        _userKeywords   = kws.map((k) => k.toLowerCase()).toList();
+        _keywordsLoaded = true;
       });
     }
   }
@@ -444,12 +419,18 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
 
     final title = (rec['title'] as String? ?? '').toLowerCase();
 
-    // Filter by keywords only when loaded; pass everything through while loading.
+    // Suppress notifications until keywords are loaded to avoid irrelevant alerts
+    // during the first few seconds after login. If the user has no keywords set,
+    // _keywordsLoaded will still be true and we pass the job through.
+    if (!_keywordsLoaded) return;
     if (_userKeywords.isNotEmpty) {
       final matches = _userKeywords.any((kw) => title.contains(kw));
       if (!matches) return;
     }
 
+    // Dedup by job_id so a scraper retry doesn't fire two identical notifications.
+    final jobId = rec['job_id'] as String? ?? '';
+    if (jobId.isNotEmpty && _pendingJobs.any((j) => j['job_id'] == jobId)) return;
     _pendingJobs.add(rec);
 
     // Reset the drain timer on every new insert so we accumulate rapid bursts.
@@ -463,6 +444,18 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
     final jobs = List<Map<String, dynamic>>.from(_pendingJobs);
     _pendingJobs.clear();
 
+    await _showJobBurst(jobs, idOffset: 1000, moreLabel: 'new');
+  }
+
+  // Shared burst helper — shows up to _kMaxIndividualNotifs job alerts then
+  // a "+N more" summary. idOffset seeds the notification ID range so
+  // catch-up (3000) and realtime (1000) notifications don't collide.
+  Future<void> _showJobBurst(
+    List<Map<String, dynamic>> jobs, {
+    required int idOffset,
+    required String moreLabel,
+  }) async {
+    if (!mounted || jobs.isEmpty) return;
     final toShow = jobs.take(_kMaxIndividualNotifs).toList();
     final extra  = jobs.length - toShow.length;
 
@@ -472,12 +465,9 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
       final company  = (job['company']  as String? ?? '').trim();
       final location = (job['location'] as String? ?? '').trim();
       final jobId    = (job['job_id']   as String? ?? '').trim();
-
-      // Use the job_id hash as notification ID so each job gets its own slot
-      // in the status bar instead of replacing the previous one.
-      final notifId = jobId.isNotEmpty
-          ? (jobId.hashCode & 0x7FFFFFFF) + 1000
-          : (2000 + i);
+      final notifId  = jobId.isNotEmpty
+          ? (jobId.hashCode & 0x7FFFFFFF) + idOffset
+          : (idOffset + 1000 + i);
 
       await NotificationService.showJobAlert(
         notifId:  notifId,
@@ -486,8 +476,6 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
         location: location,
         jobId:    jobId,
       );
-
-      // Small gap so Android doesn't coalesce rapid notifications.
       if (i < toShow.length - 1) {
         await Future.delayed(const Duration(milliseconds: 350));
       }
@@ -496,7 +484,7 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
     if (extra > 0) {
       await Future.delayed(const Duration(milliseconds: 350));
       await NotificationService.showNewJob(
-        '$extra more new job${extra == 1 ? '' : 's'} matching your keywords.',
+        '$extra more $moreLabel job${extra == 1 ? '' : 's'} matching your keywords.',
       );
     }
   }
@@ -520,9 +508,6 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
                   icon: const Icon(Icons.delete_outline),
                   tooltip: 'Clear chat',
                   onPressed: () {
-                    final state = context
-                        .findAncestorStateOfType<_ShellState>();
-                    // Rebuild chat screen with a new key to reset state
                     setState(() => _chatKey = UniqueKey());
                   },
                 ),
