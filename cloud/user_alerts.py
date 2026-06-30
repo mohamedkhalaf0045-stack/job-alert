@@ -189,11 +189,14 @@ def run(mode: str, dry_run: bool = False) -> None:
 
             if ch == "fcm":
                 # Send up to 3 individual pushes + a "+N more" summary.
+                # Only log as alerted if at least one push actually succeeded,
+                # so failed deliveries are retried on the next alert cycle.
                 fcm_token = profile["fcm_token"]
                 individual = new_jobs[:3]
                 extra      = len(new_jobs) - len(individual)
+                any_sent = False
                 for job in individual:
-                    push_notify.send(
+                    ok = push_notify.send(
                         fcm_token,
                         title=job.get("title", "New job"),
                         body=f"{job.get('company','') or ''} · {job.get('location','') or ''}".strip(" ·"),
@@ -202,17 +205,21 @@ def run(mode: str, dry_run: bool = False) -> None:
                             "channel": "fcm",
                         },
                     )
+                    any_sent = any_sent or ok
                 if extra > 0:
                     push_notify.send(
                         fcm_token,
                         title=f"+{extra} more new job{'s' if extra != 1 else ''}",
                         body="Tap to see all matches in the app.",
                     )
-                db.log_user_alert(
-                    supabase_url, supabase_key, uid,
-                    [j["job_id"] for j in new_jobs], ch,
-                )
-                total_sent += len(new_jobs)
+                if any_sent:
+                    db.log_user_alert(
+                        supabase_url, supabase_key, uid,
+                        [j["job_id"] for j in new_jobs], ch,
+                    )
+                    total_sent += len(new_jobs)
+                else:
+                    print(f"[Alerts]   fcm send FAILED for {label}")
                 continue
 
             if sent:
