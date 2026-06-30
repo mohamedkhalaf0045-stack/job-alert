@@ -302,6 +302,9 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
 
   // User keywords (lowercase) — loaded once; used to filter realtime inserts.
   List<String> _userKeywords = [];
+  // True once _loadKeywords() has completed. Before that, suppress Realtime
+  // notifications so we don't fire on jobs that don't match user keywords.
+  bool _keywordsLoaded = false;
 
   // Pending inserts waiting for the accumulation window to close.
   final List<Map<String, dynamic>> _pendingJobs = [];
@@ -370,12 +373,13 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
           ? DateTime.fromMillisecondsSinceEpoch(lastSeenMs, isUtc: true)
           : DateTime.now().toUtc().subtract(const Duration(hours: 2));
 
-      final now = DateTime.now().toUtc();
-      await prefs.setInt(_kLastSeenKey, now.millisecondsSinceEpoch);
-
       if (_userKeywords.isEmpty) return;
 
+      final now    = DateTime.now().toUtc();
       final missed = await SupabaseService.getNewJobsSince(since, _userKeywords);
+      // Save timestamp only after a successful query so a network error
+      // doesn't advance the window and permanently skip those jobs.
+      await prefs.setInt(_kLastSeenKey, now.millisecondsSinceEpoch);
       if (missed.isEmpty || !mounted) return;
 
       final toShow = missed.take(_kMaxIndividualNotifs).toList();
@@ -420,7 +424,8 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
     final kws = (prefs['keywords'] as List?)?.cast<String>() ?? [];
     if (mounted) {
       setState(() {
-        _userKeywords = kws.map((k) => k.toLowerCase()).toList();
+        _userKeywords   = kws.map((k) => k.toLowerCase()).toList();
+        _keywordsLoaded = true;
       });
     }
   }
@@ -444,12 +449,18 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
 
     final title = (rec['title'] as String? ?? '').toLowerCase();
 
-    // Filter by keywords only when loaded; pass everything through while loading.
+    // Suppress notifications until keywords are loaded to avoid irrelevant alerts
+    // during the first few seconds after login. If the user has no keywords set,
+    // _keywordsLoaded will still be true and we pass the job through.
+    if (!_keywordsLoaded) return;
     if (_userKeywords.isNotEmpty) {
       final matches = _userKeywords.any((kw) => title.contains(kw));
       if (!matches) return;
     }
 
+    // Dedup by job_id so a scraper retry doesn't fire two identical notifications.
+    final jobId = rec['job_id'] as String? ?? '';
+    if (jobId.isNotEmpty && _pendingJobs.any((j) => j['job_id'] == jobId)) return;
     _pendingJobs.add(rec);
 
     // Reset the drain timer on every new insert so we accumulate rapid bursts.

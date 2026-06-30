@@ -69,6 +69,17 @@ def _cfg(env_key: str, default: str = "") -> str:
 
 # ── Timezone helper ───────────────────────────────────────────────────────────
 
+def _parse_dt(s: str | None) -> datetime | None:
+    """Parse an ISO-8601 string to an aware datetime, tolerating missing tz."""
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
 def _local_hour(tz_name: str) -> int:
     """Current hour in an IANA timezone, falling back to UTC on error."""
     if not _HAS_ZONEINFO:
@@ -150,10 +161,11 @@ def run(mode: str, dry_run: bool = False) -> None:
             alerted = db.get_alerted_job_ids(supabase_url, supabase_key, uid, ch)
             last_at = db.get_last_alert_at(supabase_url, supabase_key, uid, ch)
 
+            last_at_dt = _parse_dt(last_at)
             new_jobs = [
                 j for j in matches
                 if j["job_id"] not in alerted
-                and (last_at is None or (j.get("date_collected") or "") > last_at)
+                and (last_at_dt is None or (_parse_dt(j.get("date_collected")) or datetime.min.replace(tzinfo=timezone.utc)) > last_at_dt)
             ]
             if not new_jobs:
                 continue
