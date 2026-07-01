@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
+import ConfirmEmailPending from '@/components/ConfirmEmailPending'
 
 function GoogleIcon() {
   return (
@@ -28,7 +29,7 @@ export default function SignupPage() {
     setError('')
     setLoading(true)
     const supabase = createClient()
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -37,7 +38,16 @@ export default function SignupPage() {
     })
     setLoading(false)
     if (error) { setError(error.message); return }
-    setSent(true)
+    // If a session came back immediately, confirmation is disabled — no
+    // need to show the "check your email" state. Otherwise (user created,
+    // no session) Supabase requires email confirmation before sign-in.
+    if (data.user && !data.session) {
+      setSent(true)
+    } else if (data.session) {
+      window.location.href = '/onboarding'
+    } else {
+      setSent(true)
+    }
   }
 
   async function handleGoogleSignIn() {
@@ -56,19 +66,7 @@ export default function SignupPage() {
   ].join(' ')
 
   if (sent) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-4 bg-[var(--bg)]">
-        <div className="text-center max-w-sm bg-white rounded-2xl border border-[var(--border)] shadow-sm p-10">
-          <div className="text-4xl mb-4">📬</div>
-          <h2 className="text-xl font-bold mb-2 text-[var(--fg)] tracking-tight">Check your email</h2>
-          <p className="text-sm text-[var(--muted)] leading-relaxed">
-            We sent a confirmation link to{' '}
-            <strong className="text-[var(--fg-2)]">{email}</strong>.
-            Click it to activate your account and set up your preferences.
-          </p>
-        </div>
-      </div>
-    )
+    return <ConfirmEmailPending email={email} />
   }
 
   return (

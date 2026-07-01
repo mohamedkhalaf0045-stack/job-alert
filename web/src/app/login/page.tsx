@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import ConfirmEmailPending from '@/components/ConfirmEmailPending'
 
 function GoogleIcon() {
   return (
@@ -23,6 +24,7 @@ export default function LoginPage() {
   const [error,         setError]         = useState('')
   const [loading,       setLoading]       = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
+  const [needsConfirm,  setNeedsConfirm]  = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -31,7 +33,15 @@ export default function LoginPage() {
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    if (error) { setError(error.message); return }
+    if (error) {
+      const code = (error as { code?: string }).code
+      if (code === 'email_not_confirmed' || error.message.toLowerCase().includes('email not confirmed')) {
+        setNeedsConfirm(true)
+        return
+      }
+      setError(error.message)
+      return
+    }
     router.push('/app/feed')
     router.refresh()
   }
@@ -50,6 +60,15 @@ export default function LoginPage() {
     'focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/25 focus:border-[var(--accent)]',
     'bg-white placeholder:text-[var(--meta)] text-[var(--fg)] transition-all',
   ].join(' ')
+
+  if (needsConfirm) {
+    return (
+      <ConfirmEmailPending
+        email={email}
+        onBack={() => setNeedsConfirm(false)}
+      />
+    )
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 bg-[var(--bg)]">

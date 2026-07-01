@@ -36,6 +36,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/app/feed', request.url))
   }
 
+  // Logged-in but unconfirmed users trying to reach onboarding or the app →
+  // block until they confirm their email (mirrors mobile app enforcement).
+  const isProtected = path.startsWith('/app') || path === '/onboarding'
+  if (user && !user.email_confirmed_at && isProtected) {
+    return NextResponse.redirect(new URL('/confirm-email', request.url))
+  }
+
   return supabaseResponse
 }
 
