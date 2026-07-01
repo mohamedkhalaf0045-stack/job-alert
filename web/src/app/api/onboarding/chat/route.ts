@@ -242,10 +242,17 @@ export async function POST(req: NextRequest) {
       messages:   chatMessages,
     })
 
-    const reply = completion.choices[0]?.message?.content ?? 'Sorry, could not generate a response.'
+    const rawReply = completion.choices[0]?.message?.content ?? 'Sorry, could not generate a response.'
 
-    const extractedData = extractCompletionData(reply)
+    const extractedData = extractCompletionData(rawReply)
     let isComplete = false
+
+    // The ONBOARDING_COMPLETE marker + JSON payload is a backend-only signal —
+    // strip it out so the user never sees raw JSON in the chat bubble.
+    const markerIdx = rawReply.indexOf('ONBOARDING_COMPLETE')
+    const reply = markerIdx === -1
+      ? rawReply
+      : (rawReply.slice(0, markerIdx).trim() || "You're all set — your profile is complete!")
 
     if (extractedData) {
       isComplete = true
