@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import JobCard from '@/components/JobCard'
+import RecommendedJobs from '@/components/RecommendedJobs'
+import SavedSearches from '@/components/SavedSearches'
 import type { Job } from '@/lib/types'
 import Link from 'next/link'
 
@@ -148,14 +150,19 @@ export default async function FeedPage({
           </Link>
         </div>
       )}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <h1 className="text-xl font-bold">Your feed</h1>
-        {before && (
-          <Link href={isImpersonating ? `/app/feed?as=${viewAsId}` : '/app/feed'} className="text-xs text-blue-600 hover:underline">
-            ← Back to latest
-          </Link>
-        )}
+        <div className="flex items-center gap-3">
+          <SavedSearches />
+          {before && (
+            <Link href={isImpersonating ? `/app/feed?as=${viewAsId}` : '/app/feed'} className="text-xs text-blue-600 hover:underline">
+              ← Back to latest
+            </Link>
+          )}
+        </div>
       </div>
+
+      {!before && !isImpersonating && <RecommendedJobs userSkills={userSkills} />}
 
       <div className="space-y-6">
         {sections.map(section => (

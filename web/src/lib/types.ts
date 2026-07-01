@@ -1,4 +1,12 @@
-export type JobStatus = 'saved' | 'applied' | 'dismissed' | 'hidden'
+export type JobStatus =
+  | 'saved'
+  | 'applied'
+  | 'dismissed'
+  | 'hidden'
+  | 'viewed_by_hr'
+  | 'in_review'
+  | 'rejected'
+  | 'matched'
 
 export interface Job {
   job_id: string

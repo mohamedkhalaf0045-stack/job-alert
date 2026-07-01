@@ -39,6 +39,16 @@ function salaryLine(job: Job): string | null {
   return `~${cur} ${val.toLocaleString()}${per}${tag}`
 }
 
+function applicationStatusBadge(status: JobStatus | null): { label: string; cls: string } | null {
+  switch (status) {
+    case 'viewed_by_hr': return { label: 'Viewed by HR', cls: 'bg-[var(--accent-bg)] text-[var(--accent)]' }
+    case 'in_review':    return { label: 'In review',    cls: 'bg-[var(--warn-bg)] text-[var(--warn)]' }
+    case 'matched':      return { label: 'Matched',      cls: 'bg-[var(--success-bg)] text-[var(--success)]' }
+    case 'rejected':     return { label: 'Rejected',     cls: 'bg-[var(--danger-bg)] text-[var(--danger)]' }
+    default:              return null
+  }
+}
+
 function skillMatchScore(userSkills: string[], job: Job): { matched: string[]; pct: number } {
   if (!userSkills.length) return { matched: [], pct: 0 }
   const haystack = [job.title, job.llm_summary ?? '', ...(job.matched_skills ?? [])].join(' ').toLowerCase()
@@ -115,6 +125,7 @@ export default function JobCard({ job, userSkills, isNew }: { job: Job; userSkil
   }
   const posted = dateRef ? relativeTime(dateRef) : ''
   const src = sourceChip(job.url || '')
+  const appStatus = applicationStatusBadge(status)
 
   return (
     <>
@@ -150,6 +161,11 @@ export default function JobCard({ job, userSkills, isNew }: { job: Job; userSkil
             {job.llm_score !== null && (
               <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md tabular-nums ${scoreColors(job.llm_score)}`}>
                 {job.llm_score}/10
+              </span>
+            )}
+            {appStatus && (
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-[4px] ${appStatus.cls}`}>
+                {appStatus.label}
               </span>
             )}
             <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-[4px] ${src.cls}`}>

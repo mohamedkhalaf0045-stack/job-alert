@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import CVUploadCard, { CVData } from '@/components/CVUploadCard'
+import OnboardingChatbot from '@/components/OnboardingChatbot'
 
 type Step   = 1 | 2 | 3
 type Source = 'cv' | 'linkedin' | null
@@ -23,6 +24,7 @@ const UAE_LOCATIONS = [
 export default function OnboardingPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>(1)
+  const [useChatbot, setUseChatbot] = useState(false)
 
   // Step 1 — source
   const [source,            setSource]            = useState<Source>(null)
@@ -216,6 +218,22 @@ export default function OnboardingPage() {
           <p className="text-gray-500 text-sm mt-1">Takes less than 2 minutes</p>
         </div>
 
+        {/* Form / chatbot toggle */}
+        <div className="text-center mb-6">
+          <button
+            onClick={() => setUseChatbot(prev => !prev)}
+            className="text-sm text-blue-600 hover:text-blue-700 font-medium underline underline-offset-2"
+          >
+            {useChatbot ? '← Use the step-by-step form instead' : 'Prefer to chat instead?'}
+          </button>
+        </div>
+
+        {useChatbot ? (
+          <div className="flex justify-center">
+            <OnboardingChatbot profileType="candidate" />
+          </div>
+        ) : (
+        <>
         {/* Step progress */}
         <div className="flex items-center justify-center mb-8 gap-0">
           {steps.map((s, i) => (
@@ -596,6 +614,8 @@ export default function OnboardingPage() {
               </button>
             </div>
           </div>
+        )}
+        </>
         )}
 
       </div>
