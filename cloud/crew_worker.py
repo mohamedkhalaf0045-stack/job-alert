@@ -41,9 +41,6 @@ import naukri_gulf as naukri_scraper
 import telegram_notify as tg
 import relevance_engine
 
-os.environ.setdefault("OPENAI_API_KEY", "placeholder")
-
-from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import tool
 
 
@@ -404,111 +401,42 @@ def score_and_dispatch_alerts(payload_json: str) -> str:
         return json.dumps({"scored": 0, "alerted": 0, "total": 0, "error": str(exc)})
 
 
-# ── Crew assembly ─────────────────────────────────────────────────────────────
+# ── Main runner (direct — no LLM needed for orchestration) ───────────────────
 
 def build_and_run_crew(cfg: _Config) -> None:
+    """Run parallel scraping + Groq scoring directly without CrewAI agent loop."""
     if not GROQ_API_KEY:
-        _log("WARNING: GROQ_API_KEY not set — jobs will not be scored by AI")
-    if not OPENAI_API_KEY:
-        _log("WARNING: OPENAI_API_KEY not set — CrewAI agents need it")
-
-    # OpenAI for agent reasoning (native crewai support, no litellm needed)
-    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY or "placeholder"
-    # Unset any Groq base URL override from previous runs in same process
-    os.environ.pop("OPENAI_BASE_URL", None)
-
-    agent_llm = LLM(
-        model="gpt-4o-mini",
-        temperature=0.1,
-    )
-
-    # ── Agent 1: Scout (runs 4 scrapers in parallel) ──────────────────────────
-    scout = Agent(
-        role="Parallel Job Scout",
-        goal=(
-            "Scrape LinkedIn, Bayt, GulfTalent, and NaukriGulf simultaneously "
-            "for fresh job listings matching the user's preferences"
-        ),
-        backstory=(
-            "You are a relentless job-hunting bot that covers every UAE job board "
-            "at once. You run all 4 scrapers in parallel threads so the user gets "
-            "results in minutes, not hours."
-        ),
-        tools=[parallel_scrape_all_sources],
-        llm=agent_llm,
-        verbose=True,
-        allow_delegation=False,
-    )
-
-    # ── Agent 2: Analyst + Dispatcher ────────────────────────────────────────
-    analyst = Agent(
-        role="Job Match Analyst & Alert Dispatcher",
-        goal=(
-            "Score every newly scraped job against the candidate profile using "
-            "Groq AI, then immediately send Telegram alerts for jobs scoring "
-            f">= {cfg.min_score}/10 with full skill breakdown and salary info"
-        ),
-        backstory=(
-            "You are an AI job coach who evaluates each job on skills, experience, "
-            "location fit, and seniority level. You send instant Telegram alerts "
-            "so the candidate applies to strong matches before they close."
-        ),
-        tools=[score_and_dispatch_alerts],
-        llm=agent_llm,
-        verbose=True,
-        allow_delegation=False,
-    )
-
-    # ── Task 1: Parallel scraping ─────────────────────────────────────────────
-    targets_arg = json.dumps({"scan_targets": cfg.scan_targets})
-
-    scrape_task = Task(
-        description=(
-            f"Scrape all job sources in parallel for {len(cfg.scan_targets)} target(s).\n\n"
-            f"Call the parallel_scrape_all_sources tool with exactly this JSON:\n"
-            f"{targets_arg}\n\n"
-            "Return the full JSON result."
-        ),
-        expected_output="JSON object with new_jobs list and total count",
-        agent=scout,
-        tools=[parallel_scrape_all_sources],
-    )
-
-    # ── Task 2: Score + Alert ─────────────────────────────────────────────────
-    score_task = Task(
-        description=(
-            "Score all new jobs from the previous task and send Telegram alerts.\n\n"
-            "Extract the new_jobs list from the previous task's output.\n"
-            "Call the score_and_dispatch_alerts tool with this JSON structure:\n"
-            "{\n"
-            '  "new_jobs": <new_jobs list from previous task>,\n'
-            f'  "profile": {json.dumps(cfg.profile)},\n'
-            f'  "min_score": {cfg.min_score}\n'
-            "}\n\n"
-            "If new_jobs is empty in the previous output, still call the tool — "
-            "it will check an internal buffer automatically.\n\n"
-            "Return the JSON result showing scored and alerted counts."
-        ),
-        expected_output="JSON object with scored, alerted, and total counts",
-        agent=analyst,
-        tools=[score_and_dispatch_alerts],
-        context=[scrape_task],
-    )
-
-    crew = Crew(
-        agents=[scout, analyst],
-        tasks=[scrape_task, score_task],
-        process=Process.sequential,
-        verbose=True,
-    )
+        _log("WARNING: GROQ_API_KEY not set — jobs will be scraped but not scored")
 
     _log(
-        f"Starting CrewAI crew — {cfg.active_users} active user(s), "
+        f"Starting worker — {cfg.active_users} active user(s), "
         f"{len(cfg.scan_targets)} scrape target(s), min_score={cfg.min_score}"
     )
 
-    result = crew.kickoff()
-    _log(f"Crew completed. Final output: {str(result)[:300]}")
+    # Step 1: Parallel scraping across all sources
+    targets_arg = json.dumps({"scan_targets": cfg.scan_targets})
+    scrape_json = parallel_scrape_all_sources.run(targets_arg)
+    scrape = json.loads(scrape_json)
+    new_jobs = scrape.get("new_jobs", [])
+    _log(f"Scrape complete — {len(new_jobs)} new job(s) found")
+
+    if not new_jobs:
+        _log("No new jobs this run.")
+        return
+
+    # Step 2: Score with Groq + send Telegram alerts immediately
+    payload = json.dumps({
+        "new_jobs": new_jobs,
+        "profile": cfg.profile,
+        "min_score": cfg.min_score,
+    })
+    result_json = score_and_dispatch_alerts.run(payload)
+    result = json.loads(result_json)
+    _log(
+        f"Done — scored={result.get('scored')} "
+        f"alerted={result.get('alerted')} "
+        f"total={result.get('total')}"
+    )
 
 
 # ── Telegram command handler (same as worker.py) ──────────────────────────────

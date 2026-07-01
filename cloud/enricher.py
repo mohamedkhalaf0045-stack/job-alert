@@ -572,31 +572,11 @@ def cloud_score(prompt: str, cloud_key: str,
     return -1, "", {}
 
 
-def ollama_score(
-    job: dict,
-    description: str,
-    profile: str,
-    model: str,
-    ollama_url: str,
-    dynamic_few_shot: str = "",
-    cloud_key: str = "",
-    cloud_model: str = DEFAULT_CLOUD_MODEL,
-    prefer_cloud: bool = False,
-) -> tuple[int, str, dict]:
-    """Call Ollama to score a job on 4 axes + overall.
-
-    Falls back to the Groq cloud API when Ollama is unreachable or times out,
-    provided a cloud_key is configured.  When prefer_cloud is True and a
-    cloud_key is set, Ollama is skipped entirely and scoring goes straight to
-    Groq — much faster for clearing a large backlog.
-
-    Returns (overall_score, reasoning_summary, full_breakdown_dict).
-    Breakdown keys: skills_match, experience_match, location_match, seniority_match,
-                    overall_score, matched_skills, missing_skills, red_flags, reasoning.
-    """
+def _build_scoring_prompt(job: dict, description: str, profile: str,
+                           dynamic_few_shot: str = "") -> str:
+    """Build the LLM scoring prompt. Shared by ollama_score and crewai_score."""
     desc_excerpt = description[:3000] if description else "(no description available)"
-
-    prompt = (
+    return (
         "You are a job-fit scorer for an IT professional. Rate how well this job matches the candidate.\n"
         "Output STRICT JSON only — no markdown, no prose outside the JSON.\n\n"
         "=== CRITICAL RULE — FIELD DOMAIN CHECK ===\n"
@@ -665,6 +645,31 @@ def ollama_score(
         f"Description:\n{desc_excerpt}"
     )
 
+
+def ollama_score(
+    job: dict,
+    description: str,
+    profile: str,
+    model: str,
+    ollama_url: str,
+    dynamic_few_shot: str = "",
+    cloud_key: str = "",
+    cloud_model: str = DEFAULT_CLOUD_MODEL,
+    prefer_cloud: bool = False,
+) -> tuple[int, str, dict]:
+    """Call Ollama to score a job on 4 axes + overall.
+
+    Falls back to the Groq cloud API when Ollama is unreachable or times out,
+    provided a cloud_key is configured.  When prefer_cloud is True and a
+    cloud_key is set, Ollama is skipped entirely and scoring goes straight to
+    Groq — much faster for clearing a large backlog.
+
+    Returns (overall_score, reasoning_summary, full_breakdown_dict).
+    Breakdown keys: skills_match, experience_match, location_match, seniority_match,
+                    overall_score, matched_skills, missing_skills, red_flags, reasoning.
+    """
+    prompt = _build_scoring_prompt(job, description, profile, dynamic_few_shot)
+
     if _DEBUG_PROMPT:
         _log("--- PROMPT (debug) ---")
         _log(prompt[:6000] + (" ...[truncated]" if len(prompt) > 6000 else ""))
@@ -713,6 +718,79 @@ def ollama_score(
             return cloud
         _log(f"Ollama error: {exc}")
         return -1, "", {}
+
+
+# ── CrewAI scoring (enabled with --use-crewai) ────────────────────────────────
+
+def crewai_score(
+    job: dict,
+    description: str,
+    profile: str,
+    model: str,
+    ollama_url: str,
+    dynamic_few_shot: str = "",
+    cloud_key: str = "",
+    cloud_model: str = DEFAULT_CLOUD_MODEL,
+    prefer_cloud: bool = False,
+) -> tuple[int, str, dict]:
+    """Score a job via a crewai Agent. Same signature as ollama_score.
+
+    Uses Groq when prefer_cloud is True, otherwise Ollama. Falls back to
+    ollama_score on any crewai import or runtime error so the pipeline is
+    never blocked by the crewai layer.
+    """
+    try:
+        from crewai import Agent, Task, Crew, LLM
+    except ImportError:
+        _log("crewai not installed — falling back to direct Ollama/Groq scoring")
+        return ollama_score(job, description, profile, model, ollama_url,
+                            dynamic_few_shot=dynamic_few_shot, cloud_key=cloud_key,
+                            cloud_model=cloud_model, prefer_cloud=prefer_cloud)
+
+    prompt = _build_scoring_prompt(job, description, profile, dynamic_few_shot)
+
+    try:
+        if prefer_cloud and cloud_key:
+            llm = LLM(model=f"groq/{cloud_model}", api_key=cloud_key)
+        else:
+            llm = LLM(model=f"ollama/{model}", base_url=ollama_url)
+    except Exception as exc:
+        _log(f"crewai LLM init failed ({exc}) — falling back")
+        return ollama_score(job, description, profile, model, ollama_url,
+                            dynamic_few_shot=dynamic_few_shot, cloud_key=cloud_key,
+                            cloud_model=cloud_model, prefer_cloud=prefer_cloud)
+
+    scorer = Agent(
+        role="Job Relevance Scorer",
+        goal="Output a strict JSON scoring object for a job vs candidate profile",
+        backstory="Expert at evaluating IT job postings for UAE/Egypt professionals.",
+        llm=llm,
+        verbose=_VERBOSE,
+    )
+    score_task = Task(
+        description=prompt,
+        expected_output="Strict JSON matching the scoring schema — no markdown, no prose",
+        agent=scorer,
+    )
+    crew = Crew(agents=[scorer], tasks=[score_task], verbose=_VERBOSE)
+
+    try:
+        result = crew.kickoff()
+        raw = str(result)
+        if _DEBUG_PROMPT:
+            _log(f"crewai raw response: {raw[:800]}")
+        breakdown = _breakdown_from_json(raw)
+        if not breakdown:
+            _log("crewai returned unparseable JSON — falling back to ollama_score")
+            return ollama_score(job, description, profile, model, ollama_url,
+                                dynamic_few_shot=dynamic_few_shot, cloud_key=cloud_key,
+                                cloud_model=cloud_model, prefer_cloud=prefer_cloud)
+        return breakdown["overall_score"], breakdown["reasoning"], breakdown
+    except Exception as exc:
+        _log(f"crewai scoring error ({exc}) — falling back to ollama_score")
+        return ollama_score(job, description, profile, model, ollama_url,
+                            dynamic_few_shot=dynamic_few_shot, cloud_key=cloud_key,
+                            cloud_model=cloud_model, prefer_cloud=prefer_cloud)
 
 
 # ── Rule-based fallback scorer (no LLM required) ─────────────────────────────
@@ -959,6 +1037,8 @@ def main() -> None:
                         help=f"Groq model for cloud fallback (default {DEFAULT_CLOUD_MODEL})")
     parser.add_argument("--prefer-cloud", action="store_true",
                         help="Skip Ollama and score via Groq directly (fast backlog clearing; requires a Groq key)")
+    parser.add_argument("--use-crewai", action="store_true",
+                        help="Route scoring through a crewai Agent instead of raw Ollama/Groq calls (falls back automatically on error)")
     args = parser.parse_args()
 
     global _VERBOSE, _DEBUG_PROMPT
@@ -1195,10 +1275,11 @@ def main() -> None:
         elif dup_result["action"] == "no_embedding":
             _vlog("          Embedding failed - proceeding to score anyway")
 
-        score, summary, breakdown = ollama_score(job, description, profile, model, ollama,
-                                                  dynamic_few_shot=dynamic_few_shot,
-                                                  cloud_key=cloud_key, cloud_model=cloud_model,
-                                                  prefer_cloud=prefer_cloud)
+        _score_fn = crewai_score if args.use_crewai else ollama_score
+        score, summary, breakdown = _score_fn(job, description, profile, model, ollama,
+                                               dynamic_few_shot=dynamic_few_shot,
+                                               cloud_key=cloud_key, cloud_model=cloud_model,
+                                               prefer_cloud=prefer_cloud)
 
         if score == -1:
             _log("          LLM unavailable — using rule-based fallback scorer")

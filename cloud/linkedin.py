@@ -115,7 +115,6 @@ def _fetch(url: str, cookie_header: str, attempt: int = 1, referer: str = "") ->
 def _parse_cards(html_text: str, keyword: str) -> list[dict]:
     li_count = len(re.findall(r"<li\b", html_text, re.I))
     print(f"[LinkedIn] '{keyword}': HTML {len(html_text)} chars, {li_count} <li> elements")
-
     jobs = []
     for card in re.finditer(r"<li\b.*?</li>", html_text, re.DOTALL):
         chunk = card.group(0)

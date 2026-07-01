@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinkedIn UAE Job Alert — Architecture Map</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff; padding: 24px; color: #1e293b; max-width: 960px; margin: 0 auto; }
+
+  h1 { font-size: 15px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #64748b; margin-bottom: 20px; }
+
+  .layer { border: 1.5px solid #e2e8f0; border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+  .layer-header { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .layer-body { padding: 10px 14px 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .l-data  .layer-header { background: #f0fdf4; color: #15803d; }
+  .l-gh    .layer-header { background: #fefce8; color: #a16207; }
+  .l-cloud .layer-header { background: #eff6ff; color: #1d4ed8; }
+  .l-web   .layer-header { background: #fdf4ff; color: #7e22ce; }
+  .l-win   .layer-header { background: #fff7ed; color: #c2410c; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .l-data  .dot { background: #22c55e; }
+  .l-gh    .dot { background: #eab308; }
+  .l-cloud .dot { background: #3b82f6; }
+  .l-web   .dot { background: #a855f7; }
+  .l-win   .dot { background: #f97316; }
+
+  .chip { border-radius: 6px; padding: 4px 9px; font-size: 11.5px; font-weight: 500; cursor: pointer; border: 1.5px solid transparent; transition: all .12s; white-space: nowrap; user-select: none; }
+  .chip:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.1); }
+
+  .chip-green  { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+  .chip-yellow { background: #fef9c3; color: #a16207; border-color: #fde68a; }
+  .chip-blue   { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+  .chip-slate  { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+  .chip-purple { background: #f3e8ff; color: #7e22ce; border-color: #e9d5ff; }
+  .chip-orange { background: #ffedd5; color: #c2410c; border-color: #fed7aa; }
+  .chip-dim    { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; font-style: italic; }
+
+  .arrow { width: 100%; display: flex; align-items: center; justify-content: center; height: 22px; color: #94a3b8; font-size: 18px; }
+
+  .section-label { width: 100%; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+  .l-cloud .section-label { color: #3b82f6; }
+  .l-web   .section-label { color: #7e22ce; }
+  .section-label + .section-label { margin-top: 6px; }
+
+  .detail-box { display: none; width: 100%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin-top: 4px; font-size: 11.5px; line-height: 1.65; color: #334155; }
+  .detail-box.open { display: block; }
+  .detail-box b { color: #1e293b; }
+
+  .flow-section { margin-top: 16px; padding: 12px 14px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; }
+  .flow-title { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .flow { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #64748b; flex-wrap: wrap; }
+  .flow + .flow { margin-top: 6px; }
+  .flow span.step { background: #f1f5f9; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+  .flow span.arr { color: #94a3b8; }
+
+  .pending { margin-top: 16px; padding: 12px 14px; background: #fefce8; border: 1.5px solid #fde68a; border-radius: 10px; }
+  .pending-title { font-size: 11px; font-weight: 700; color: #a16207; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .pending ul { padding-left: 16px; font-size: 12px; line-height: 1.8; color: #713f12; }
+
+  .footer { margin-top: 20px; font-size: 10.5px; color: #94a3b8; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>LinkedIn UAE Job Alert — Architecture Map</h1>
+
+<!-- SUPABASE -->
+<div class="layer l-data">
+  <div class="layer-header"><div class="dot"></div>Supabase (PostgreSQL) — Single Source of Truth</div>
+  <div class="layer-body">
+    <div class="chip chip-green" onclick="toggle('t-jobs')">jobs</div>
+    <div class="chip chip-green" onclick="toggle('t-bot')">bot_state</div>
+    <div class="chip chip-green" onclick="toggle('t-prefs')">user_preferences</div>
+    <div class="chip chip-green" onclick="toggle('t-profiles')">profiles</div>
+    <div class="chip chip-green" onclick="toggle('t-log')">user_alert_log</div>
+    <div class="chip chip-green" onclick="toggle('t-skills')">user_skill_gaps</div>
+    <div class="chip chip-green" onclick="toggle('t-tg')">telegram_claude_history</div>
+    <div class="chip chip-slate" onclick="toggle('t-migrations')">20 migrations</div>
+
+    <div id="t-jobs" class="detail-box"><b>jobs</b> — every scraped job. Key columns: job_id, title, company, url, source, date_posted, llm_score, llm_summary, salary_*, cover_letter_draft, status (new/applied/dismissed/saved). Primary read/write table for the whole pipeline.</div>
+    <div id="t-bot" class="detail-box"><b>bot_state</b> — key/value store. Holds scraper settings (setting_*), last-run timestamps, cv_data:{uid}, telegram offset. <b style="color:#b91c1c">PUBLIC readable via anon key</b> — never store secrets here.</div>
+    <div id="t-prefs" class="detail-box"><b>user_preferences</b> — per-user settings: keywords, location, alert frequency, Telegram chat_id, min score threshold. Read by user_alerts.py to match jobs per person.</div>
+    <div id="t-profiles" class="detail-box"><b>profiles</b> — Auth user profile: email, display name, role (admin/user), created_at. Linked to Supabase auth.users.</div>
+    <div id="t-log" class="detail-box"><b>user_alert_log</b> — dedup log. PK = (user_id, job_id, channel). Insert only via service_role. Prevents duplicate Telegram/email alerts per user per job.</div>
+    <div id="t-skills" class="detail-box"><b>user_skill_gaps</b> — per-user AI skill gap analysis results. Populated by enricher or web API. Shown on job detail modal.</div>
+    <div id="t-tg" class="detail-box"><b>telegram_claude_history</b> — conversation history for the "Talk to Me" / Claude chat feature per Telegram user. Rolling context for follow-up questions about jobs.</div>
+    <div id="t-migrations" class="detail-box"><b>Migrations folder</b> (cloud/migrations/) — 20 SQL files, applied manually in Supabase SQL Editor.<br><br>Pending (not yet applied):<br>• 2026-06-14-keyword-expansions.sql<br>• 2026-06-14-user-skill-gaps.sql<br>• 2026-06-16-feed-location-aliases.sql<br>• 2026-06-16-feed-sort-tiebreaker.sql<br>• 2026-06-16-jobs-description-column.sql</div>
+  </div>
+</div>
+
+<div class="arrow">↕</div>
+
+<!-- GITHUB ACTIONS -->
+<div class="layer l-gh">
+  <div class="layer-header"><div class="dot"></div>GitHub Actions — Scheduled Cloud Runner</div>
+  <div class="layer-body">
+    <div class="chip chip-yellow" onclick="toggle('w-jobalert')">job-alert.yml ⏱ 5min</div>
+    <div class="chip chip-yellow" onclick="toggle('w-enricher')">enricher.yml ⏱ 15min</div>
+    <div class="chip chip-yellow" onclick="toggle('w-digest')">daily-digest.yml ⏱ daily</div>
+    <div class="chip chip-yellow" onclick="toggle('w-useralerts')">user-alerts.yml ⏱ hourly</div>
+    <div class="chip chip-yellow" onclick="toggle('w-health')">health-check.yml ⏱ 10min</div>
+    <div class="chip chip-dim" onclick="toggle('w-easyapply')">easy-apply.yml (paused)</div>
+    <div class="chip chip-dim" onclick="toggle('w-apk')">build-apk.yml (mobile)</div>
+
+    <div id="w-jobalert" class="detail-box"><b>job-alert.yml</b> — Main pipeline. Runs every 5 min on ubuntu-22.04 (pinned: 24.04 breaks Playwright libasound2). Steps: worker.py → user_alerts.py --mode instant. GitHub throttles to ~1 run/10min in practice; cron-job.org pinger is the fix.</div>
+    <div id="w-enricher" class="detail-box"><b>enricher.yml</b> — Runs enricher.py: fetches descriptions for unscored jobs, calls Groq llama-3.3-70b-versatile, writes llm_score + llm_summary + cover_letter_draft back to Supabase. Also fires from Windows worker after new jobs land.</div>
+    <div id="w-digest" class="detail-box"><b>daily-digest.yml</b> — Runs digest.py --hours 24 --top 3. Sends daily email summary of top-scored new jobs. Uses Resend API.</div>
+    <div id="w-useralerts" class="detail-box"><b>user-alerts.yml</b> — Runs user_alerts.py with mode = instant or digest depending on time. Supports multi-user: each user gets alerts for their own keyword/location preferences.</div>
+    <div id="w-health" class="detail-box"><b>health-check.yml</b> — Runs health_check.py. Checks if worker last ran within expected window; sends Telegram alert if pipeline is down.</div>
+    <div id="w-easyapply" class="detail-box"><b>easy-apply.yml</b> — Experimental auto-apply via Playwright. Currently paused. apply_executor.py handles the actual form submission logic.</div>
+    <div id="w-apk" class="detail-box"><b>build-apk.yml</b> — Builds Flutter Android APK. Mobile app exists in /mobile but is not the primary interface.</div>
+  </div>
+</div>
+
+<div class="arrow">↕</div>
+
+<!-- PYTHON CLOUD -->
+<div class="layer l-cloud">
+  <div class="layer-header"><div class="dot"></div>Python Cloud Scripts (cloud/)</div>
+  <div class="layer-body">
+    <div class="section-label">CORE PIPELINE</div>
+    <div class="chip chip-blue" onclick="toggle('p-worker')">worker.py ★</div>
+    <div class="chip chip-blue" onclick="toggle('p-enricher')">enricher.py ★</div>
+    <div class="chip chip-blue" onclick="toggle('p-useralerts')">user_alerts.py ★</div>
+    <div class="chip chip-blue" onclick="toggle('p-relevance')">relevance_engine.py ★</div>
+    <div class="chip chip-blue" onclick="toggle('p-db')">db.py ★</div>
+
+    <div class="section-label" style="margin-top:8px;">SCRAPERS (called by worker.py)</div>
+    <div class="chip chip-slate" onclick="toggle('p-linkedin')">linkedin.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-indeed')">indeed.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-adzuna')">adzuna.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-bayt')">bayt.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-gulf')">gulftalent.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-naukri')">naukri_gulf.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-websearch')">websearch.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-gmail')">gmail_scan.py</div>
+
+    <div class="section-label" style="margin-top:8px;">NOTIFICATIONS &amp; SUPPORT</div>
+    <div class="chip chip-slate" onclick="toggle('p-tg')">telegram_notify.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-email')">email_notify.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-digest')">digest.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-prefs')">preferences.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-salary')">salary.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-dedup')">dedup.py</div>
+    <div class="chip chip-slate" onclick="toggle('p-dashboard')">dashboard.py</div>
+    <div class="chip chip-dim" onclick="toggle('p-crew')">crew_worker.py (experimental)</div>
+
+    <div id="p-worker" class="detail-box"><b>worker.py</b> — Main orchestrator. Reads config from env/bot_state, calls each scraper, pipes results through relevance_engine, deduplicates via dedup.py, syncs to Supabase via db.sync_jobs(), sends Telegram alerts. Handles Telegram callbacks (👍/👎, cover_, cv_ buttons). Also polls callback_query and sets job status in Supabase.</div>
+    <div id="p-enricher" class="detail-box"><b>enricher.py</b> — Offline LLM enricher. Reads jobs with llm_score IS NULL, fetches full description, calls Groq llama-3.3-70b-versatile, writes score + summary + cover_letter_draft. Fires from Windows GUI after scan. NOT called by worker.py — separate workflow.</div>
+    <div id="p-useralerts" class="detail-box"><b>user_alerts.py</b> — Multi-user alert sender. Queries user_preferences, matches jobs, deduplicates against user_alert_log, sends Telegram or email. Supports instant and daily digest modes.</div>
+    <div id="p-relevance" class="detail-box"><b>relevance_engine.py</b> — 5-tier classifier:<br>T5: hard-reject hospitality cluster (housekeeping, concierge, front desk…)<br>T1P: rescue help desk / service desk phrases<br>POS: phrase subset match against 64 built-in IT roles + CV titles + keywords<br>T_DESC: fallback description keyword check<br>_phrase_token_set() normalises "Information Technology" → "it".</div>
+    <div id="p-db" class="detail-box"><b>db.py</b> — Supabase helpers. sync_jobs(): upserts jobs, blocks domains (_BLOCKED_DOMAINS: jobsora.com), returns summary dict. set_job_status(): updates status for 👍/👎 feedback. get_bot_state() / set_bot_state() for config reads/writes.</div>
+    <div id="p-linkedin" class="detail-box"><b>linkedin.py</b> — Scrapes LinkedIn Jobs with li_at cookie. Uses requests + BeautifulSoup. Cloud: skips when datacenter IP detected. Local Windows worker: runs with residential IP.</div>
+    <div id="p-indeed" class="detail-box"><b>indeed.py</b> — Scrapes Indeed. Blocked on GitHub Actions (datacenter IP). Only runs from Windows worker.</div>
+    <div id="p-adzuna" class="detail-box"><b>adzuna.py</b> — Adzuna Jobs API. Requires ADZUNA_APP_ID + ADZUNA_APP_KEY secrets. Runs in cloud and locally.</div>
+    <div id="p-bayt" class="detail-box"><b>bayt.py</b> — Scrapes Bayt.com (Gulf job board). HTTP scraping.</div>
+    <div id="p-gulf" class="detail-box"><b>gulftalent.py</b> — Scrapes GulfTalent.com. HTTP scraping.</div>
+    <div id="p-naukri" class="detail-box"><b>naukri_gulf.py</b> — Scrapes NaukriGulf.com. HTTP scraping.</div>
+    <div id="p-websearch" class="detail-box"><b>websearch.py</b> — Tavily web search fallback for job discovery. Uses TAVILY_API_KEY.</div>
+    <div id="p-gmail" class="detail-box"><b>gmail_scan.py</b> — Scans Gmail inbox for job alert emails and parses them into jobs. Uses Gmail App Password.</div>
+    <div id="p-tg" class="detail-box"><b>telegram_notify.py</b> — Sends Telegram messages. send_job_alert_with_button(): job card with Apply, Cover Letter, Analyze buttons + 👍/👎 row. answer_callback_query(): popup confirmation.</div>
+    <div id="p-email" class="detail-box"><b>email_notify.py</b> — Sends email via Resend API. Used by user_alerts.py for non-Telegram users.</div>
+    <div id="p-digest" class="detail-box"><b>digest.py</b> — Daily digest: fetches top-N jobs from last 24h, formats and emails them.</div>
+    <div id="p-prefs" class="detail-box"><b>preferences.py</b> — Reads user applied/dismissed history from Supabase, builds few-shot examples for Groq scoring prompt. This is the "learning loop" — liked jobs improve future scoring.</div>
+    <div id="p-salary" class="detail-box"><b>salary.py</b> — Extracts salary from job description via regex + Groq. Writes salary_min/max/avg/currency/period/salary_source. salary_source = "ai_estimate" → displayed as "~ X est." in UI.</div>
+    <div id="p-dedup" class="detail-box"><b>dedup.py</b> — Deduplicates jobs across sources by URL and title+company similarity before inserting to Supabase.</div>
+    <div id="p-dashboard" class="detail-box"><b>dashboard.py</b> — Local monitoring web server (localhost only). Shows pipeline status, recent GitHub Actions runs, Supabase stats, live log tail. DNS-rebinding protected (Host-header validation). Launch via Open-Dashboard.bat.</div>
+    <div id="p-crew" class="detail-box"><b>crew_worker.py</b> — Experimental CrewAI multi-agent rewrite (NOT in production). 6 agents: 4 scouts (LinkedIn/Bayt/GulfTalent/NaukriGulf) + Analyst (Groq scoring) + Alert Dispatcher. worker.py is the active pipeline.</div>
+  </div>
+</div>
+
+<div class="arrow">↕</div>
+
+<!-- WEB APP -->
+<div class="layer l-web">
+  <div class="layer-header"><div class="dot"></div>Next.js Web App — Vercel (web/src/)</div>
+  <div class="layer-body">
+    <div class="section-label">PAGES</div>
+    <div class="chip chip-purple" onclick="toggle('pg-feed')">/app/feed ★</div>
+    <div class="chip chip-purple" onclick="toggle('pg-admin')">/app/admin</div>
+    <div class="chip chip-purple" onclick="toggle('pg-settings')">/app/settings</div>
+    <div class="chip chip-purple" onclick="toggle('pg-saved')">/app/saved</div>
+    <div class="chip chip-purple" onclick="toggle('pg-onboard')">/onboarding</div>
+    <div class="chip chip-purple" onclick="toggle('pg-home')">/ (landing)</div>
+
+    <div class="section-label" style="margin-top:8px;">COMPONENTS</div>
+    <div class="chip chip-purple" onclick="toggle('c-jobcard')">JobCard ★</div>
+    <div class="chip chip-purple" onclick="toggle('c-detail')">JobDetailModal</div>
+    <div class="chip chip-purple" onclick="toggle('c-cover')">CoverLetterModal ★</div>
+    <div class="chip chip-purple" onclick="toggle('c-chat')">ChatWidget</div>
+    <div class="chip chip-purple" onclick="toggle('c-cv')">CVUploadCard</div>
+
+    <div class="section-label" style="margin-top:8px;">API ROUTES</div>
+    <div class="chip chip-slate" onclick="toggle('r-jobs')">GET /api/app/jobs/[id]</div>
+    <div class="chip chip-slate" onclick="toggle('r-cover')">POST /api/app/cover-letter/[id]</div>
+    <div class="chip chip-slate" onclick="toggle('r-cv')">cv/upload + cv/profile</div>
+    <div class="chip chip-slate" onclick="toggle('r-chat')">POST /api/app/chat</div>
+    <div class="chip chip-slate" onclick="toggle('r-admin')">admin/users + admin/bot-state</div>
+    <div class="chip chip-slate" onclick="toggle('r-tg')">POST /api/telegram/webhook</div>
+    <div class="chip chip-slate" onclick="toggle('r-cron')">GET /api/cron/trigger-worker</div>
+
+    <div id="pg-feed" class="detail-box"><b>/app/feed</b> — Main job list. Fetches from Supabase jobs table. Supports status filter (new/applied/dismissed/saved), search, sort by score/date. "View as" param for admin impersonation. Each card shows: score badge, salary (with est. label), Analyze, Cover Letter, Talk to Me buttons.</div>
+    <div id="pg-admin" class="detail-box"><b>/app/admin</b> — Admin-only (checks user.email === ADMIN_EMAIL). 3 tabs: Scraper Settings (bot_state key-value editor, writable keys allowlist), Users (list + impersonate via "View as"), Recommended Settings (AI-suggested config).</div>
+    <div id="pg-settings" class="detail-box"><b>/app/settings</b> — User preferences: keywords, location, alert frequency, Telegram chat_id, min score. Also: CV upload trigger, test Telegram message button (needs TELEGRAM_BOT_TOKEN in Vercel env vars).</div>
+    <div id="pg-saved" class="detail-box"><b>/app/saved</b> — Saved jobs (status = 'saved'). Same card layout as feed.</div>
+    <div id="pg-onboard" class="detail-box"><b>/onboarding</b> — First-run setup: upload CV, set location and keywords, connect Telegram. Shown after first login before feed.</div>
+    <div id="pg-home" class="detail-box"><b>/ (landing)</b> — Marketing landing page with Login / Sign Up CTAs.</div>
+    <div id="c-jobcard" class="detail-box"><b>JobCard</b> — Main job card component. Shows: title, company, location, date, score badge, salary line (~ prefix + "est." for AI estimates). Actions: Apply (URL), Analyze (JobDetailModal), Cover Letter (CoverLetterModal), Talk to Me (ChatWidget).</div>
+    <div id="c-detail" class="detail-box"><b>JobDetailModal</b> — Full job detail overlay. Shows description, llm_summary, matched_skills, missing_skills, red_flags, salary breakdown (with est. labeling).</div>
+    <div id="c-cover" class="detail-box"><b>CoverLetterModal</b> — Auto-generates on open via POST /api/app/cover-letter/[id]. Editable textarea, Copy (with ✓ Copied feedback), Regenerate, Close. Escape key closes. Requires GROQ_API_KEY in Vercel env vars.</div>
+    <div id="c-chat" class="detail-box"><b>ChatWidget</b> — "Talk to Me" chat about a specific job. Calls /api/app/chat. Maintains conversation history in telegram_claude_history table.</div>
+    <div id="c-cv" class="detail-box"><b>CVUploadCard</b> — CV upload UI. Calls /api/app/cv/upload. Parsed CV stored as cv_data:{uid} in bot_state (fields: summary, years_experience, job_titles[], skills[], certifications[]).</div>
+    <div id="r-jobs" class="detail-box"><b>GET /api/app/jobs/[id]</b> — Fetches single job detail. Uses explicit JobDetailRow interface + .single&lt;JobDetailRow&gt;() to avoid TypeScript GenericStringError (this was the Vercel build-blocking bug, fixed in commit 3de061b).</div>
+    <div id="r-cover" class="detail-box"><b>POST /api/app/cover-letter/[id]</b> — Fetches job + user CV from bot_state, builds system prompt, calls Groq llama-3.3-70b-versatile, returns 180-250 word plain-text cover letter. Requires GROQ_API_KEY in Vercel env vars.</div>
+    <div id="r-cv" class="detail-box"><b>cv/upload + cv/profile</b> — Upload and parse CV. Writes structured JSON to bot_state key cv_data:{uid}.</div>
+    <div id="r-chat" class="detail-box"><b>POST /api/app/chat</b> — LLM chat about a job. Uses Groq. Stores history in telegram_claude_history table.</div>
+    <div id="r-admin" class="detail-box"><b>admin/users + admin/bot-state</b> — Admin API routes using service_role client. bot-state writes restricted to _WRITABLE_SETTINGS allowlist only.</div>
+    <div id="r-tg" class="detail-box"><b>POST /api/telegram/webhook</b> — Receives Telegram webhook events (alternative to worker.py polling). Not yet active as primary handler — worker.py still polls.</div>
+    <div id="r-cron" class="detail-box"><b>GET /api/cron/trigger-worker</b> — Vercel cron endpoint to trigger GitHub Actions workflow_dispatch. Backup for GitHub's 5-min throttling issue.</div>
+  </div>
+</div>
+
+<div class="arrow">↕</div>
+
+<!-- WINDOWS GUI -->
+<div class="layer l-win">
+  <div class="layer-header"><div class="dot"></div>Windows GUI (PowerShell) — Runs on your PC</div>
+  <div class="layer-body">
+    <div class="chip chip-orange" onclick="toggle('ps-worker')">linkedin-job-worker.ps1 ★</div>
+    <div class="chip chip-orange" onclick="toggle('ps-alert')">linkedin-job-alert.ps1 (tray)</div>
+    <div class="chip chip-orange" onclick="toggle('ps-db')">job-database.ps1</div>
+    <div class="chip chip-orange" onclick="toggle('ps-shared')">shared-functions.ps1</div>
+    <div class="chip chip-orange" onclick="toggle('ps-settings')">settings.json</div>
+    <div class="chip chip-slate" onclick="toggle('ps-dashboard')">Open-Dashboard.bat</div>
+    <div class="chip chip-dim" onclick="toggle('ps-install')">Install-LinkedInJobWorkerTask.ps1</div>
+
+    <div id="ps-worker" class="detail-box"><b>linkedin-job-worker.ps1</b> — Background worker loop. Every 5 min: calls worker.py (cloud pipeline) via Start-Job, then fires enricher.py async if new jobs found. Polls Telegram callbacks. Manages worker.pid, seen-jobs.json, worker.log.</div>
+    <div id="ps-alert" class="detail-box"><b>linkedin-job-alert.ps1</b> — System tray GUI. Shows lamp indicators (Local 🟢/🔴, Cloud 🟡/⚫), last scan time, job count. Buttons: Run Now, Open Dashboard, View Logs, Settings. Launched hidden by Start-LinkedInJobWorker-Hidden.vbs.</div>
+    <div id="ps-db" class="detail-box"><b>job-database.ps1</b> — Local Supabase helpers in PowerShell. Reads/writes settings, job records, seen-jobs list. Dot-sourced by both worker and alert scripts.</div>
+    <div id="ps-shared" class="detail-box"><b>shared-functions.ps1</b> — Shared utilities: HTTP client helpers, Telegram send functions, log formatters. Dot-sourced by worker and alert scripts.</div>
+    <div id="ps-settings" class="detail-box"><b>settings.json</b> — Local config file (not in git). Contains SupabaseURL, SupabaseKey (currently anon key — pending: replace with service_role key), TelegramToken, TelegramChatId, etc.</div>
+    <div id="ps-dashboard" class="detail-box"><b>Open-Dashboard.bat</b> — Opens localhost dashboard (dashboard.py must be running first). Shows pipeline status, recent runs, Supabase stats, live logs.</div>
+    <div id="ps-install" class="detail-box"><b>Install-LinkedInJobWorkerTask.ps1</b> — Registers a Windows Task Scheduler task to auto-start the worker on login. Run once during setup.</div>
+  </div>
+</div>
+
+<!-- Data Flow -->
+<div class="flow-section">
+  <div class="flow-title">Data Flow — End to End</div>
+  <div class="flow">
+    <span class="step">Scrapers</span><span class="arr">→</span>
+    <span class="step">relevance_engine</span><span class="arr">→</span>
+    <span class="step">db.sync_jobs()</span><span class="arr">→</span>
+    <span class="step">jobs table</span><span class="arr">→</span>
+    <span class="step">enricher (Groq score)</span><span class="arr">→</span>
+    <span class="step">telegram_notify</span><span class="arr">→</span>
+    <span class="step">You 📱</span>
+  </div>
+  <div class="flow">
+    <span class="step">You 👍/👎</span><span class="arr">→</span>
+    <span class="step">callback handler</span><span class="arr">→</span>
+    <span class="step">db.set_job_status()</span><span class="arr">→</span>
+    <span class="step">preferences.py (few-shot)</span><span class="arr">→</span>
+    <span class="step">better Groq scores next run</span>
+  </div>
+</div>
+
+<!-- Pending Actions -->
+<div class="pending">
+  <div class="pending-title">⚠ Pending Actions (your side)</div>
+  <ul>
+    <li>Add <b>GROQ_API_KEY</b> to Vercel env vars — cover letter button will 500 without it</li>
+    <li>Run 5 unapplied SQL migrations in Supabase SQL Editor (cloud/migrations/ 2026-06-14 and 2026-06-16 files)</li>
+    <li>Rotate leaked secrets — see SECURITY-URGENT.md on your Desktop (Telegram token, Groq key, LinkedIn cookie, Tavily key)</li>
+    <li>Replace anon key with <b>service_role key</b> in settings.json — fixes silent mark_telegram_sent() failures</li>
+    <li>Apply Supabase RLS lockdown SQL (cloud/migrations/2026-06-10-bot-state-rls-lockdown.sql) to make bot_state write-only for anon</li>
+    <li>Set up cron-job.org pinger using new GitHub token — see cron-pinger-setup.md on Desktop</li>
+  </ul>
+</div>
+
+<div class="footer">Generated 2026-06-20 · LinkedIn UAE Job Alert · Click any chip to expand details</div>
+
+<script>
+function toggle(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const wasOpen = el.classList.contains('open');
+  const layer = el.closest('.layer-body');
+  if (layer) layer.querySelectorAll('.detail-box').forEach(d => d.classList.remove('open'));
+  if (!wasOpen) el.classList.add('open');
+}
+</script>
+
+</body>
+</html>
