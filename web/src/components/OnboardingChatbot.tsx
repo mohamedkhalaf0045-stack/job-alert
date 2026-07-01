@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import CVUploadCard, { CVData } from '@/components/CVUploadCard'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -17,6 +18,7 @@ export default function OnboardingChatbot({ profileType }: { profileType: Profil
   const [isLoading,  setIsLoading]  = useState(false)
   const [isComplete, setIsComplete] = useState(false)
   const [error,      setError]      = useState('')
+  const [showCVUpload, setShowCVUpload] = useState(profileType === 'candidate')
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef  = useRef<HTMLInputElement>(null)
   const started   = useRef(false)
@@ -48,12 +50,21 @@ export default function OnboardingChatbot({ profileType }: { profileType: Profil
     }
   }
 
-  // Kick off the conversation on mount with an empty message.
+  // Kick off the conversation once the CV step is resolved (or immediately
+  // for employers, who have no CV step).
   useEffect(() => {
-    if (started.current) return
+    if (started.current || showCVUpload) return
     started.current = true
     send([])
-  }, [])
+  }, [showCVUpload])
+
+  function handleCVAnalyzed(_data: CVData) {
+    setShowCVUpload(false)
+  }
+
+  function handleSkipCV() {
+    setShowCVUpload(false)
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -99,6 +110,23 @@ export default function OnboardingChatbot({ profileType }: { profileType: Profil
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {showCVUpload && (
+          <div className="space-y-3">
+            <div className="flex justify-start">
+              <div className="max-w-[95%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm leading-relaxed bg-[var(--border-soft)] text-[var(--fg)]">
+                Upload your CV so I can suggest roles based on your experience and skip questions I can already answer myself.
+              </div>
+            </div>
+            <CVUploadCard onAnalysisComplete={handleCVAnalyzed} />
+            <button
+              onClick={handleSkipCV}
+              className="text-xs text-[var(--muted)] hover:text-[var(--fg)] underline underline-offset-2"
+            >
+              Skip — I&apos;ll answer questions instead
+            </button>
+          </div>
+        )}
+
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
@@ -143,7 +171,7 @@ export default function OnboardingChatbot({ profileType }: { profileType: Profil
       </div>
 
       {/* Input */}
-      {!isComplete && (
+      {!isComplete && !showCVUpload && (
         <div className="border-t border-[var(--border)] px-3 py-3 flex gap-2 items-center">
           <input
             ref={inputRef}

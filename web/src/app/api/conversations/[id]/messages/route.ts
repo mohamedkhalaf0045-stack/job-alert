@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { checkMessageRateLimit } from '@/lib/redis'
 
 export async function POST(
   req: NextRequest,
@@ -30,19 +29,24 @@ export async function POST(
       )
     }
 
-    // Rate limit check
-    const rateLimitResult = await checkMessageRateLimit(user.id)
-    if (!rateLimitResult.allowed) {
+    const admin = createAdminClient()
+
+    // Rate limit check (Postgres-native, 1 message per 2 seconds per user)
+    const { data: allowed, error: rateLimitError } = await admin.rpc(
+      'check_message_rate_limit',
+      { p_user_id: user.id, p_window_ms: 2000 }
+    )
+    if (rateLimitError) {
+      console.error('Rate limit check failed:', rateLimitError)
+    } else if (!allowed) {
       return NextResponse.json(
         {
           error: 'Rate limit exceeded. Please wait before sending another message.',
-          retryAfter: Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000),
+          retryAfter: 2,
         },
         { status: 429 }
       )
     }
-
-    const admin = createAdminClient()
 
     // Verify user is a participant in this conversation
     const { data: conversation, error: convError } = await admin

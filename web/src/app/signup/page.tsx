@@ -36,18 +36,26 @@ export default function SignupPage() {
         emailRedirectTo: `${location.origin}/auth/callback?next=/onboarding`,
       },
     })
-    setLoading(false)
-    if (error) { setError(error.message); return }
-    // If a session came back immediately, confirmation is disabled — no
-    // need to show the "check your email" state. Otherwise (user created,
-    // no session) Supabase requires email confirmation before sign-in.
-    if (data.user && !data.session) {
-      setSent(true)
-    } else if (data.session) {
+    if (error) { setLoading(false); setError(error.message); return }
+
+    // Some SDK/flow combinations omit `session` from the signUp() response
+    // even when the project has email confirmation disabled and the user
+    // comes back already confirmed. Trust `email_confirmed_at` (the actual
+    // server-side fact) over the possibly-missing `session` field.
+    if (data.session) {
       window.location.href = '/onboarding'
-    } else {
-      setSent(true)
+      return
     }
+    if (data.user?.email_confirmed_at) {
+      // Already confirmed server-side but no session yet — sign in explicitly.
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+      setLoading(false)
+      if (signInError) { setError(signInError.message); return }
+      window.location.href = '/onboarding'
+      return
+    }
+    setLoading(false)
+    setSent(true)
   }
 
   async function handleGoogleSignIn() {

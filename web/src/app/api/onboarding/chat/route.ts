@@ -10,12 +10,47 @@ interface Message {
 
 type ProfileType = 'candidate' | 'employer'
 
-const CANDIDATE_SYSTEM_PROMPT = `You are an onboarding assistant. Ask ONE question at a time to fill in profile fields: skills (list), years_experience (number), certifications (list), target_roles (list), desired_locations (list). After the user answers a question, acknowledge briefly and ask the next missing field. When all fields are collected, respond with exactly the marker: ONBOARDING_COMPLETE followed by a JSON object of all collected fields.`
+const CANDIDATE_SYSTEM_PROMPT = `You are a career onboarding assistant. Your job is to fill in these profile fields: skills (list), years_experience (number), certifications (list), target_roles (list), desired_locations (list).
+
+If a "Known from CV" block is given below, treat those values as already collected — do not ask for them again. Instead:
+1. First, look at the known skills and job history and suggest 3-5 related or adjacent job titles the candidate may not have considered (e.g. someone with IT Support / Helpdesk experience might also fit System Administrator, Network Support Technician, Desktop Support Engineer, IT Coordinator). Present them as a short list and ask the candidate to confirm which ones to add to their target roles, or say none.
+2. Then ask ONLY about the fields that are still missing or empty (one at a time).
+
+If there is no "Known from CV" block, ask about all fields one at a time, starting with skills.
+
+Acknowledge each answer briefly before asking the next question. When every field is filled (including confirmed target roles), respond with exactly the marker: ONBOARDING_COMPLETE followed by a JSON object of all collected fields (skills, years_experience, certifications, target_roles, desired_locations).`
 
 const EMPLOYER_SYSTEM_PROMPT = `You are an onboarding assistant for a company profile. Ask ONE question at a time to fill in: company_name, industry, size (e.g. '1-10', '11-50', '51-200', '200+'), location, description (1-2 sentences about what the company does). When all fields are collected, respond with exactly the marker: ONBOARDING_COMPLETE followed by a JSON object of all collected fields.`
 
-function systemPromptFor(profileType: ProfileType): string {
-  return profileType === 'employer' ? EMPLOYER_SYSTEM_PROMPT : CANDIDATE_SYSTEM_PROMPT
+function systemPromptFor(profileType: ProfileType, knownFromCV?: string): string {
+  if (profileType === 'employer') return EMPLOYER_SYSTEM_PROMPT
+  return knownFromCV
+    ? `${CANDIDATE_SYSTEM_PROMPT}\n\nKnown from CV:\n${knownFromCV}`
+    : CANDIDATE_SYSTEM_PROMPT
+}
+
+async function getKnownFromCV(userId: string): Promise<string | undefined> {
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('bot_state')
+    .select('value')
+    .eq('key', `cv_data:${userId}`)
+    .single()
+  if (!data?.value) return undefined
+
+  try {
+    const cv = JSON.parse(data.value) as {
+      skills?: string[]; job_titles?: string[]; years_experience?: number; certifications?: string[]
+    }
+    const parts: string[] = []
+    if (cv.skills?.length)         parts.push(`Skills: ${cv.skills.join(', ')}`)
+    if (cv.job_titles?.length)     parts.push(`Past job titles: ${cv.job_titles.join(', ')}`)
+    if (cv.years_experience)       parts.push(`Years of experience: ${cv.years_experience}`)
+    if (cv.certifications?.length) parts.push(`Certifications: ${cv.certifications.join(', ')}`)
+    return parts.length ? parts.join('\n') : undefined
+  } catch {
+    return undefined
+  }
 }
 
 // Extract the JSON payload that follows the ONBOARDING_COMPLETE marker.
@@ -186,8 +221,10 @@ export async function POST(req: NextRequest) {
 
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
+    const knownFromCV = profile_type === 'candidate' ? await getKnownFromCV(user.id) : undefined
+
     const chatMessages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPromptFor(profile_type) },
+      { role: 'system', content: systemPromptFor(profile_type, knownFromCV) },
       ...messages.map(m => ({ role: m.role, content: m.content }) as Groq.Chat.Completions.ChatCompletionMessageParam),
     ]
 
