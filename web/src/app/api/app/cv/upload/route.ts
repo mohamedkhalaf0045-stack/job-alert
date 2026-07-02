@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import Groq from 'groq-sdk'
-
+import { callAI } from '@/lib/ai-chat'
 import { extractText as pdfExtractText } from 'unpdf'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -28,10 +27,8 @@ interface CVAnalysis {
   domain_terms: string[]
 }
 
-async function analyzeWithGroq(text: string): Promise<CVAnalysis> {
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+async function analyzeCV(text: string): Promise<CVAnalysis> {
   const truncated = text.substring(0, TEXT_LIMIT)
-
   const prompt = `Extract structured information from this CV/resume. Return ONLY valid JSON, no markdown.
 
 CV:
@@ -49,43 +46,20 @@ JSON structure:
   "domain_terms": ["keyword1"]
 }`
 
-  // Retry up to 3 times with exponential backoff on 429 rate limit
-  let lastErr: unknown
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 2000))
-    try {
-      const msg = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: prompt }],
-      })
-
-      const content = msg.choices[0]?.message?.content ?? ''
-      const match = content.match(/\{[\s\S]*\}/)
-      if (!match) throw new Error('Invalid JSON from Groq')
-      const p = JSON.parse(match[0]) as CVAnalysis
-      return {
-        skills:           Array.isArray(p.skills)        ? p.skills        : [],
-        years_experience: p.years_experience             ?? null,
-        job_titles:       Array.isArray(p.job_titles)    ? p.job_titles    : [],
-        certifications:   Array.isArray(p.certifications)? p.certifications: [],
-        languages:        Array.isArray(p.languages)     ? p.languages     : [],
-        education:        Array.isArray(p.education)     ? p.education     : [],
-        summary:          p.summary                      ?? '',
-        domain_terms:     Array.isArray(p.domain_terms)  ? p.domain_terms  : [],
-      }
-    } catch (err: unknown) {
-      lastErr = err
-      const status = (err as { status?: number })?.status
-      const msg    = (err as { message?: string })?.message ?? ''
-      if (status !== 429) throw err  // non-rate-limit → fail immediately
-      if (msg.includes('per day') || msg.includes('TPD')) {
-        // Daily token cap — retrying in seconds won't help
-        throw Object.assign(new Error('AI daily limit reached. Please try again in ~20 minutes.'), { status: 429 })
-      }
-    }
+  const content = await callAI([{ role: 'user', content: prompt }], 1024)
+  const match = content.match(/\{[\s\S]*\}/)
+  if (!match) throw new Error('Invalid JSON response from AI')
+  const p = JSON.parse(match[0]) as CVAnalysis
+  return {
+    skills:           Array.isArray(p.skills)         ? p.skills         : [],
+    years_experience: p.years_experience              ?? null,
+    job_titles:       Array.isArray(p.job_titles)     ? p.job_titles     : [],
+    certifications:   Array.isArray(p.certifications) ? p.certifications : [],
+    languages:        Array.isArray(p.languages)      ? p.languages      : [],
+    education:        Array.isArray(p.education)      ? p.education      : [],
+    summary:          p.summary                       ?? '',
+    domain_terms:     Array.isArray(p.domain_terms)   ? p.domain_terms   : [],
   }
-  throw lastErr
 }
 
 export async function POST(req: NextRequest) {
@@ -102,12 +76,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unsupported file type. Use PDF or TXT.' }, { status: 400 })
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const text = await extractText(buffer, file.type)
-    const analysis = await analyzeWithGroq(text)
-    const now = new Date().toISOString()
+    const buffer   = Buffer.from(await file.arrayBuffer())
+    const text     = await extractText(buffer, file.type)
+    const analysis = await analyzeCV(text)
+    const now      = new Date().toISOString()
 
-    // Store per-user as a single JSON key: cv_data:{user_id}
     const admin = createAdminClient()
     const { error: storeErr } = await admin
       .from('bot_state')
