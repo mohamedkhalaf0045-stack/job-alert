@@ -338,10 +338,19 @@ def main() -> None:
 
     scan_target_set: set[tuple[str, str]] = set()
     for user in active_prefs:
-        for kw in (user.get("keywords") or []):
+        raw_kws    = [kw for kw in (user.get("keywords") or []) if kw.strip()]
+        expansions = user.get("keyword_expansions") or {}
+        # Include up to 3 AI-expanded variants per keyword (capped to avoid scrape explosion)
+        expanded_kws: list[str] = list(raw_kws)
+        for kw in raw_kws:
+            variants = (expansions.get(kw.lower()) or {}).get("variations") or []
+            for v in variants[:3]:
+                if v.strip() and v.strip() not in expanded_kws:
+                    expanded_kws.append(v.strip())
+        for kw in expanded_kws:
             for loc in (user.get("locations") or []):
-                if kw.strip() and loc.strip():
-                    scan_target_set.add((kw.strip(), loc.strip()))
+                if loc.strip():
+                    scan_target_set.add((kw, loc.strip()))
 
     if not scan_target_set:
         _log("No active user profiles found — using env/settings keywords as fallback")

@@ -776,20 +776,21 @@ def get_active_profiles(
                 continue
 
             combined.append({
-                "user_id":          uid,
-                "email":            prof.get("email"),
-                "display_name":     prof.get("display_name"),
-                "telegram_chat_id": prof.get("telegram_chat_id"),
-                "alert_email":      prof.get("alert_email", True),
-                "alert_telegram":   prof.get("alert_telegram", False),
-                "fcm_token":        prof.get("fcm_token"),
-                "timezone":         prof.get("timezone", "Asia/Dubai"),
-                "keywords":         kw,
-                "locations":        loc,
-                "exclude_keywords": prefs.get("exclude_keywords") or [],
-                "min_score":        prefs.get("min_score"),
-                "alert_frequency":  prefs.get("alert_frequency", "daily"),
-                "digest_hour":      prefs.get("digest_hour", 8),
+                "user_id":            uid,
+                "email":              prof.get("email"),
+                "display_name":       prof.get("display_name"),
+                "telegram_chat_id":   prof.get("telegram_chat_id"),
+                "alert_email":        prof.get("alert_email", True),
+                "alert_telegram":     prof.get("alert_telegram", False),
+                "fcm_token":          prof.get("fcm_token"),
+                "timezone":           prof.get("timezone", "Asia/Dubai"),
+                "keywords":           kw,
+                "locations":          loc,
+                "exclude_keywords":   prefs.get("exclude_keywords") or [],
+                "min_score":          prefs.get("min_score"),
+                "alert_frequency":    prefs.get("alert_frequency", "daily"),
+                "digest_hour":        prefs.get("digest_hour", 8),
+                "keyword_expansions": prefs.get("keyword_expansions") or {},
             })
         return combined
     except Exception as exc:

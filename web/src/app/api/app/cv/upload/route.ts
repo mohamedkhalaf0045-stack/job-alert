@@ -49,27 +49,38 @@ JSON structure:
   "domain_terms": ["keyword1"]
 }`
 
-  const msg = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    max_tokens: 1024,
-    messages: [{ role: 'user', content: prompt }],
-  })
+  // Retry up to 3 times with exponential backoff on 429 rate limit
+  let lastErr: unknown
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 2000))
+    try {
+      const msg = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: prompt }],
+      })
 
-  const content = msg.choices[0]?.message?.content ?? ''
-  const match = content.match(/\{[\s\S]*\}/)
-  if (!match) throw new Error('Invalid JSON from Groq')
-
-  const p = JSON.parse(match[0]) as CVAnalysis
-  return {
-    skills:           Array.isArray(p.skills)         ? p.skills         : [],
-    years_experience: p.years_experience              ?? null,
-    job_titles:       Array.isArray(p.job_titles)      ? p.job_titles      : [],
-    certifications:   Array.isArray(p.certifications)  ? p.certifications  : [],
-    languages:        Array.isArray(p.languages)       ? p.languages       : [],
-    education:        Array.isArray(p.education)       ? p.education       : [],
-    summary:          p.summary                        ?? '',
-    domain_terms:     Array.isArray(p.domain_terms)    ? p.domain_terms    : [],
+      const content = msg.choices[0]?.message?.content ?? ''
+      const match = content.match(/\{[\s\S]*\}/)
+      if (!match) throw new Error('Invalid JSON from Groq')
+      const p = JSON.parse(match[0]) as CVAnalysis
+      return {
+        skills:           Array.isArray(p.skills)        ? p.skills        : [],
+        years_experience: p.years_experience             ?? null,
+        job_titles:       Array.isArray(p.job_titles)    ? p.job_titles    : [],
+        certifications:   Array.isArray(p.certifications)? p.certifications: [],
+        languages:        Array.isArray(p.languages)     ? p.languages     : [],
+        education:        Array.isArray(p.education)     ? p.education     : [],
+        summary:          p.summary                      ?? '',
+        domain_terms:     Array.isArray(p.domain_terms)  ? p.domain_terms  : [],
+      }
+    } catch (err: unknown) {
+      lastErr = err
+      const status = (err as { status?: number })?.status
+      if (status !== 429) throw err  // non-rate-limit error → fail immediately
+    }
   }
+  throw lastErr
 }
 
 export async function POST(req: NextRequest) {

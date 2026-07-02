@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import CVUploadCard, { CVData } from '@/components/CVUploadCard'
+import LocationGroupPicker from '@/components/LocationGroupPicker'
 import type { UserPreferences, Profile } from '@/lib/types'
 
 interface CVProfile {
@@ -43,8 +44,8 @@ export default function SettingsForm({
   profile: Profile | null
   userId:  string
 }) {
-  const [keywords,   setKeywords]   = useState((prefs?.keywords         ?? []).join(', '))
-  const [locations,  setLocations]  = useState((prefs?.locations        ?? []).join(', '))
+  const [keywords,   setKeywords]   = useState((prefs?.keywords  ?? []).join(', '))
+  const [locations,  setLocations]  = useState<string[]>(prefs?.locations ?? [])
   const [excludes,   setExcludes]   = useState((prefs?.exclude_keywords ?? []).join(', '))
   const [minScore,   setMinScore]   = useState(prefs?.min_score?.toString() ?? '')
   const [freq,       setFreq]       = useState<'instant' | 'daily' | 'off'>(prefs?.alert_frequency ?? 'daily')
@@ -97,7 +98,7 @@ export default function SettingsForm({
         {
           user_id:          userId,
           keywords:         keywords.split(',').map(s => s.trim()).filter(Boolean),
-          locations:        locations.split(',').map(s => s.trim()).filter(Boolean),
+          locations,
           exclude_keywords: excludes.split(',').map(s => s.trim()).filter(Boolean),
           min_score:        minScore ? parseInt(minScore) : null,
           alert_frequency:  freq,
@@ -202,10 +203,11 @@ export default function SettingsForm({
           placeholder="IT Support, System Administrator, Help Desk" className={inputCls} />
       </Field>
 
-      <Field label="Locations" hint="Leave blank to match all locations.">
-        <input value={locations} onChange={e => setLocations(e.target.value)}
-          placeholder="United Arab Emirates, Egypt" className={inputCls} />
-      </Field>
+      <div>
+        <label className="block text-sm font-medium mb-2">Locations</label>
+        <p className="text-xs text-gray-400 mb-2">Pick a country to include all its cities. Leave empty to match all locations.</p>
+        <LocationGroupPicker value={locations} onChange={setLocations} />
+      </div>
 
       <Field label="Exclude keywords" hint="Jobs containing any of these are hidden from your feed.">
         <input value={excludes} onChange={e => setExcludes(e.target.value)}

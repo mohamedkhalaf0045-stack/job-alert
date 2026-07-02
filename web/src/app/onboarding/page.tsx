@@ -5,21 +5,12 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import CVUploadCard, { CVData } from '@/components/CVUploadCard'
 import OnboardingChatbot from '@/components/OnboardingChatbot'
+import LocationGroupPicker from '@/components/LocationGroupPicker'
+import { ROLE_FAMILIES } from '@/config/role-families'
+import { LOCATION_GROUPS } from '@/config/location-groups'
 
 type Step   = 1 | 2 | 3
 type Source = 'cv' | 'linkedin' | null
-
-const UAE_LOCATIONS = [
-  'United Arab Emirates',
-  'Dubai',
-  'Abu Dhabi',
-  'Sharjah',
-  'Ajman',
-  'Egypt',
-  'Saudi Arabia',
-  'Qatar',
-  'Kuwait',
-]
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -38,15 +29,23 @@ export default function OnboardingPage() {
   const [suggestedLocations, setSuggestedLocations] = useState<string[]>([])
 
   // Step 2 — keywords
-  const [keywordInput,       setKeywordInput]       = useState('')
-  const [keywords,           setKeywords]           = useState<string[]>([])
-  const [suggestedKeywords,  setSuggestedKeywords]  = useState<string[]>([])
+  const [keywordInput,        setKeywordInput]        = useState('')
+  const [keywords,            setKeywords]            = useState<string[]>([])
+  const [suggestedKeywords,   setSuggestedKeywords]   = useState<string[]>([])
   const [recommendedKeywords, setRecommendedKeywords] = useState<string[]>([])
+
+  // Role expansion state
+  const [selectedFamily,       setSelectedFamily]       = useState<string | null>(null)
+  const [expandedVariations,   setExpandedVariations]   = useState<string[]>([])
+  const [expanding,            setExpanding]            = useState(false)
+  const [expandedFor,          setExpandedFor]          = useState<string[]>([])
+  const [keywordExpansionsData, setKeywordExpansionsData] = useState<Record<string, {
+    original: string; variations: string[]; related_skills: string[]; generated_at: string
+  }>>({})
 
   // Step 3 — locations + finish
   const [recommendedLocations, setRecommendedLocations] = useState<string[]>([])
   const [locations,    setLocations]    = useState<string[]>([])
-  const [locationInput, setLocationInput] = useState('')
   const [excludes,     setExcludes]     = useState('')
   const [frequency,    setFrequency]    = useState<'instant' | 'daily' | 'off'>('daily')
   const [loading,      setLoading]      = useState(false)
@@ -62,7 +61,7 @@ export default function OnboardingPage() {
       .catch(() => {})
   }, [])
 
-  // Handle LinkedIn OAuth callback — reads ?li_data=<base64> from URL
+  // Handle LinkedIn OAuth callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const raw    = params.get('li_data')
@@ -77,7 +76,6 @@ export default function OnboardingPage() {
           setSuggestedKeywords([jobTitle])
           setLinkedInDone(true)
         } else if (name) {
-          // Got name but no headline — prompt text paste
           setLinkedInOAuthName(name)
           setSource('linkedin')
         }
@@ -92,6 +90,52 @@ export default function OnboardingPage() {
       router.replace('/onboarding')
     }
   }, [router])
+
+  // Auto-expand keywords in background (debounced 1s)
+  useEffect(() => {
+    if (keywords.length === 0) return
+    const toExpand = keywords.filter(kw => !expandedFor.includes(kw))
+    if (toExpand.length === 0) return
+
+    const timer = setTimeout(async () => {
+      setExpanding(true)
+      try {
+        const newExpData = { ...keywordExpansionsData }
+        const newVariants: string[] = []
+        // Sequential (not parallel) to avoid Groq 429 rate limit
+        for (const kw of toExpand) {
+          await new Promise(r => setTimeout(r, 300)) // 300ms gap between calls
+          const r = await fetch('/api/app/cv/expand-keywords', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ keyword: kw }),
+          }).then(res => res.ok ? res.json() : null).catch(() => null)
+          if (!r?.expansion) continue
+          const key = (r.keyword as string).toLowerCase()
+          newExpData[key] = {
+            original:       r.keyword as string,
+            variations:     (r.expansion.title_variations as string[]) ?? [],
+            related_skills: (r.expansion.related_skills   as string[]) ?? [],
+            generated_at:   new Date().toISOString(),
+          }
+          for (const v of ((r.expansion.title_variations as string[]) ?? [])) {
+            if (!keywords.includes(v) && !newVariants.includes(v)) newVariants.push(v)
+          }
+        }
+        setExpandedFor(prev => [...new Set([...prev, ...toExpand])])
+        setKeywordExpansionsData(newExpData)
+        setExpandedVariations(prev => {
+          const existing = new Set([...prev, ...keywords])
+          return [...prev, ...newVariants.filter(v => !existing.has(v))]
+        })
+      } finally {
+        setExpanding(false)
+      }
+    }, 1000)
+
+    return () => clearTimeout(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keywords.join('|')])
 
   // ── CV handler ────────────────────────────────────────────────────────────
   function handleCVAnalyzed(data: CVData) {
@@ -155,23 +199,28 @@ export default function OnboardingPage() {
     }
   }
 
-  // ── Location helpers ──────────────────────────────────────────────────────
-  function toggleLocation(loc: string) {
-    setLocations(prev => prev.includes(loc) ? prev.filter(l => l !== loc) : [...prev, loc])
-  }
-  function handleLocationKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault()
-      const t = locationInput.trim()
-      if (t && !locations.includes(t)) setLocations(prev => [...prev, t])
-      setLocationInput('')
+  // ── Role family select ────────────────────────────────────────────────────
+  function selectFamily(familyKey: string) {
+    if (selectedFamily === familyKey) {
+      setSelectedFamily(null)
+      return
     }
+    setSelectedFamily(familyKey)
+    const family = ROLE_FAMILIES[familyKey]
+    setKeywords(prev => {
+      const existing = new Set(prev)
+      return [...prev, ...family.keywords.filter(kw => !existing.has(kw))]
+    })
   }
 
   // ── When moving to Step 3, pre-select LinkedIn-suggested locations ─────────
   function goToStep3() {
     if (suggestedLocations.length > 0 && locations.length === 0) {
-      setLocations(suggestedLocations.filter(l => UAE_LOCATIONS.includes(l)))
+      // Map LinkedIn-suggested locations to known group locations
+      const allGroupLocs = new Set(
+        Object.values(LOCATION_GROUPS).flatMap(g => g.locations)
+      )
+      setLocations(suggestedLocations.filter(l => allGroupLocs.has(l)))
     }
     setStep(3)
   }
@@ -188,12 +237,13 @@ export default function OnboardingPage() {
 
     const { error: dbErr } = await supabase.from('user_preferences').upsert(
       {
-        user_id:          user.id,
+        user_id:            user.id,
         keywords,
         locations,
-        exclude_keywords: excludes.split(',').map(s => s.trim()).filter(Boolean),
-        alert_frequency:  frequency,
-        updated_at:       new Date().toISOString(),
+        exclude_keywords:   excludes.split(',').map(s => s.trim()).filter(Boolean),
+        alert_frequency:    frequency,
+        keyword_expansions: keywordExpansionsData,
+        updated_at:         new Date().toISOString(),
       },
       { onConflict: 'user_id' }
     )
@@ -205,7 +255,6 @@ export default function OnboardingPage() {
   const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
   const steps    = [{ n: 1, label: 'Profile' }, { n: 2, label: 'Keywords' }, { n: 3, label: 'Location' }]
 
-  // Whether Step 1 is "done" (CV uploaded, LinkedIn extracted, or skipped)
   const step1Done = source === 'cv' || linkedInDone
 
   return (
@@ -304,7 +353,6 @@ export default function OnboardingPage() {
             {source === 'linkedin' && !linkedInDone && (
               <div className="mb-4">
 
-                {/* OAuth — Connect with LinkedIn button */}
                 {linkedInOAuthName ? (
                   <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 border border-green-200 mb-3 text-sm text-green-800">
                     <span>✓</span>
@@ -431,6 +479,26 @@ export default function OnboardingPage() {
               <span className="text-red-500 ml-1">*</span>
             </p>
 
+            {/* Role family quick-select */}
+            <div className="mb-4">
+              <p className="text-xs font-medium text-gray-500 mb-2">Quick start — pick your field:</p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(ROLE_FAMILIES).map(([key, family]) => (
+                  <button
+                    key={key}
+                    onClick={() => selectFamily(key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                      selectedFamily === key
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
+                    }`}
+                  >
+                    {family.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Admin recommended */}
             {recommendedKeywords.length > 0 && (
               <div className="mb-4">
@@ -493,14 +561,69 @@ export default function OnboardingPage() {
               <p className="text-xs text-red-500 mt-2">At least one keyword is required to continue</p>
             )}
 
+            {/* AI expansion results */}
+            {expanding && keywords.length > 0 && (
+              <div className="mt-4 flex items-center gap-2 text-xs text-gray-500">
+                <svg className="animate-spin h-3 w-3 text-blue-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Finding related roles with AI…
+              </div>
+            )}
+
+            {!expanding && expandedVariations.length > 0 && (
+              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-medium text-blue-700">AI found similar roles:</p>
+                  <button
+                    onClick={() => {
+                      expandedVariations.filter(v => !keywords.includes(v)).forEach(v => addKeyword(v))
+                      setExpandedVariations([])
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Add all
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {expandedVariations.map(v => (
+                    <button
+                      key={v}
+                      onClick={() => {
+                        addKeyword(v)
+                        setExpandedVariations(prev => prev.filter(x => x !== v))
+                      }}
+                      disabled={keywords.includes(v)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                        keywords.includes(v)
+                          ? 'bg-blue-600 text-white border-blue-600 opacity-60'
+                          : 'border-blue-300 text-blue-600 hover:bg-blue-100'
+                      }`}
+                    >
+                      {keywords.includes(v) ? '✓ ' : '+ '}{v}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setExpandedVariations([])}
+                  className="text-xs text-gray-400 hover:text-gray-600 mt-2 block"
+                >
+                  Dismiss suggestions
+                </button>
+              </div>
+            )}
+
             <div className="mt-6 flex gap-3">
               <button onClick={() => setStep(1)}
                 className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg hover:bg-gray-50 text-sm">
                 ← Back
               </button>
-              <button onClick={() => { if (keywords.length > 0) goToStep3() }}
+              <button
+                onClick={() => { if (keywords.length > 0) goToStep3() }}
                 disabled={keywords.length === 0}
-                className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm">
+                className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm"
+              >
                 Continue →
               </button>
             </div>
@@ -512,7 +635,7 @@ export default function OnboardingPage() {
           <div className="bg-white rounded-xl shadow-sm p-6">
             <h2 className="text-lg font-semibold mb-1">Where are you looking?</h2>
             <p className="text-sm text-gray-500 mb-5">
-              Select all countries or cities that apply.
+              Pick one or more countries — all cities are included automatically.
               <span className="text-red-500 ml-1">*</span>
             </p>
 
@@ -522,59 +645,7 @@ export default function OnboardingPage() {
               </p>
             )}
 
-            <div className="flex flex-wrap gap-2 mb-4">
-              {UAE_LOCATIONS.map(loc => {
-                const isSelected    = locations.includes(loc)
-                const isRecommended = recommendedLocations.includes(loc)
-                const isSuggested   = suggestedLocations.includes(loc)
-                return (
-                  <button key={loc} onClick={() => toggleLocation(loc)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                      isSelected
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : isSuggested
-                          ? 'border-green-400 text-green-700 hover:bg-green-50'
-                          : isRecommended
-                            ? 'border-blue-300 text-blue-600 hover:bg-blue-50'
-                            : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
-                    }`}>
-                    {isSelected ? '✓ ' : ''}{loc}
-                  </button>
-                )
-              })}
-            </div>
-
-            {recommendedLocations.filter(l => !UAE_LOCATIONS.includes(l)).length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-3">
-                {recommendedLocations.filter(l => !UAE_LOCATIONS.includes(l)).map(loc => (
-                  <button key={loc} onClick={() => toggleLocation(loc)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                      locations.includes(loc) ? 'bg-blue-600 text-white border-blue-600' : 'border-blue-300 text-blue-600 hover:bg-blue-50'
-                    }`}>
-                    {locations.includes(loc) ? '✓ ' : ''}{loc}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <input
-              value={locationInput}
-              onChange={e => setLocationInput(e.target.value)}
-              onKeyDown={handleLocationKeyDown}
-              placeholder="Other location… (press Enter to add)"
-              className={inputCls}
-            />
-
-            {locations.filter(l => !UAE_LOCATIONS.includes(l) && !recommendedLocations.includes(l)).length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-3">
-                {locations.filter(l => !UAE_LOCATIONS.includes(l) && !recommendedLocations.includes(l)).map(loc => (
-                  <span key={loc} className="inline-flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
-                    {loc}
-                    <button onClick={() => toggleLocation(loc)} className="text-blue-400 hover:text-blue-600">×</button>
-                  </span>
-                ))}
-              </div>
-            )}
+            <LocationGroupPicker value={locations} onChange={setLocations} />
 
             {locations.length === 0 && (
               <p className="text-xs text-red-500 mt-2">Select at least one location to continue</p>
