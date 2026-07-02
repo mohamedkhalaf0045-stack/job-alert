@@ -77,7 +77,12 @@ JSON structure:
     } catch (err: unknown) {
       lastErr = err
       const status = (err as { status?: number })?.status
-      if (status !== 429) throw err  // non-rate-limit error → fail immediately
+      const msg    = (err as { message?: string })?.message ?? ''
+      if (status !== 429) throw err  // non-rate-limit → fail immediately
+      if (msg.includes('per day') || msg.includes('TPD')) {
+        // Daily token cap — retrying in seconds won't help
+        throw Object.assign(new Error('AI daily limit reached. Please try again in ~20 minutes.'), { status: 429 })
+      }
     }
   }
   throw lastErr

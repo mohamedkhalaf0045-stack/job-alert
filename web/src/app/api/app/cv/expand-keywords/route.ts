@@ -41,7 +41,9 @@ No markdown, just JSON.`
       }
     } catch (err: unknown) {
       const status = (err as { status?: number })?.status
+      const msg    = (err as { message?: string })?.message ?? ''
       if (status !== 429 || attempt === 2) break
+      if (msg.includes('per day') || msg.includes('TPD')) break  // daily cap — don't retry
     }
   }
   return { title_variations: [keyword], related_skills: [] }
