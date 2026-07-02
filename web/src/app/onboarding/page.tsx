@@ -122,7 +122,7 @@ export default function OnboardingPage() {
             if (!keywords.includes(v) && !newVariants.includes(v)) newVariants.push(v)
           }
         }
-        setExpandedFor(prev => [...new Set([...prev, ...toExpand])])
+        setExpandedFor(prev => Array.from(new Set([...prev, ...toExpand])))
         setKeywordExpansionsData(newExpData)
         setExpandedVariations(prev => {
           const existing = new Set([...prev, ...keywords])
