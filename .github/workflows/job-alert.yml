@@ -17,7 +17,7 @@ jobs:
   scan:
     name: Scan LinkedIn & Indeed
     runs-on: ubuntu-22.04   # pinned: ubuntu-latest (24.04) breaks Playwright's libasound2 dep
-    timeout-minutes: 12
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
