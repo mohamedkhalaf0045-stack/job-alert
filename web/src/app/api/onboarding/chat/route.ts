@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { groqCompletionWithRetry } from '@/lib/ai-chat'
 import Groq from 'groq-sdk'
 
 interface Message {
@@ -236,7 +237,7 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const completion = await groq.chat.completions.create({
+    const completion = await groqCompletionWithRetry(groq, {
       model:      'llama-3.3-70b-versatile',
       max_tokens: 500,
       messages:   chatMessages,

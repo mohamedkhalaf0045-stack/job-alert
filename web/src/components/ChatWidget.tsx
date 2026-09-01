@@ -89,7 +89,8 @@ export default function ChatWidget() {
       if (!res.ok) throw new Error(data.error || 'Failed')
 
       setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
-    } catch {
+    } catch (err) {
+      console.error('Chat request failed:', err instanceof Error ? err.message : err)
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: 'Sorry, something went wrong. Please try again.',

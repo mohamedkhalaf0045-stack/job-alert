@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { groqCompletionWithRetry } from '@/lib/ai-chat'
 import Groq from 'groq-sdk'
 
 interface Message {
@@ -170,7 +171,7 @@ export async function POST(req: NextRequest) {
     ]
 
     // ── Pass 1: let the model decide if it needs to search ───────────────────
-    const first = await groq.chat.completions.create({
+    const first = await groqCompletionWithRetry(groq, {
       model:       'llama-3.3-70b-versatile',
       max_tokens:  512,
       messages:    baseMessages,
@@ -192,7 +193,7 @@ export async function POST(req: NextRequest) {
         searchResult = await searchWeb(args.query)
       } catch { /* bad JSON — fall through with empty result */ }
 
-      const second = await groq.chat.completions.create({
+      const second = await groqCompletionWithRetry(groq, {
         model:     'llama-3.3-70b-versatile',
         max_tokens: 600,
         messages: [

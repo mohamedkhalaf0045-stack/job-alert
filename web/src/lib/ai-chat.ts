@@ -11,6 +11,36 @@ function isTPD(err: unknown): boolean {
   return msg.includes('per day') || msg.includes('TPD')
 }
 
+/**
+ * Run a Groq chat-completion with per-minute 429 retry (up to 3 attempts,
+ * backing off 2s/4s). Throws immediately on a daily-limit (TPD) error or any
+ * non-429 error — callers that need a fallback (e.g. Ollama) should catch and
+ * handle those themselves. Use this instead of a bare `groq.chat.completions
+ * .create()` call in any route so a single transient rate-limit doesn't take
+ * the whole feature down.
+ */
+type GroqCreateParams = Parameters<Groq['chat']['completions']['create']>[0]
+
+export async function groqCompletionWithRetry(
+  groq: Groq,
+  params: GroqCreateParams & { stream?: false },
+): Promise<Groq.Chat.Completions.ChatCompletion> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 2000))
+    try {
+      return await groq.chat.completions.create(params)
+    } catch (err: unknown) {
+      lastErr = err
+      const status = (err as { status?: number })?.status
+      if (status !== 429) throw err   // non-rate-limit → surface immediately
+      if (isTPD(err))     throw err   // daily cap → retrying won't help
+      // per-minute 429 → retry loop continues
+    }
+  }
+  throw lastErr
+}
+
 async function callOllama(messages: Message[], maxTokens: number): Promise<string> {
   const resp = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
