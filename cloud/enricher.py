@@ -1096,6 +1096,9 @@ def main() -> None:
     except ValueError:
         min_score = _fallback_min
 
+    _legacy_tg_setting = db.get_config(supabase_url, supabase_key, "setting_legacy_telegram", "true")
+    legacy_telegram_enabled = _legacy_tg_setting.strip().lower() not in ("false", "0", "no", "off")
+
     # --analyze-cv: one-shot CV analysis, store to Supabase, then exit
     if args.analyze_cv:
         cv_path = args.cv.strip()
@@ -1391,7 +1394,7 @@ def main() -> None:
         # Send Telegram score notification for kept jobs (richer format with breakdown).
         # Skip if worker.py already sent a basic alert for this job.
         already_sent = bool(job.get("telegram_sent_at"))
-        if score >= min_score and tg_token and tg_chat:
+        if score >= min_score and tg_token and tg_chat and legacy_telegram_enabled:
             if not already_sent:
                 # Staleness gate — don't alert for jobs posted outside the freshness window.
                 # Catches old jobs that leaked through LinkedIn's f_TPR filter or were

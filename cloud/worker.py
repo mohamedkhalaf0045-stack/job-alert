@@ -222,6 +222,7 @@ def main() -> None:
     location      = _env("LOCATION", _DEFAULT_LOCATION)
     max_hours     = int(_env("MAX_HOURS", "72"))
     min_score     = int(_env("LLM_MIN_SCORE", "4"))  # Supabase override applied below
+    legacy_telegram_enabled = True                   # Supabase override applied below
     li_geo_id     = _env("LINKEDIN_GEOID", "")       # e.g. "104305776" for UAE
     cookie_header  = _env("LINKEDIN_COOKIE")
     hide_applied   = _env_bool("HIDE_APPLIED", default=False)
@@ -265,6 +266,8 @@ def main() -> None:
         setting_adzuna_id   = db.get_config(supabase_url, supabase_key, "setting_adzuna_app_id", "")
         setting_min_score   = db.get_config(supabase_url, supabase_key, "setting_llm_min_score", "")
         setting_li_geoid    = db.get_config(supabase_url, supabase_key, "setting_linkedin_geoid", "")
+        setting_legacy_tg   = db.get_config(supabase_url, supabase_key, "setting_legacy_telegram", "true")
+        legacy_telegram_enabled = setting_legacy_tg.lower() not in ("false", "0", "no", "off")
 
         if setting_kw:
             keywords = [k.strip() for k in setting_kw.split(",") if k.strip()]
@@ -1056,7 +1059,9 @@ def main() -> None:
     # Jobs arrive on your phone within seconds of being scraped.
     # LinkedIn (P1) is always first. The enricher will send a follow-up
     # score update later via send_score_update() when it finishes.
-    if tg_token and tg_chat and all_new_jobs:
+    if not legacy_telegram_enabled:
+        _log("Legacy Telegram disabled (setting_legacy_telegram=false) — skipping instant alerts")
+    elif tg_token and tg_chat and all_new_jobs:
         _SRC_PRI = {
             "LinkedIn": 1, "Bayt": 2, "GulfTalent": 3,
             "NaukriGulf": 4, "Indeed": 5, "Gmail": 6, "Adzuna": 7,
