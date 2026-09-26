@@ -8,7 +8,7 @@ Agent 2  Bayt Scout       ─┤  parallel (ThreadPoolExecutor)
 Agent 3  GulfTalent Scout ─┤
 Agent 4  NaukriGulf Scout ─┘
          ↓ all new jobs collected
-Agent 5  Analyst          — scores every new job with Groq (llama-3.3-70b-versatile)
+Agent 5  Analyst          — scores every new job with Groq (openai/gpt-oss-120b)
          ↓ scored jobs
 Agent 6  Alert Dispatcher — sends Telegram immediately with score + salary breakdown
 
@@ -193,7 +193,7 @@ def _score_job_with_groq(job: dict, profile: str) -> dict | None:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": "openai/gpt-oss-120b",
                     "messages": [
                         {"role": "system", "content": _SCORE_SYSTEM},
                         {"role": "user",   "content": user_msg},

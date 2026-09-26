@@ -520,7 +520,7 @@ def _breakdown_from_json(raw: str) -> dict:
 
 # ── Cloud LLM fallback (Groq — free, OpenAI-compatible, very fast) ─────────────
 
-DEFAULT_CLOUD_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_CLOUD_MODEL = "openai/gpt-oss-120b"
 _GROQ_ENDPOINT      = "https://api.groq.com/openai/v1/chat/completions"
 
 
@@ -791,73 +791,6 @@ def crewai_score(
         return ollama_score(job, description, profile, model, ollama_url,
                             dynamic_few_shot=dynamic_few_shot, cloud_key=cloud_key,
                             cloud_model=cloud_model, prefer_cloud=prefer_cloud)
-
-
-# ── Rule-based fallback scorer (no LLM required) ─────────────────────────────
-
-_IT_TITLE_WORDS = [
-    "it ", " it ", "support", "system admin", "sysadmin", "network",
-    "infrastructure", "helpdesk", "help desk", "technical", "engineer",
-    "administrator", "devops", "cloud", "cybersecurity", "security",
-    "desktop", "service desk", "analyst", "technician", "specialist",
-]
-_NON_IT_WORDS = [
-    "real estate", "property consultant", "accountant", "marketing",
-    "sales executive", "hr ", "finance", "medical", "legal", "nurse",
-    "construction", "site engineer", "oil", "aviation", "cabin crew",
-]
-_UAE_EGYPT_WORDS = [
-    "uae", "united arab emirates", "emirates", "dubai", "abu dhabi",
-    "sharjah", "ajman", "fujairah", "ras al", "egypt", "cairo",
-    "alexandria", "giza",
-]
-
-
-def rule_based_score(job: dict) -> tuple[int, str, dict]:
-    """Fast keyword scorer used when Ollama and Groq are both unavailable.
-
-    Produces rough but consistent scores so job cards show a rating even
-    before LLM is configured. Scores are marked as 'estimated' in the summary
-    so they're easy to distinguish from proper LLM scores.
-    """
-    title    = (job.get("title", "") or "").lower()
-    location = (job.get("location", "") or "").lower()
-
-    non_it     = any(kw in title for kw in _NON_IT_WORDS)
-    it_matches = sum(1 for kw in _IT_TITLE_WORDS if kw in title)
-    uae_egypt  = any(kw in location for kw in _UAE_EGYPT_WORDS)
-
-    if non_it:
-        score = 1
-        reason = "Non-IT role (estimated)"
-    elif it_matches >= 2 and uae_egypt:
-        score = 7
-        reason = "Strong IT title + UAE/Egypt location (estimated)"
-    elif it_matches >= 1 and uae_egypt:
-        score = 6
-        reason = "IT title + UAE/Egypt location (estimated)"
-    elif it_matches >= 2:
-        score = 5
-        reason = "IT title, location outside preference (estimated)"
-    elif uae_egypt:
-        score = 4
-        reason = "UAE/Egypt location, title unclear (estimated)"
-    else:
-        score = 3
-        reason = "Title/location not matched (estimated)"
-
-    breakdown = {
-        "skills_match":     min(it_matches * 2, 10),
-        "experience_match": 5,
-        "location_match":   9 if uae_egypt else 3,
-        "seniority_match":  5,
-        "overall_score":    score,
-        "matched_skills":   [],
-        "missing_skills":   [],
-        "red_flags":        [],
-        "reasoning":        reason,
-    }
-    return score, reason, breakdown
 
 
 # ── Cover-letter generation (Phase 5) ─────────────────────────────────────────
@@ -1285,9 +1218,17 @@ def main() -> None:
                                                prefer_cloud=prefer_cloud)
 
         if score == -1:
-            _log("          LLM unavailable — using rule-based fallback scorer")
-            score, summary, breakdown = rule_based_score(job)
-            consecutive_failures = 0
+            # Both Ollama and Groq failed — do NOT guess with the keyword-only
+            # rule_based_score() and let it masquerade as a real LLM verdict
+            # (it has no domain understanding: "Railway System Engineer" once
+            # passed as IT-relevant just because it contains "engineer" + a
+            # UAE location). Leave llm_score NULL so the job stays in
+            # get_unscored_jobs and gets a genuine LLM verdict on the next
+            # enricher run (~5 min later) instead of a possibly-wrong alert now.
+            _log("          LLM unavailable (Ollama + Groq both failed) — "
+                 "leaving unscored for next run, not guessing")
+            consecutive_failures += 1
+            continue
         else:
             consecutive_failures = 0
 

@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
 
     // ── Pass 1: let the model decide if it needs to search ───────────────────
     const first = await groqCompletionWithRetry(groq, {
-      model:       'llama-3.3-70b-versatile',
+      model:       'openai/gpt-oss-120b',
       max_tokens:  512,
       messages:    baseMessages,
       ...(hasTavily && { tools: [SEARCH_TOOL], tool_choice: 'auto' }),
@@ -194,7 +194,7 @@ export async function POST(req: NextRequest) {
       } catch { /* bad JSON — fall through with empty result */ }
 
       const second = await groqCompletionWithRetry(groq, {
-        model:     'llama-3.3-70b-versatile',
+        model:     'openai/gpt-oss-120b',
         max_tokens: 600,
         messages: [
           ...baseMessages,

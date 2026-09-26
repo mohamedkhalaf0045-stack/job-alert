@@ -336,7 +336,7 @@ def build_status() -> dict:
             # Groq key lives in env only (never bot_state — world-readable)
             "key_set": bool(os.environ.get("GROQ_API_KEY", "")),
             "prefer_cloud": cfg.get("setting_prefer_cloud", "") == "true",
-            "model": cfg.get("setting_groq_model", "") or "llama-3.3-70b-versatile",
+            "model": cfg.get("setting_groq_model", "") or "openai/gpt-oss-120b",
         },
         "procs": _proc_status(),
     }

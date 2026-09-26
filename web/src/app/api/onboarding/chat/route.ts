@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
     }
 
     const completion = await groqCompletionWithRetry(groq, {
-      model:      'llama-3.3-70b-versatile',
+      model:      'openai/gpt-oss-120b',
       max_tokens: 500,
       messages:   chatMessages,
     })

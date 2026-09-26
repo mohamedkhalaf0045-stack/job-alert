@@ -1,6 +1,6 @@
 import Groq from 'groq-sdk'
 
-const GROQ_MODEL   = 'llama-3.3-70b-versatile'
+const GROQ_MODEL   = 'openai/gpt-oss-120b'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL    ?? 'llama3.2'
 const OLLAMA_URL   = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434'
 
