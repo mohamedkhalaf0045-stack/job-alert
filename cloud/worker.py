@@ -205,6 +205,13 @@ def _groq_quick_score(groq_key: str, job: dict) -> str:
 _DEFAULT_KEYWORDS = "IT Support,IT Helpdesk,System Administrator,IT Infrastructure"
 _DEFAULT_LOCATION = "United Arab Emirates"
 
+# Indeed costs ~26s/call (real headless Chromium render — Indeed blocks plain
+# HTTP, see cloud/indeed.py). Scanning it across every (keyword, location)
+# combo like LinkedIn would take over an hour, so it runs separately against
+# a small, bounded set: the first few scan keywords x two broad locations.
+_INDEED_MAX_KEYWORDS = 4
+_INDEED_LOCATIONS    = ["United Arab Emirates", "Egypt"]
+
 
 def main() -> None:
     supabase_url   = _env("SUPABASE_URL")
@@ -813,40 +820,11 @@ def main() -> None:
         elif search_naukri:
             _log(f"NaukriGulf: skipped (blocked/timeout on previous keywords)")
 
-        # --- Indeed ---
-        if search_indeed and _source_fails["indeed"] < _FAIL_THRESHOLD:
-            try:
-                indeed_jobs = indeed_scraper.scrape_indeed(
-                    keyword=keyword,
-                    location=location,
-                    max_hours=max_hours,
-                )
-                indeed_jobs, ind_age_dropped = _age_filter(indeed_jobs, f"Indeed '{keyword}'")
-                if ind_age_dropped:
-                    _log(f"Indeed '{keyword}': dropped {ind_age_dropped} stale job(s) (>{max_hours}h old)")
-                indeed_jobs, indeed_dropped = _loc_filter(indeed_jobs)
-                if indeed_dropped:
-                    _log(f"Indeed '{keyword}': dropped {indeed_dropped} job(s) outside '{location}'")
-                indeed_jobs = _nat_filter(indeed_jobs, f"Indeed '{keyword}'")
-                indeed_jobs, indeed_kw_dropped = engine.filter_jobs(indeed_jobs, log_prefix=f"Indeed '{keyword}'")
-                if indeed_kw_dropped:
-                    _log(f"Indeed '{keyword}': dropped {indeed_kw_dropped} unrelated job(s)")
-                summary = db.sync_jobs(supabase_url, supabase_key, indeed_jobs, source="Indeed")
-                _log(
-                    f"Indeed '{keyword}': "
-                    f"inserted={summary['inserted']}, updated={summary['updated']}, "
-                    f"seen={summary['seen']}, invalid={summary['invalid']}"
-                )
-                all_new_jobs.extend(summary.get("new_jobs", []))
-                if summary["seen"] == 0 and summary["inserted"] == 0:
-                    _source_fails["indeed"] += 1
-                else:
-                    _source_fails["indeed"] = 0
-            except Exception as exc:
-                _log(f"Indeed error for '{keyword}': {exc}")
-                _source_fails["indeed"] += 1
-        elif search_indeed:
-            _log(f"Indeed: skipped (blocked on previous keywords)")
+        # Indeed is NOT scanned per-(keyword,location) here — each call costs
+        # ~26s (real headless Chromium render, Indeed blocks plain HTTP) so
+        # running it across all `scan_targets` (up to 200+ combos) would take
+        # over an hour. It runs once per worker invocation, after this loop,
+        # against a small dedicated keyword/location set. See "Indeed" below.
 
         # --- Adzuna ---
         if search_adzuna and adzuna_app_id and adzuna_app_key and _source_fails["adzuna"] < _FAIL_THRESHOLD:
@@ -964,6 +942,54 @@ def main() -> None:
                 _source_fails["web"] += 1
         elif search_web:
             _log(f"WebSearch: skipped (all providers exhausted on previous keywords)")
+
+    # --- Indeed (dedicated small pass — see _INDEED_MAX_KEYWORDS comment) ------
+    # Deliberately NOT sliced from all_scan_kws: that list is every active
+    # user's keywords pooled together and alphabetically sorted, so "first N"
+    # would just grab whichever category sorts first (e.g. "Accountant" before
+    # "IT Support") regardless of this deployment's actual focus. Use the
+    # IT-focused default keyword set instead — override via setting_indeed_keywords
+    # in bot_state if a different focus is needed.
+    if search_indeed:
+        setting_indeed_kws = db.get_config(supabase_url, supabase_key, "setting_indeed_keywords", "")
+        indeed_source_kws = (
+            [k.strip() for k in setting_indeed_kws.split(",") if k.strip()]
+            if setting_indeed_kws else _DEFAULT_KEYWORDS.split(",")
+        )
+        indeed_kws = indeed_source_kws[:_INDEED_MAX_KEYWORDS]
+        _log(f"Indeed: scanning {len(indeed_kws)} keyword(s) x {len(_INDEED_LOCATIONS)} location(s)")
+        for kw in indeed_kws:
+            for loc in _INDEED_LOCATIONS:
+                if _source_fails["indeed"] >= _FAIL_THRESHOLD:
+                    _log(f"Indeed: skipped '{kw}' in '{loc}' (blocked on previous attempts)")
+                    continue
+                try:
+                    indeed_jobs = indeed_scraper.scrape_indeed(
+                        keyword=kw,
+                        location=loc,
+                        max_hours=max_hours,
+                    )
+                    indeed_jobs, ind_age_dropped = _age_filter(indeed_jobs, f"Indeed '{kw}'")
+                    if ind_age_dropped:
+                        _log(f"Indeed '{kw}': dropped {ind_age_dropped} stale job(s) (>{max_hours}h old)")
+                    indeed_jobs = _nat_filter(indeed_jobs, f"Indeed '{kw}'")
+                    indeed_jobs, indeed_kw_dropped = engine.filter_jobs(indeed_jobs, log_prefix=f"Indeed '{kw}'")
+                    if indeed_kw_dropped:
+                        _log(f"Indeed '{kw}': dropped {indeed_kw_dropped} unrelated job(s)")
+                    summary = db.sync_jobs(supabase_url, supabase_key, indeed_jobs, source="Indeed")
+                    _log(
+                        f"Indeed '{kw}' in '{loc}': "
+                        f"inserted={summary['inserted']}, updated={summary['updated']}, "
+                        f"seen={summary['seen']}, invalid={summary['invalid']}"
+                    )
+                    all_new_jobs.extend(summary.get("new_jobs", []))
+                    if summary["seen"] == 0 and summary["inserted"] == 0:
+                        _source_fails["indeed"] += 1
+                    else:
+                        _source_fails["indeed"] = 0
+                except Exception as exc:
+                    _log(f"Indeed error for '{kw}' in '{loc}': {exc}")
+                    _source_fails["indeed"] += 1
 
     # --- LinkedIn cookie-expiry detection ---------------------------------------
     # A live session returns at least something across a full run.  A run-total of
