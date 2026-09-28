@@ -157,12 +157,39 @@ function Invoke-CloudPipelineAsync {
             $env:GROQ_API_KEY       = $groqKey
             $env:RESEND_API_KEY     = $resend
             Set-Location $root
-            python $wPath 2>&1 | Out-File $log -Append -Encoding utf8
-            if ($hasE) {
-                python $ePath "--prefer-cloud" "--limit" "20" "--min-score" "4" 2>&1 |
-                    Out-File $log -Append -Encoding utf8
+
+            # Bare `python ...` inside a background job still launches python.exe as a
+            # real child process with its own console — Windows briefly flashes a cmd
+            # window for each one. Start-Process -NoNewWindow suppresses that (same
+            # fix already used for the enricher launch above).
+            function Invoke-PythonNoWindow {
+                param([string]$ScriptPath, [string[]]$ExtraArgs, [string]$LogPath)
+                $tmpOut = [System.IO.Path]::GetTempFileName()
+                $tmpErr = [System.IO.Path]::GetTempFileName()
+                try {
+                    Start-Process -FilePath "python" `
+                        -ArgumentList (@($ScriptPath) + $ExtraArgs) `
+                        -NoNewWindow -Wait `
+                        -RedirectStandardOutput $tmpOut `
+                        -RedirectStandardError  $tmpErr
+                    Get-Content $tmpOut, $tmpErr -ErrorAction SilentlyContinue |
+                        Out-File $LogPath -Append -Encoding utf8
+                } finally {
+                    Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+                }
             }
-            python $aPath "--mode" "instant" 2>&1 | Out-File $log -Append -Encoding utf8
+
+            Invoke-PythonNoWindow -ScriptPath $wPath -ExtraArgs @() -LogPath $log
+            if ($hasE) {
+                # No --prefer-cloud: Ollama is installed and running locally
+                # (unlimited, free) — score with it first, only fall back to
+                # Groq cloud (shared daily quota, easily exhausted) if Ollama
+                # itself is unreachable or times out.
+                Invoke-PythonNoWindow -ScriptPath $ePath `
+                    -ExtraArgs @("--limit", "20", "--min-score", "4") `
+                    -LogPath $log
+            }
+            Invoke-PythonNoWindow -ScriptPath $aPath -ExtraArgs @("--mode", "instant") -LogPath $log
         } -ArgumentList @($script:AppRoot, $sUrl, $sKey, $tgToken, $tgChat, $cookie,
                           $groqKey, $resend, $workerPath, $alertsPath, $enrichPath,
                           $logPath, $hasEnrich)
