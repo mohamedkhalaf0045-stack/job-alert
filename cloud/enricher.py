@@ -560,6 +560,17 @@ def cloud_score(prompt: str, cloud_key: str,
             )
             if r.status_code == 429:
                 retry_after = int(r.headers.get("retry-after", 30))
+                # A per-minute rate limit gives a short retry-after (seconds).
+                # A daily/TPD cap gives one in the hundreds-to-thousands (time
+                # until the daily window resets) — sleeping for that would burn
+                # the entire job's timeout on one doomed request. Fail fast
+                # instead so the job stays unscored and retries on a later run
+                # once the quota has actually reset.
+                is_daily_cap = retry_after > 60 or "per day" in r.text.lower() or "tpd" in r.text.lower()
+                if is_daily_cap:
+                    _log(f"Cloud-fallback (Groq) daily quota exhausted (retry-after={retry_after}s) — "
+                         f"not sleeping, leaving job unscored for a later run")
+                    return -1, "", {}
                 _log(f"Cloud-fallback (Groq) rate-limited — sleeping {retry_after}s (attempt {attempt+1}/3)")
                 time.sleep(retry_after)
                 continue
