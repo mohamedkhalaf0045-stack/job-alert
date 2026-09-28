@@ -13,6 +13,7 @@ Or with explicit args:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
@@ -43,6 +44,11 @@ DEFAULT_PROFILE = (
 DEFAULT_MODEL    = "llama3.1:latest"
 DEFAULT_OLLAMA   = "http://localhost:11434"
 DEFAULT_MIN_SCORE = 4
+
+# Scoring is pure network wait (a Groq/Ollama HTTP round-trip, ~30s each) —
+# running several concurrently cuts a 50-job batch from ~25 min to ~4-5 min
+# instead of hitting the GH Actions job timeout every single run.
+_ENRICHER_SCORE_WORKERS = 6
 
 # Per-user cache + log directory: %LOCALAPPDATA%\JobAlert on Windows, ~/.job-alert elsewhere
 _LOCALAPPDATA = os.environ.get("LOCALAPPDATA")
@@ -1127,6 +1133,11 @@ def main() -> None:
     scored = dismissed = failed = cover_letters_generated = tailored_cvs_generated = 0
     consecutive_failures = 0
 
+    # Phase A: fast sequential pre-checks (nationals/relevance filters, description
+    # fetch, dedup) — cheap, and dedup needs to see each job in order to catch
+    # same-batch duplicates. Jobs that survive are queued for concurrent scoring.
+    to_score: list[tuple[dict, str]] = []
+
     for i, job in enumerate(jobs, 1):
         title   = job.get("title", "?")
         company = job.get("company", "?")
@@ -1211,11 +1222,34 @@ def main() -> None:
         elif dup_result["action"] == "no_embedding":
             _vlog("          Embedding failed - proceeding to score anyway")
 
-        _score_fn = crewai_score if args.use_crewai else ollama_score
-        score, summary, breakdown = _score_fn(job, description, profile, model, ollama,
-                                               dynamic_few_shot=dynamic_few_shot,
-                                               cloud_key=cloud_key, cloud_model=cloud_model,
-                                               prefer_cloud=prefer_cloud)
+        to_score.append((job, description))
+
+    # Phase B: score everything that survived Phase A concurrently. Each call is
+    # an independent HTTP request (Groq or Ollama) — no shared mutable state, so
+    # this is safe to parallelize. executor.map preserves input order in its
+    # output even though workers complete out of order, so Phase C below sees
+    # results in the same order Phase A produced them.
+    _score_fn = crewai_score if args.use_crewai else ollama_score
+
+    def _score_one(item: tuple[dict, str]) -> tuple[int, str, dict]:
+        job, description = item
+        return _score_fn(job, description, profile, model, ollama,
+                          dynamic_few_shot=dynamic_few_shot,
+                          cloud_key=cloud_key, cloud_model=cloud_model,
+                          prefer_cloud=prefer_cloud)
+
+    if to_score:
+        _log(f"Scoring {len(to_score)} job(s) with up to {_ENRICHER_SCORE_WORKERS} concurrent request(s)...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_ENRICHER_SCORE_WORKERS) as executor:
+            score_results = list(executor.map(_score_one, to_score))
+    else:
+        score_results = []
+
+    # Phase C: sequential side-effects (DB writes, Telegram, cover letters, counters)
+    # in the original order — unchanged from the pre-concurrency logic, just reading
+    # an already-computed score instead of calling _score_fn inline.
+    for idx, ((job, description), (score, summary, breakdown)) in enumerate(zip(to_score, score_results), 1):
+        title = job.get("title", "?")
 
         if score == -1:
             # Both Ollama and Groq failed — do NOT guess with the keyword-only
@@ -1409,8 +1443,8 @@ def main() -> None:
         else:
             scored += 1
 
-        if i < len(jobs):
-            time.sleep(0.5)  # small pause between Ollama calls
+        if idx < len(to_score):
+            time.sleep(0.3)  # small pause between Telegram/DB writes
 
     _log(f"Done. Scored={scored}, Auto-dismissed={dismissed}, Failed={failed}, CoverLetters={cover_letters_generated}, TailoredCVs={tailored_cvs_generated}")
 
