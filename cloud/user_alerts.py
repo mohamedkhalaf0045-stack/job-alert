@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -106,6 +107,31 @@ def _tg_digest(jobs: list[dict]) -> str:
     return header + "\n\n".join(lines)
 
 
+def _tg_single(job: dict) -> str:
+    """Format one job as its own Telegram message (instant mode — jobs arrive
+    one at a time as they're scored, not bundled into a single digest)."""
+    score   = job.get("llm_score")
+    badge   = f"\U0001f4cb [{score}/10] " if score is not None else "\U0001f4cb "
+    title   = job.get("title", "")
+    co      = job.get("company", "")
+    loc     = job.get("location", "")
+    url     = job.get("url", "")
+    summary = job.get("llm_summary") or ""
+    matched = job.get("matched_skills") or []
+
+    lines = [f"{badge}{title}"]
+    if co and loc:
+        lines.append(f"{co} — {loc}")
+    elif co:
+        lines.append(co)
+    if matched:
+        lines.append(f"Matched: {', '.join(matched[:4])}")
+    if summary:
+        lines.append(summary[:200])
+    lines.append(url)
+    return "\n".join(lines)
+
+
 # ── Core runner ───────────────────────────────────────────────────────────────
 
 def run(mode: str, dry_run: bool = False) -> None:
@@ -184,6 +210,33 @@ def run(mode: str, dry_run: bool = False) -> None:
                     from_email=from_email,
                     display_name=profile.get("display_name") or "",
                 )
+            elif ch == "telegram" and mode == "instant":
+                # Instant mode: one message per job as it's scored, not bundled
+                # into a single digest — jobs should arrive fast, individually.
+                sent_ids: list[str] = []
+                for job in new_jobs:
+                    msg = _tg_single(job)
+                    ok  = telegram_notify.send_message(
+                        bot_token, profile["telegram_chat_id"], msg
+                    )
+                    if ok:
+                        sent_ids.append(job["job_id"])
+                        try:
+                            db.save_telegram_history(
+                                supabase_url, supabase_key,
+                                int(profile["telegram_chat_id"]),
+                                "assistant", msg,
+                            )
+                        except Exception:
+                            pass
+                        time.sleep(0.4)  # avoid Telegram flood-control (30 msg/s limit)
+                if sent_ids:
+                    db.log_user_alert(supabase_url, supabase_key, uid, sent_ids, ch)
+                    total_sent += len(sent_ids)
+                if len(sent_ids) < len(new_jobs):
+                    print(f"[Alerts]   {ch} send FAILED for {len(new_jobs) - len(sent_ids)} job(s) for {label}")
+                continue
+
             elif ch == "telegram":
                 msg = _tg_digest(new_jobs)
                 sent = telegram_notify.send_message(
