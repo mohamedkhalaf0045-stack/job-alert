@@ -52,6 +52,7 @@ jobs:
           SUPABASE_URL:               ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:               ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TELEGRAM_BOT_TOKEN:         ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:           ${{ secrets.TELEGRAM_CHAT_ID }}
           RESEND_API_KEY:             ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL:          ${{ secrets.RESEND_FROM_EMAIL }}
           FIREBASE_SERVICE_ACCOUNT:   ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

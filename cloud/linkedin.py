@@ -35,21 +35,25 @@ _SESSION.headers.update({
 
 
 def _guest_url(keyword: str, location: str, start: int, max_hours: int = 24,
-               geo_id: str = "") -> str:
+               geo_id: str = "", window_seconds: int = 0,
+               sort_recent: bool = False) -> str:
     k   = quote(keyword)
-    tpr = max(max_hours, 1) * 3600  # LinkedIn uses seconds
+    # LinkedIn's f_TPR is in seconds. window_seconds allows sub-hour windows
+    # (the fast lane polls the last ~15 min); otherwise whole hours.
+    tpr = window_seconds or max(max_hours, 1) * 3600
+    sort = "&sortBy=DD" if sort_recent else ""
     if geo_id:
         # Use numeric geoId when available — this matches what LinkedIn's own
         # job-alert algorithm uses and returns a more complete, location-accurate
         # result set than the text-based location parameter.
         return (
             f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-            f"?keywords={k}&geoId={geo_id}&start={start}&f_TPR=r{tpr}"
+            f"?keywords={k}&geoId={geo_id}&start={start}&f_TPR=r{tpr}{sort}"
         )
     l = quote(location)
     return (
         f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-        f"?keywords={k}&location={l}&start={start}&f_TPR=r{tpr}"
+        f"?keywords={k}&location={l}&start={start}&f_TPR=r{tpr}{sort}"
     )
 
 
@@ -273,6 +277,8 @@ def scrape_linkedin(
     max_pages: int = 6,
     max_hours: int = 72,
     geo_id: str = "",
+    window_seconds: int = 0,
+    sort_recent: bool = False,
 ) -> list[dict]:
     all_jobs: list[dict] = []
     seen_ids: set[str] = set()
@@ -280,7 +286,8 @@ def scrape_linkedin(
 
     for page_idx in range(max_pages):
         start = page_idx * 25
-        url = _guest_url(keyword, location, start, max_hours, geo_id=geo_id)
+        url = _guest_url(keyword, location, start, max_hours, geo_id=geo_id,
+                         window_seconds=window_seconds, sort_recent=sort_recent)
         html_text = _fetch(url, cookie_header, referer="https://www.linkedin.com/jobs/")
         if html_text is None:
             print(f"[LinkedIn] rate-limited on '{keyword}' page {page_idx + 1} — skipping")

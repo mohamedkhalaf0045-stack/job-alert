@@ -989,6 +989,11 @@ def main() -> None:
                         help="Skip Ollama and score via Groq directly (fast backlog clearing; requires a Groq key)")
     parser.add_argument("--use-crewai", action="store_true",
                         help="Route scoring through a crewai Agent instead of raw Ollama/Groq calls (falls back automatically on error)")
+    parser.add_argument("--job-ids", default="",
+                        help="Comma-separated job_ids to score instead of the newest-unscored queue (fast lane)")
+    parser.add_argument("--alert", action="store_true",
+                        help="Send the Telegram score alert for KEEP jobs even when setting_legacy_telegram is false "
+                             "(alerts only ever follow a real LLM score, never an unscored guess)")
     args = parser.parse_args()
 
     global _VERBOSE, _DEBUG_PROMPT
@@ -1132,7 +1137,11 @@ def main() -> None:
     if args.health_check:
         tg_token = tg_chat = ""
 
-    jobs = db.get_unscored_jobs(supabase_url, supabase_key, limit=effective_limit)
+    if args.job_ids.strip():
+        jobs = db.get_unscored_jobs_by_ids(
+            supabase_url, supabase_key, [j.strip() for j in args.job_ids.split(",")])
+    else:
+        jobs = db.get_unscored_jobs(supabase_url, supabase_key, limit=effective_limit)
     if not jobs:
         _log("No unscored jobs found. All done.")
         if args.health_check:
@@ -1380,7 +1389,7 @@ def main() -> None:
         # Send Telegram score notification for kept jobs (richer format with breakdown).
         # Skip if worker.py already sent a basic alert for this job.
         already_sent = bool(job.get("telegram_sent_at"))
-        if score >= min_score and tg_token and tg_chat and legacy_telegram_enabled:
+        if score >= min_score and tg_token and tg_chat and (legacy_telegram_enabled or args.alert):
             if not already_sent:
                 # Staleness gate — don't alert for jobs posted outside the freshness window.
                 # Catches old jobs that leaked through LinkedIn's f_TPR filter or were

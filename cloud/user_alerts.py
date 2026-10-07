@@ -211,6 +211,20 @@ def run(mode: str, dry_run: bool = False) -> None:
                 and _is_fresh(j)
                 and (last_at_dt is None or (_parse_dt(j.get("date_collected")) or datetime.min.replace(tzinfo=timezone.utc)) > last_at_dt)
             ]
+            # The fast lane (cloud/fastlane.py) alerts the owner's own chat the
+            # moment a job is scored. Don't send those same jobs again from this
+            # slower path. Scoped to the owner's chat: jobs.telegram_sent_at is
+            # global, and other users never received the owner's fast-lane alert.
+            owner_chat = _cfg("TELEGRAM_CHAT_ID")
+            if (ch == "telegram" and new_jobs and owner_chat
+                    and str(profile.get("telegram_chat_id")) == owner_chat):
+                fast_sent = db.get_telegram_sent_job_ids(
+                    supabase_url, supabase_key, [j["job_id"] for j in new_jobs])
+                if fast_sent:
+                    if not dry_run:
+                        db.log_user_alert(supabase_url, supabase_key, uid, sorted(fast_sent), ch)
+                    new_jobs = [j for j in new_jobs if j["job_id"] not in fast_sent]
+
             if not new_jobs:
                 continue
 

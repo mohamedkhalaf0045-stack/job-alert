@@ -190,6 +190,47 @@ def mark_telegram_sent(supabase_url: str, supabase_key: str, url: str) -> None:
     sb.table("jobs").update({"telegram_sent_at": datetime.now(timezone.utc).isoformat()}).eq("url", canonical).execute()
 
 
+def get_unscored_jobs_by_ids(supabase_url: str, supabase_key: str, job_ids: list[str]) -> list[dict]:
+    """Unscored rows for exactly these job_ids (the fast lane scores only the
+    jobs it just inserted, never the old backlog)."""
+    job_ids = [j for j in job_ids if j]
+    if not job_ids:
+        return []
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("jobs")
+            .select("job_id,title,company,location,url,source,telegram_sent_at,date_posted,date_collected")
+            .in_("job_id", job_ids)
+            .is_("llm_score", "null")
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        print(f"[DB] get_unscored_jobs_by_ids error: {exc}")
+        return []
+
+
+def get_telegram_sent_job_ids(supabase_url: str, supabase_key: str, job_ids: list[str]) -> set[str]:
+    """Which of these jobs already had a Telegram alert sent (jobs.telegram_sent_at)."""
+    job_ids = [j for j in job_ids if j]
+    if not job_ids:
+        return set()
+    sb = _get_client(supabase_url, supabase_key)
+    try:
+        result = (
+            sb.table("jobs")
+            .select("job_id")
+            .in_("job_id", job_ids)
+            .not_.is_("telegram_sent_at", "null")
+            .execute()
+        )
+        return {r["job_id"] for r in (result.data or [])}
+    except Exception as exc:
+        print(f"[DB] get_telegram_sent_job_ids error: {exc}")
+        return set()
+
+
 def get_unscored_jobs(supabase_url: str, supabase_key: str, limit: int = 20) -> list[dict]:
     sb = _get_client(supabase_url, supabase_key)
     try:
