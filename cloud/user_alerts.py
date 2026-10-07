@@ -149,7 +149,24 @@ def run(mode: str, dry_run: bool = False) -> None:
     now_utc    = datetime.now(timezone.utc)
     total_sent = 0
 
-    print(f"[Alerts] mode={mode} dry_run={dry_run} profiles={len(profiles)} utc={now_utc.strftime('%H:%M')}")
+    # Freshness gate: scheduled runs and slow scoring can leave a job waiting a
+    # day or more before it reaches this point. Alerting on it then is noise —
+    # it's still visible in the app feed. Default 24h; override with
+    # bot_state setting_alert_max_age_hours.
+    try:
+        max_age_h = float(db.get_config(supabase_url, supabase_key,
+                                        "setting_alert_max_age_hours", "24") or 24)
+    except ValueError:
+        max_age_h = 24.0
+
+    def _is_fresh(job: dict) -> bool:
+        posted = _parse_dt(job.get("date_posted")) or _parse_dt(job.get("date_collected"))
+        if posted is None:
+            return True
+        return (now_utc - posted).total_seconds() / 3600 <= max_age_h
+
+    print(f"[Alerts] mode={mode} dry_run={dry_run} profiles={len(profiles)} "
+          f"max_age={max_age_h:g}h utc={now_utc.strftime('%H:%M')}")
 
     for profile in profiles:
         uid  = profile["user_id"]
@@ -191,6 +208,7 @@ def run(mode: str, dry_run: bool = False) -> None:
             new_jobs = [
                 j for j in matches
                 if j["job_id"] not in alerted
+                and _is_fresh(j)
                 and (last_at_dt is None or (_parse_dt(j.get("date_collected")) or datetime.min.replace(tzinfo=timezone.utc)) > last_at_dt)
             ]
             if not new_jobs:
