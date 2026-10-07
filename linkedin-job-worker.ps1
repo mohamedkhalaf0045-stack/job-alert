@@ -158,28 +158,40 @@ function Invoke-CloudPipelineAsync {
             $env:RESEND_API_KEY     = $resend
             Set-Location $root
 
-            # Bare `python ...` inside a background job still launches python.exe as a
-            # real child process with its own console — Windows briefly flashes a cmd
-            # window for each one. Start-Process -NoNewWindow suppresses that (same
-            # fix already used for the enricher launch above).
+            # A bare `python ...` in a background job flashes a console window. The
+            # hidden alternative must NOT leave stdin inherited: a Start-Job host's
+            # stdin is a pipe, and python.exe started with it freezes at startup
+            # (0 CPU, ~7 MB) — the pipeline then never finishes and no heartbeat is
+            # written. So: CreateNoWindow + redirect AND close stdin, quote the
+            # script path (the install path contains a space), and kill anything
+            # that overruns its time budget.
             function Invoke-PythonNoWindow {
-                param([string]$ScriptPath, [string[]]$ExtraArgs, [string]$LogPath)
-                $tmpOut = [System.IO.Path]::GetTempFileName()
-                $tmpErr = [System.IO.Path]::GetTempFileName()
-                try {
-                    Start-Process -FilePath "python" `
-                        -ArgumentList (@($ScriptPath) + $ExtraArgs) `
-                        -NoNewWindow -Wait `
-                        -RedirectStandardOutput $tmpOut `
-                        -RedirectStandardError  $tmpErr
-                    Get-Content $tmpOut, $tmpErr -ErrorAction SilentlyContinue |
-                        Out-File $LogPath -Append -Encoding utf8
-                } finally {
-                    Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+                param([string]$ScriptPath, [string[]]$ExtraArgs, [string]$LogPath, [int]$TimeoutMin = 40)
+                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                $psi.FileName               = "python"
+                $psi.Arguments              = ((@('"' + $ScriptPath + '"') + $ExtraArgs) -join ' ')
+                $psi.UseShellExecute        = $false
+                $psi.CreateNoWindow         = $true
+                $psi.RedirectStandardInput  = $true
+                $psi.RedirectStandardOutput = $true
+                $psi.RedirectStandardError  = $true
+                $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+                $psi.StandardErrorEncoding  = [System.Text.Encoding]::UTF8
+                $psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
+                $psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1"
+                $proc    = [System.Diagnostics.Process]::Start($psi)
+                $proc.StandardInput.Close()
+                $outTask = $proc.StandardOutput.ReadToEndAsync()
+                $errTask = $proc.StandardError.ReadToEndAsync()
+                if (-not $proc.WaitForExit($TimeoutMin * 60 * 1000)) {
+                    try { $proc.Kill() } catch {}
+                    Add-Content -LiteralPath $LogPath -Encoding utf8 -Value "[pipeline] $ScriptPath killed after $TimeoutMin min"
                 }
+                $proc.WaitForExit()
+                Add-Content -LiteralPath $LogPath -Encoding utf8 -Value ($outTask.Result + $errTask.Result)
             }
 
-            Invoke-PythonNoWindow -ScriptPath $wPath -ExtraArgs @() -LogPath $log
+            Invoke-PythonNoWindow -ScriptPath $wPath -ExtraArgs @() -LogPath $log -TimeoutMin 45
             if ($hasE) {
                 # No --prefer-cloud: Ollama is installed and running locally
                 # (unlimited, free) — score with it first, only fall back to
@@ -187,9 +199,9 @@ function Invoke-CloudPipelineAsync {
                 # itself is unreachable or times out.
                 Invoke-PythonNoWindow -ScriptPath $ePath `
                     -ExtraArgs @("--limit", "20", "--min-score", "4") `
-                    -LogPath $log
+                    -LogPath $log -TimeoutMin 40
             }
-            Invoke-PythonNoWindow -ScriptPath $aPath -ExtraArgs @("--mode", "instant") -LogPath $log
+            Invoke-PythonNoWindow -ScriptPath $aPath -ExtraArgs @("--mode", "instant") -LogPath $log -TimeoutMin 10
         } -ArgumentList @($script:AppRoot, $sUrl, $sKey, $tgToken, $tgChat, $cookie,
                           $groqKey, $resend, $workerPath, $alertsPath, $enrichPath,
                           $logPath, $hasEnrich)

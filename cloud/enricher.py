@@ -1351,41 +1351,6 @@ def main() -> None:
             failed += 1
             continue
 
-        # Phase 5: generate cover-letter draft for high-scoring jobs.
-        # Throttled per run so a backfill doesn't take forever (~30s per draft).
-        if (args.cover_letter_threshold > 0
-                and score >= args.cover_letter_threshold
-                and cover_letters_generated < args.cover_letter_max_per_run):
-            _log(f"          Generating cover letter (score {score} >= {args.cover_letter_threshold})...")
-            draft = generate_cover_letter(job, description, profile, model, ollama,
-                                          breakdown=breakdown)
-            if draft:
-                db.update_cover_letter(supabase_url, supabase_key, job["job_id"], draft)
-                cover_letters_generated += 1
-                _log(f"          Cover letter saved ({len(draft)} chars) — user can request it via the button in Telegram")
-                # Cover letter is NOT auto-sent. The user presses the
-                # '📝 Cover Letter' button on the job alert in Telegram,
-                # and the worker delivers it on the next run.
-            else:
-                _vlog("          Cover letter generation returned empty - skipping persist")
-
-        # Phase 5b: generate tailored CV draft for high-scoring jobs.
-        # Throttled per run so a backfill doesn't take forever (~60s per draft).
-        if (args.tailored_cv_threshold > 0
-                and score >= args.tailored_cv_threshold
-                and tailored_cvs_generated < args.tailored_cv_max_per_run):
-            _log(f"          Generating tailored CV (score {score} >= {args.tailored_cv_threshold})...")
-            cv_draft = generate_tailored_cv(job, description, profile, model, ollama,
-                                            breakdown=breakdown)
-            if cv_draft:
-                db.update_tailored_cv(supabase_url, supabase_key, job["job_id"], cv_draft)
-                tailored_cvs_generated += 1
-                _log(f"          Tailored CV saved ({len(cv_draft)} chars) — tap the Tailored CV button in Telegram")
-                # NOT auto-sent. User taps '📄 Tailored CV' button in Telegram
-                # and the worker delivers it on the next run.
-            else:
-                _vlog("          Tailored CV generation returned empty — skipping persist")
-
         # Send Telegram score notification for kept jobs (richer format with breakdown).
         # Skip if worker.py already sent a basic alert for this job.
         already_sent = bool(job.get("telegram_sent_at"))
@@ -1457,6 +1422,44 @@ def main() -> None:
                             _log(f"          Telegram: score update failed — will retry next run")
                     except Exception as exc:
                         _log(f"          Telegram: score update error: {exc}")
+
+        # Alert first: cover-letter / tailored-CV drafts take ~1-3 min each on the
+        # local model, and the alert must not wait behind them. The drafts are
+        # generated after the message is already on its way.
+        # Phase 5: generate cover-letter draft for high-scoring jobs.
+        # Throttled per run so a backfill doesn't take forever (~30s per draft).
+        if (args.cover_letter_threshold > 0
+                and score >= args.cover_letter_threshold
+                and cover_letters_generated < args.cover_letter_max_per_run):
+            _log(f"          Generating cover letter (score {score} >= {args.cover_letter_threshold})...")
+            draft = generate_cover_letter(job, description, profile, model, ollama,
+                                          breakdown=breakdown)
+            if draft:
+                db.update_cover_letter(supabase_url, supabase_key, job["job_id"], draft)
+                cover_letters_generated += 1
+                _log(f"          Cover letter saved ({len(draft)} chars) — user can request it via the button in Telegram")
+                # Cover letter is NOT auto-sent. The user presses the
+                # '📝 Cover Letter' button on the job alert in Telegram,
+                # and the worker delivers it on the next run.
+            else:
+                _vlog("          Cover letter generation returned empty - skipping persist")
+
+        # Phase 5b: generate tailored CV draft for high-scoring jobs.
+        # Throttled per run so a backfill doesn't take forever (~60s per draft).
+        if (args.tailored_cv_threshold > 0
+                and score >= args.tailored_cv_threshold
+                and tailored_cvs_generated < args.tailored_cv_max_per_run):
+            _log(f"          Generating tailored CV (score {score} >= {args.tailored_cv_threshold})...")
+            cv_draft = generate_tailored_cv(job, description, profile, model, ollama,
+                                            breakdown=breakdown)
+            if cv_draft:
+                db.update_tailored_cv(supabase_url, supabase_key, job["job_id"], cv_draft)
+                tailored_cvs_generated += 1
+                _log(f"          Tailored CV saved ({len(cv_draft)} chars) — tap the Tailored CV button in Telegram")
+                # NOT auto-sent. User taps '📄 Tailored CV' button in Telegram
+                # and the worker delivers it on the next run.
+            else:
+                _vlog("          Tailored CV generation returned empty — skipping persist")
 
         if score < min_score:
             dismissed += 1
