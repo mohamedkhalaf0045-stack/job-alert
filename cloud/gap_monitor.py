@@ -212,6 +212,8 @@ def main() -> int:
     ap.add_argument("--hours", type=int, default=26)
     ap.add_argument("--min-lag", type=float, default=1.0,
                     help="flag LinkedIn jobs collected more than this many hours after posting")
+    ap.add_argument("--max-lag", type=float, default=72.0,
+                    help="ignore LinkedIn jobs older than this at collection (re-listed old postings)")
     ap.add_argument("--probe", type=int, default=15, help="max jobs to live-probe")
     ap.add_argument("--always", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
@@ -251,7 +253,8 @@ def main() -> int:
     # Rule: any LinkedIn job we collected more than --min-lag hours after it was
     # posted is a detection failure to diagnose (direct scan or email-only).
     gaps = [r for r in rows
-            if r["source"] in ("LinkedIn", "Gmail/LinkedIn") and lag(r) > a.min_lag]
+            if r["source"] in ("LinkedIn", "Gmail/LinkedIn")
+            and a.min_lag < lag(r) <= a.max_lag]
     gaps.sort(key=lag, reverse=True)
     keywords = _load_keywords(url, key)
     cookie = _env("LINKEDIN_COOKIE")
