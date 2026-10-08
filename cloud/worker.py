@@ -660,6 +660,12 @@ def main() -> None:
     # One scan per (keyword, location). `location` and `li_geo_id` are rebound
     # each iteration — every scraper call and the _loc_filter closure already
     # read these names, so they transparently use the current location.
+    # Newest-first ordering: LinkedIn's default relevance order can bury fresh
+    # postings beyond the page limit (gap monitor "ranking_miss"). Turn off with
+    # bot_state setting_li_sort_recent=false.
+    li_sort_recent = db.get_config(supabase_url, supabase_key,
+                                   "setting_li_sort_recent", "true").strip().lower() != "false"
+
     for idx, (keyword, location, li_geo_id) in enumerate(scan_targets):
         if idx > 0:
             # Fixed 1.5 s between scans (was 2.0 + 0.5*idx → up to 7 s).
@@ -682,6 +688,7 @@ def main() -> None:
                     hide_applied=hide_applied,
                     max_hours=max_hours,
                     geo_id=li_geo_id,
+                    sort_recent=li_sort_recent,
                 )
                 li_jobs, li_age_dropped = _age_filter(li_jobs, f"LinkedIn '{keyword}'")
                 if li_age_dropped:

@@ -45,6 +45,10 @@ DEFAULT_LOCATIONS = ["United Arab Emirates", "Egypt"]
 # only reports jobs it hasn't stored before, so each job is scored/alerted once.
 WINDOW_SECONDS = 900
 
+# After downtime (PC off, network down) widen the look-back to cover the gap,
+# up to this cap, so jobs posted while we were away are still picked up.
+MAX_CATCHUP_SECONDS = 6 * 3600
+
 _SETTINGS_FILE = Path(_DIR).parent / "settings.json"
 _STATE_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".job-alert") / "JobAlert"
 
@@ -102,6 +106,27 @@ def _ensure_ollama() -> bool:
     return False
 
 
+def _last_ok_file() -> Path:
+    return _STATE_DIR / "fastlane_last_ok.txt"
+
+
+def _window_seconds() -> int:
+    """Look-back window: 15 min normally, wider if the last good cycle was long ago."""
+    try:
+        since = time.time() - float(_last_ok_file().read_text().strip())
+    except Exception:
+        return WINDOW_SECONDS
+    return int(min(max(since + 300, WINDOW_SECONDS), MAX_CATCHUP_SECONDS))
+
+
+def _mark_ok() -> None:
+    try:
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _last_ok_file().write_text(str(time.time()))
+    except Exception:
+        pass
+
+
 def run_cycle() -> int:
     """One poll -> insert -> score -> alert pass. Returns number of new jobs."""
     url    = _cfg("SUPABASE_URL", "SupabaseUrl")
@@ -120,15 +145,22 @@ def run_cycle() -> int:
         _log(f"RelevanceEngine load failed ({exc}) - keyword-only fallback")
         engine = relevance_engine.RelevanceEngine(keywords, set(), set(), set())
 
+    window = _window_seconds()
+    pages = 1 if window <= WINDOW_SECONDS * 2 else 3
+    if window > WINDOW_SECONDS:
+        _log(f"catch-up: looking back {window // 60} min ({pages} page(s)/query)")
     t0 = time.time()
     found: dict[str, dict] = {}
+    ok_queries = 0
     for kw in keywords:
         for loc in locations:
             try:
                 jobs = li.scrape_linkedin(
-                    kw, loc, cookie, max_pages=1, max_hours=1,
-                    window_seconds=WINDOW_SECONDS, sort_recent=True,
+                    kw, loc, cookie, max_pages=pages, max_hours=window // 3600 + 1,
+                    window_seconds=window, sort_recent=True,
                 )
+                if jobs:
+                    ok_queries += 1   # empty may mean blocked, so it doesn't count
             except Exception as exc:
                 _log(f"scrape error '{kw}' / '{loc}': {exc}")
                 continue
@@ -138,8 +170,10 @@ def run_cycle() -> int:
                 found.setdefault(str(j.get("Id", "")), j)
             time.sleep(0.4)
 
+    if ok_queries:
+        _mark_ok()
     if not found:
-        _log(f"no matching postings in the last {WINDOW_SECONDS // 60} min "
+        _log(f"no matching postings in the last {window // 60} min "
              f"({len(keywords) * len(locations)} queries, {time.time() - t0:.0f}s)")
         return 0
 
