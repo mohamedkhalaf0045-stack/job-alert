@@ -6,6 +6,7 @@ Uses only the requests library (no browser needed for LinkedIn guest API).
 from __future__ import annotations
 
 import html
+import os
 import re
 import time
 from urllib.parse import quote, urlparse, urlunparse
@@ -32,6 +33,14 @@ _SESSION.headers.update({
     "Sec-Ch-Ua-Mobile": "?0",
     "Sec-Ch-Ua-Platform": '"Windows"',
 })
+
+# Residential proxy (e.g. http://user:pass@p.webshare.io:80). LinkedIn blocks
+# GitHub's datacenter IPs, so cloud runs route LinkedIn traffic through this.
+# Unset locally: the home IP is not blocked.
+_PROXY = os.environ.get("LINKEDIN_PROXY", "").strip()
+if _PROXY:
+    _SESSION.proxies.update({"http": _PROXY, "https": _PROXY})
+    print(f"[LinkedIn] using proxy {urlparse(_PROXY).hostname}")
 
 
 def _guest_url(keyword: str, location: str, start: int, max_hours: int = 24,

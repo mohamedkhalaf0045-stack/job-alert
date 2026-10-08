@@ -46,6 +46,7 @@ jobs:
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           MAX_HOURS:           ${{ secrets.MAX_HOURS }}
           LINKEDIN_COOKIE:     ${{ secrets.LINKEDIN_COOKIE }}
+          LINKEDIN_PROXY:    ${{ secrets.LINKEDIN_PROXY }}
           GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
           KEYWORDS:            ${{ secrets.KEYWORDS }}
           LOCATION:            ${{ secrets.LOCATION }}
