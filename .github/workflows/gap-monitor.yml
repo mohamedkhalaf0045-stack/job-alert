@@ -2,8 +2,8 @@ name: Gap Monitor
 
 on:
   schedule:
-    # 8:30 PM Asia/Dubai = 16:30 UTC, daily
-    - cron: '30 16 * * *'
+    # every 3 hours; each late job is diagnosed once (gap_monitor_handled)
+    - cron: '15 */3 * * *'
   workflow_dispatch:
     inputs:
       always:
@@ -17,6 +17,7 @@ env:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 jobs:
   gap-monitor:

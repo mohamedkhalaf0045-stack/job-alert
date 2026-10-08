@@ -141,6 +141,44 @@ def _open_issue(report: dict, lines: list[str]) -> str:
         return ""
 
 
+def _scan_runs(hours: int) -> list[dict]:
+    """Recent 'Job Alert Scan' workflow runs (needs GITHUB_TOKEN, actions: read)."""
+    token, repo = _env("GITHUB_TOKEN"), _env("GITHUB_REPOSITORY")
+    if not token or not repo:
+        return []
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours + 6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/workflows/job-alert.yml/runs",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            params={"per_page": 100, "created": f">={since}"}, timeout=20,
+        )
+        runs = r.json().get("workflow_runs", []) if r.status_code == 200 else []
+    except requests.RequestException:
+        return []
+    out = []
+    for w in runs:
+        out.append({
+            "start": datetime.fromisoformat(w["run_started_at"].replace("Z", "+00:00")),
+            "end": datetime.fromisoformat(w["updated_at"].replace("Z", "+00:00")),
+            "conclusion": w.get("conclusion") or w.get("status"),
+        })
+    return out
+
+
+def _scan_coverage(posted: datetime, collected: datetime, runs: list[dict]) -> tuple[int, str]:
+    """Successful scans that finished after posting and before we got the job."""
+    window = [x for x in runs if x["end"] >= posted and x["start"] <= collected]
+    ok = [x for x in window if x["conclusion"] == "success"]
+    bad: dict[str, int] = {}
+    for x in window:
+        if x["conclusion"] != "success":
+            bad[str(x["conclusion"])] = bad.get(str(x["conclusion"]), 0) + 1
+    note = (f"{len(ok)} successful GitHub scan(s) between posting and collection"
+            + (f"; others: {bad}" if bad else ""))
+    return len(ok), note
+
+
 def _job_id(row: dict) -> str:
     m = re.search(r"(\d{6,})", row.get("job_id") or row.get("url") or "")
     return m.group(1) if m else ""
@@ -160,6 +198,13 @@ def _probe(row: dict, cookie: str) -> tuple[str, list[str]]:
         return "blocked", ["probe returned 0 jobs"]
     ids = {_job_id({"url": j.get("Url", "") or j.get("url", "")}) for j in jobs}
     return ("found" if jid in ids else "absent"), [f"probe saw {len(jobs)} jobs"]
+
+
+def _load_handled(url: str, key: str) -> set[str]:
+    try:
+        return set(json.loads(db.get_config(url, key, "gap_monitor_handled", "[]")))
+    except Exception:  # noqa: BLE001
+        return set()
 
 
 def main() -> int:
@@ -207,14 +252,24 @@ def main() -> int:
     keywords = _load_keywords(url, key)
     cookie = _env("LINKEDIN_COOKIE")
 
+    runs = _scan_runs(a.hours)
     findings = []
     for i, r in enumerate(gaps):
         cov = _keyword_covers(r["title"], keywords)
         notes: list[str] = []
+        scans_ok = -1
+        if runs:
+            scans_ok, scan_note = _scan_coverage(
+                datetime.fromisoformat(r["date_posted"].replace("Z", "+00:00")),
+                datetime.fromisoformat(r["date_collected"].replace("Z", "+00:00")), runs)
+            notes.append(scan_note)
         if not cov:
             verdict = "keyword_gap"
+        elif scans_ok == 0:
+            verdict = "scan_gap"   # no scan completed in the window: schedule/timeouts
         elif i < a.probe:
-            state, notes = _probe(r, cookie)
+            state, pnotes = _probe(r, cookie)
+            notes += pnotes
             verdict = {"blocked": "probe_blocked", "absent": "search_miss",
                        "found": "ranking_miss"}[state]
         else:
@@ -225,13 +280,18 @@ def main() -> int:
             "notes": notes, "url": r["url"],
         })
 
-    counts: dict[str, int] = {}
+    handled = _load_handled(url, key)
     for f in findings:
+        f["new"] = f["job_id"] not in handled
+    new_findings = [f for f in findings if f["new"]]
+
+    counts: dict[str, int] = {}
+    for f in new_findings:
         counts[f["verdict"]] = counts.get(f["verdict"], 0) + 1
 
     report = {
         "at": datetime.now(timezone.utc).isoformat(),
-        "window_h": a.hours, "gaps": len(findings), "verdicts": counts, "findings": findings,
+        "window_h": a.hours, "gaps": len(findings), "new_gaps": len(new_findings), "verdicts": counts, "findings": findings,
     }
     print(json.dumps(report, indent=2)[:6000])
 
@@ -240,26 +300,27 @@ def main() -> int:
         "probe_blocked": "LinkedIn blocked the probe (datacenter IP) — run scan from home IP/proxy",
         "search_miss": "LinkedIn search itself doesn't list them promptly (indexing delay)",
         "ranking_miss": "keyword exists but scan missed it — raise pages/frequency",
+        "scan_gap": "no GitHub scan completed between posting and collection (schedule throttled / timeouts)",
         "unprobed": "keyword exists; not probed (cap)",
     }
     lines = [f"🕳️ Gap monitor — last {a.hours}h", *lag_lines, ""]
-    if findings:
-        lines.append(f"{len(findings)} job(s) found only via email, ≥{a.min_lag:g}h late:")
+    if new_findings:
+        lines.append(f"{len(new_findings)} NEW job(s) found only via email, ≥{a.min_lag:g}h late:")
         for v, n in sorted(counts.items(), key=lambda kv: -kv[1]):
             lines.append(f"• {n} × {v}: {hints.get(v, '')}")
         lines.append("")
-        for f in findings[:5]:
+        for f in new_findings[:5]:
             lines.append(f"{f['lag_h']}h · {f['title']} — {f['company']} [{f['verdict']}]")
             lines.append(f["url"])
     else:
-        lines.append("No late email-only jobs. ✅")
+        lines.append("No new late email-only jobs. ✅")
     if a.auto_fix and not a.dry_run:
-        added = _auto_add_keywords(url, key, findings)
+        added = _auto_add_keywords(url, key, new_findings)
         report["keywords_added"] = added
         if added:
             lines.append("")
             lines.append("✅ Auto-added keywords: " + ", ".join(added))
-        needs_code = [f for f in findings if f["verdict"] == "ranking_miss"]
+        needs_code = [f for f in new_findings if f["verdict"] in ("ranking_miss", "scan_gap")]
         if needs_code:
             issue = _open_issue(report, lines)
             if issue:
@@ -274,7 +335,13 @@ def main() -> int:
         db.set_config(url, key, "gap_monitor_last", json.dumps(report)[:20000])
     except Exception as exc:  # noqa: BLE001
         print(f"[Gap] could not store report: {exc}")
-    if findings or a.always:
+    if a.auto_fix:
+        try:
+            db.set_config(url, key, "gap_monitor_handled",
+                          json.dumps(sorted(handled | {f["job_id"] for f in findings})[-500:]))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Gap] could not store handled ids: {exc}")
+    if new_findings or a.always:
         telegram_notify.send_message(_env("TELEGRAM_BOT_TOKEN"), _env("TELEGRAM_CHAT_ID"), text[:3900])
     return 0
 
