@@ -37,7 +37,25 @@ _SESSION.headers.update({
 # Residential proxy (e.g. http://user:pass@p.webshare.io:80). LinkedIn blocks
 # GitHub's datacenter IPs, so cloud runs route LinkedIn traffic through this.
 # Unset locally: the home IP is not blocked.
-_PROXY = os.environ.get("LINKEDIN_PROXY", "").strip()
+def _normalize_proxy(raw: str) -> str:
+    """Accept the formats proxy dashboards hand out:
+    http://user:pass@host:port, user:pass@host:port, host:port:user:pass, host:port."""
+    raw = (raw or "").strip().strip('"').strip("'").strip()
+    if not raw:
+        return ""
+    if "://" in raw:
+        return raw
+    if "@" in raw:
+        return "http://" + raw
+    parts = raw.split(":")
+    if len(parts) == 4:                      # host:port:user:pass (Webshare list format)
+        host, port, user, pwd = parts
+        return f"http://{user}:{pwd}@{host}:{port}"
+    return "http://" + raw
+
+
+_PROXY_RAW = os.environ.get("LINKEDIN_PROXY", "")
+_PROXY = _normalize_proxy(_PROXY_RAW)
 if _PROXY:
     _SESSION.proxies.update({"http": _PROXY, "https": _PROXY})
     print(f"[LinkedIn] using proxy {urlparse(_PROXY).hostname}")

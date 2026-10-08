@@ -27,6 +27,7 @@ import statistics
 import sys
 import requests
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -207,7 +208,22 @@ def _linkedin_health(url: str, key: str) -> dict:
         linkedin._guest_url("System Administrator", "United Arab Emirates", 0, 24),
         _env("LINKEDIN_COOKIE"), referer="https://www.linkedin.com/jobs/") or ""
     cards = len(re.findall(r"/jobs/view/", html_text))
-    res = {"at": t0.isoformat(), "proxy": bool(linkedin._PROXY), "chars": len(html_text),
+    parsed = urlparse(linkedin._PROXY) if linkedin._PROXY else None
+    proxy_info = {
+        "env_len": len(linkedin._PROXY_RAW),          # 0 => secret not reaching the job
+        "host": parsed.hostname if parsed else "",
+        "port": parsed.port if parsed else None,
+        "has_auth": bool(parsed and parsed.username),
+        "egress_ip": "", "error": "",
+    }
+    if linkedin._PROXY:
+        try:
+            r = linkedin._SESSION.get("https://api.ipify.org?format=json", timeout=20)
+            proxy_info["egress_ip"] = r.json().get("ip", "")
+        except Exception as exc:  # noqa: BLE001
+            proxy_info["error"] = type(exc).__name__ + ": " + str(exc).split("@")[-1][:200]
+    res = {"at": t0.isoformat(), "proxy": bool(linkedin._PROXY), "proxy_info": proxy_info,
+           "chars": len(html_text),
            "job_links": cards, "ok": cards > 0,
            "secs": round((datetime.now(timezone.utc) - t0).total_seconds(), 1)}
     try:

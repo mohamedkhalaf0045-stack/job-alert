@@ -41,6 +41,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           LINKEDIN_COOKIE:    ${{ secrets.LINKEDIN_COOKIE }}
-          LINKEDIN_PROXY:   ${{ secrets.LINKEDIN_PROXY }}
+          LINKEDIN_PROXY:   ${{ secrets.LINKEDIN_PROXY || vars.LINKEDIN_PROXY }}
           GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
         run: python cloud/gap_monitor.py --hours 26 --auto-fix ${{ inputs.always && '--always' || '' }}
