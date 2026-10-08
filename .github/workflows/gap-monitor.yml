@@ -14,6 +14,10 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   gap-monitor:
     runs-on: ubuntu-22.04
@@ -36,4 +40,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           LINKEDIN_COOKIE:    ${{ secrets.LINKEDIN_COOKIE }}
-        run: python cloud/gap_monitor.py --hours 26 ${{ inputs.always && '--always' || '' }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+        run: python cloud/gap_monitor.py --hours 26 --auto-fix ${{ inputs.always && '--always' || '' }}

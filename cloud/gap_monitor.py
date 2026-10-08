@@ -25,6 +25,7 @@ import os
 import re
 import statistics
 import sys
+import requests
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -70,6 +71,76 @@ def _keyword_covers(title: str, keywords: list[str]) -> str:
     return best
 
 
+_SENIORITY = {"senior", "junior", "sr", "jr", "lead", "principal", "associate", "staff"}
+_BLOCKED_WORDS = {"manager", "director", "head", "vp", "chief", "intern", "trainee",
+                  "fresh", "graduate", "internship"}
+
+
+_ROLE_WORDS = {"engineer", "administrator", "admin", "support", "officer", "executive",
+               "specialist", "analyst", "technician", "helpdesk", "desk", "architect",
+               "consultant", "infrastructure", "coordinator", "supervisor"}
+
+
+def _suggest_keyword(title: str) -> str:
+    """Short role phrase (<=3 words ending at the role noun), or "" if unsuitable."""
+    t = re.split(r"[(/|\-–,]", title or "")[0]
+    words = [w for w in re.findall(r"[A-Za-z0-9+#]+", t) if w.lower() not in _SENIORITY]
+    if any(w.lower() in _BLOCKED_WORDS for w in words):
+        return ""
+    idx = next((i for i, w in enumerate(words) if w.lower() in _ROLE_WORDS), -1)
+    if idx < 0:
+        return ""
+    phrase = words[max(0, idx - 2): idx + 1]
+    return " ".join(phrase) if len(phrase) >= 2 else ""
+
+
+def _auto_add_keywords(url: str, key: str, findings: list[dict]) -> list[str]:
+    """Append safe keywords for keyword_gap findings to setting_keywords."""
+    raw = db.get_config(url, key, "setting_keywords", "")
+    current = [k.strip() for k in raw.split(",") if k.strip()]
+    exclude = [e.strip().lower() for e in
+               db.get_config(url, key, "setting_exclude_keywords", "").split(",") if e.strip()]
+    have = {k.lower() for k in current}
+    added: list[str] = []
+    for f in findings:
+        if f["verdict"] != "keyword_gap":
+            continue
+        kw = _suggest_keyword(f["title"])
+        if not kw or kw.lower() in have or any(e in kw.lower() for e in exclude):
+            continue
+        added.append(kw)
+        have.add(kw.lower())
+    if added:
+        db.set_config(url, key, "setting_keywords", ",".join(current + added))
+    return added
+
+
+def _open_issue(report: dict, lines: list[str]) -> str:
+    """Create/update one GitHub issue for problems that need a code/config fix."""
+    token, repo = _env("GITHUB_TOKEN"), _env("GITHUB_REPOSITORY")
+    if not token or not repo:
+        return ""
+    api = f"https://api.github.com/repos/{repo}/issues"
+    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    title = "Gap monitor: scan is missing jobs"
+    body = ("Automated report from `cloud/gap_monitor.py`.\n\n```\n" + "\n".join(lines)
+            + "\n```\n\n<details><summary>JSON</summary>\n\n```json\n"
+            + json.dumps(report, indent=1)[:50000] + "\n```\n</details>\n")
+    try:
+        existing = requests.get(api, headers=hdr, timeout=20,
+                                params={"state": "open", "labels": "gap-monitor"}).json()
+        if isinstance(existing, list) and existing:
+            num = existing[0]["number"]
+            requests.post(f"{api}/{num}/comments", headers=hdr, json={"body": body[:65000]}, timeout=20)
+            return f"{existing[0]['html_url']} (updated)"
+        r = requests.post(api, headers=hdr, timeout=20,
+                          json={"title": title, "body": body[:65000], "labels": ["gap-monitor"]})
+        return r.json().get("html_url", "") if r.status_code < 300 else ""
+    except requests.RequestException as exc:
+        print(f"[Gap] issue create failed: {exc}")
+        return ""
+
+
 def _job_id(row: dict) -> str:
     m = re.search(r"(\d{6,})", row.get("job_id") or row.get("url") or "")
     return m.group(1) if m else ""
@@ -98,6 +169,8 @@ def main() -> int:
     ap.add_argument("--probe", type=int, default=15, help="max jobs to live-probe")
     ap.add_argument("--always", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--auto-fix", action="store_true",
+                    help="append safe keywords for keyword gaps; open a GitHub issue for the rest")
     a = ap.parse_args()
 
     url, key = _env("SUPABASE_URL"), _env("SUPABASE_KEY")
@@ -180,6 +253,18 @@ def main() -> int:
             lines.append(f["url"])
     else:
         lines.append("No late email-only jobs. ✅")
+    if a.auto_fix and not a.dry_run:
+        added = _auto_add_keywords(url, key, findings)
+        report["keywords_added"] = added
+        if added:
+            lines.append("")
+            lines.append("✅ Auto-added keywords: " + ", ".join(added))
+        needs_code = [f for f in findings if f["verdict"] == "ranking_miss"]
+        if needs_code:
+            issue = _open_issue(report, lines)
+            if issue:
+                lines.append("")
+                lines.append(f"🛠️ Fix requested (issue): {issue}")
     text = "\n".join(lines)
 
     if a.dry_run:
