@@ -1,0 +1,39 @@
+name: Gap Monitor
+
+on:
+  schedule:
+    # 8:30 PM Asia/Dubai = 16:30 UTC, daily
+    - cron: '30 16 * * *'
+  workflow_dispatch:
+    inputs:
+      always:
+        description: 'Send the report even when no gaps are found'
+        type: boolean
+        default: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  gap-monitor:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r cloud/requirements.txt
+
+      - name: Run gap monitor
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          LINKEDIN_COOKIE:    ${{ secrets.LINKEDIN_COOKIE }}
+        run: python cloud/gap_monitor.py --hours 26 ${{ inputs.always && '--always' || '' }}
