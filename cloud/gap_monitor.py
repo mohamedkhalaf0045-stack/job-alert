@@ -55,16 +55,19 @@ def _load_keywords(url: str, key: str) -> list[str]:
 
 
 def _keyword_covers(title: str, keywords: list[str]) -> str:
-    t = (title or "").lower()
+    """Return the keyword that genuinely covers the title, else "".
+
+    A keyword covers a title when all of its meaningful words (3+ chars) appear
+    as whole words in the title. Keywords with no meaningful words (e.g. "IT")
+    never cover anything - they used to match inside words like "Specialist".
+    """
     tt = _tokens(title)
+    best = ""
     for kw in keywords:
-        k = kw.lower()
-        if k in t:
-            return kw
         kt = _tokens(kw)
-        if kt and kt <= tt:
-            return kw
-    return ""
+        if kt and kt <= tt and len(kt) > len(_tokens(best)):
+            best = kw
+    return best
 
 
 def _job_id(row: dict) -> str:
@@ -92,7 +95,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=26)
     ap.add_argument("--min-lag", type=float, default=6.0)
-    ap.add_argument("--probe", type=int, default=8, help="max jobs to live-probe")
+    ap.add_argument("--probe", type=int, default=15, help="max jobs to live-probe")
     ap.add_argument("--always", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
