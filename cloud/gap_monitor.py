@@ -210,7 +210,8 @@ def _load_handled(url: str, key: str) -> set[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=26)
-    ap.add_argument("--min-lag", type=float, default=6.0)
+    ap.add_argument("--min-lag", type=float, default=1.0,
+                    help="flag LinkedIn jobs collected more than this many hours after posting")
     ap.add_argument("--probe", type=int, default=15, help="max jobs to live-probe")
     ap.add_argument("--always", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
@@ -247,7 +248,10 @@ def main() -> int:
         for s, v in sorted(by_src.items(), key=lambda kv: -len(kv[1]))
     ]
 
-    gaps = [r for r in rows if r["source"].startswith("Gmail/") and lag(r) >= a.min_lag]
+    # Rule: any LinkedIn job we collected more than --min-lag hours after it was
+    # posted is a detection failure to diagnose (direct scan or email-only).
+    gaps = [r for r in rows
+            if r["source"] in ("LinkedIn", "Gmail/LinkedIn") and lag(r) > a.min_lag]
     gaps.sort(key=lag, reverse=True)
     keywords = _load_keywords(url, key)
     cookie = _env("LINKEDIN_COOKIE")
@@ -263,7 +267,11 @@ def main() -> int:
                 datetime.fromisoformat(r["date_posted"].replace("Z", "+00:00")),
                 datetime.fromisoformat(r["date_collected"].replace("Z", "+00:00")), runs)
             notes.append(scan_note)
-        if not cov:
+        if r["source"] == "LinkedIn":
+            # Found by our own scan, just late: either no scan ran in the window,
+            # or scans ran but only caught it on a later pass.
+            verdict = "scan_gap" if scans_ok == 0 else "late_pickup"
+        elif not cov:
             verdict = "keyword_gap"
         elif scans_ok == 0:
             verdict = "scan_gap"   # no scan completed in the window: schedule/timeouts
@@ -300,12 +308,13 @@ def main() -> int:
         "probe_blocked": "LinkedIn blocked the probe (datacenter IP) — run scan from home IP/proxy",
         "search_miss": "LinkedIn search itself doesn't list them promptly (indexing delay)",
         "ranking_miss": "keyword exists but scan missed it — raise pages/frequency",
+        "late_pickup": "our scan found it, but only on a later pass (cadence / ordering)",
         "scan_gap": "no GitHub scan completed between posting and collection (schedule throttled / timeouts)",
         "unprobed": "keyword exists; not probed (cap)",
     }
     lines = [f"🕳️ Gap monitor — last {a.hours}h", *lag_lines, ""]
     if new_findings:
-        lines.append(f"{len(new_findings)} NEW job(s) found only via email, ≥{a.min_lag:g}h late:")
+        lines.append(f"{len(new_findings)} NEW job(s) LinkedIn job(s) detected >{a.min_lag:g}h after posting:")
         for v, n in sorted(counts.items(), key=lambda kv: -kv[1]):
             lines.append(f"• {n} × {v}: {hints.get(v, '')}")
         lines.append("")
@@ -320,7 +329,7 @@ def main() -> int:
         if added:
             lines.append("")
             lines.append("✅ Auto-added keywords: " + ", ".join(added))
-        needs_code = [f for f in new_findings if f["verdict"] in ("ranking_miss", "scan_gap")]
+        needs_code = [f for f in new_findings if f["verdict"] in ("ranking_miss", "scan_gap", "late_pickup")]
         if needs_code:
             issue = _open_issue(report, lines)
             if issue:
