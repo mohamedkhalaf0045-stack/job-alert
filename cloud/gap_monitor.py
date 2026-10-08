@@ -200,6 +200,24 @@ def _probe(row: dict, cookie: str) -> tuple[str, list[str]]:
     return ("found" if jid in ids else "absent"), [f"probe saw {len(jobs)} jobs"]
 
 
+def _linkedin_health(url: str, key: str) -> dict:
+    """One LinkedIn guest search; records whether we get real results (proxy check)."""
+    t0 = datetime.now(timezone.utc)
+    html_text = linkedin._fetch(
+        linkedin._guest_url("System Administrator", "United Arab Emirates", 0, 24),
+        _env("LINKEDIN_COOKIE"), referer="https://www.linkedin.com/jobs/") or ""
+    cards = len(re.findall(r"/jobs/view/", html_text))
+    res = {"at": t0.isoformat(), "proxy": bool(linkedin._PROXY), "chars": len(html_text),
+           "job_links": cards, "ok": cards > 0,
+           "secs": round((datetime.now(timezone.utc) - t0).total_seconds(), 1)}
+    try:
+        db.set_config(url, key, "linkedin_health", json.dumps(res))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Gap] could not store linkedin_health: {exc}")
+    print(f"[Gap] LinkedIn health: {res}")
+    return res
+
+
 def _load_handled(url: str, key: str) -> set[str]:
     try:
         return set(json.loads(db.get_config(url, key, "gap_monitor_handled", "[]")))
@@ -226,6 +244,7 @@ def main() -> int:
         print("SUPABASE_URL / SUPABASE_KEY not set")
         return 1
     sb = db._get_client(url, key)
+    health = _linkedin_health(url, key) if not a.dry_run else {}
 
     since = (datetime.now(timezone.utc) - timedelta(hours=a.hours)).isoformat()
     rows = (
@@ -316,6 +335,9 @@ def main() -> int:
         "unprobed": "keyword exists; not probed (cap)",
     }
     lines = [f"🕳️ Gap monitor — last {a.hours}h", *lag_lines, ""]
+    if health and not health.get("ok"):
+        lines.insert(1, f"⚠️ LinkedIn returned no jobs to the cloud (proxy={health.get('proxy')}, "
+                        f"{health.get('chars')} chars) — scans from GitHub are blind")
     if new_findings:
         lines.append(f"{len(new_findings)} NEW job(s) LinkedIn job(s) detected >{a.min_lag:g}h after posting:")
         for v, n in sorted(counts.items(), key=lambda kv: -kv[1]):
