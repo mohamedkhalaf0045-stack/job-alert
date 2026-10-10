@@ -65,7 +65,10 @@ def _settings() -> dict:
 
 
 def _cfg(env_key: str, json_key: str) -> str:
-    return os.environ.get(env_key, "").strip() or str(_settings().get(json_key, "") or "").strip()
+    # strip("﻿"): secrets pasted from some editors start with a BOM, which
+    # str.strip() keeps and which breaks HTTP header encoding (latin-1).
+    val = os.environ.get(env_key, "").strip().strip("﻿")
+    return val or str(_settings().get(json_key, "") or "").strip().strip("﻿")
 
 
 def _csv_setting(url: str, key: str, name: str, default: list[str]) -> list[str]:

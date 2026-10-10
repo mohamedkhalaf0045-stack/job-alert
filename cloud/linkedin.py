@@ -122,6 +122,7 @@ def _canonical_url(raw: str) -> str:
 
 def _fetch(url: str, cookie_header: str, attempt: int = 1, referer: str = "") -> str | None:
     headers = {}
+    cookie_header = (cookie_header or "").strip().strip("﻿")
     if cookie_header:
         headers["Cookie"] = cookie_header
     if referer:
