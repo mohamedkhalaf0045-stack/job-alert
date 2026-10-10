@@ -25,7 +25,7 @@ Last updated: 2026-10-10
 ## How the system runs (current)
 | Piece | Where | Notes |
 |---|---|---|
-| Fast Lane (cloud) | `.github/workflows/fastlane-cloud.yml` → `cloud/fastlane.py --cloud --loop 90 --duration 20700` | **Real-time path.** ~5h45m per run; on a clean finish each run dispatches the next (`Start next run` step), hourly cron is only a fallback (concurrency group queues them). Polls LinkedIn every 90s, last ~15 min, `setting_fast_keywords` × `setting_fast_locations`; scores new jobs with Groq; Telegram alert. Heartbeat in `bot_state.fastlane_cloud_heartbeat`, catch-up state in `fastlane_cloud_last_ok`. |
+| Fast Lane (cloud) | `.github/workflows/fastlane-cloud.yml` → `cloud/fastlane.py --cloud --loop 90 --duration 20700` | **Real-time path.** ~5h45m per run; on a clean finish each run dispatches the next (`Start next run` step), hourly cron is only a fallback (concurrency group queues them). Polls LinkedIn every 90s, last ~60 min (`WINDOW_SECONDS`), `setting_fast_keywords` × `setting_fast_locations`; scores new jobs with Groq; Telegram alert. Heartbeat in `bot_state.fastlane_cloud_heartbeat`, catch-up state in `fastlane_cloud_last_ok`. |
 | Job Alert Scan | `job-alert.yml` → `cloud/worker.py` | Full scan of all keywords × locations (~20 min, timeout 25). Cron `*/5` but GitHub only runs it every ~4–7h. Newest-first (`setting_li_sort_recent`). |
 | Job Enricher | `enricher.yml` → `cloud/enricher.py --prefer-cloud` | Groq scoring (`openai/gpt-oss-120b`). |
 | user-alerts / Daily Digest / health-check / cleanup | workflows of same name | Per-user alerts need service key (GitHub only). |
@@ -84,3 +84,7 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-10: GitHub skipped every hourly fast-lane cron and the 12:15/15:15
   gap-monitor crons, so fast-lane runs now self-dispatch their successor; the
   gap-fixer dispatches Gap Monitor when its last run is >4h old.
+- 2026-10-10: Fast-lane window 15 → 60 min: with f_TPR=r900 only ~1 of 34
+  queries returned anything, and UAE jobs matching fast keywords (posted while
+  the fast lane ran) were only caught by the next main scan, because LinkedIn
+  lists jobs in search later than their posting time.

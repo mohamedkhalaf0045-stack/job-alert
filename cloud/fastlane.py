@@ -41,9 +41,11 @@ DEFAULT_KEYWORDS = [
 ]
 DEFAULT_LOCATIONS = ["United Arab Emirates", "Egypt"]
 
-# Look back 15 min every cycle. Overlap between cycles is harmless: db.sync_jobs
-# only reports jobs it hasn't stored before, so each job is scored/alerted once.
-WINDOW_SECONDS = 900
+# Look back 60 min every cycle. LinkedIn often lists a job in search well after
+# its posting time, so a 15-min window (f_TPR=r900) never saw those jobs at all.
+# Overlap between cycles is harmless: db.sync_jobs only reports jobs it hasn't
+# stored before, so each job is scored/alerted once.
+WINDOW_SECONDS = 3600
 
 # After downtime (PC off, network down) widen the look-back to cover the gap,
 # up to this cap, so jobs posted while we were away are still picked up.
@@ -129,7 +131,7 @@ def _read_last_ok(url: str, key: str) -> float | None:
 
 
 def _window_seconds(url: str = "", key: str = "") -> int:
-    """Look-back window: 15 min normally, wider if the last good cycle was long ago."""
+    """Look-back window: 60 min normally, wider if the last good cycle was long ago."""
     last = _read_last_ok(url, key)
     if last is None:
         return WINDOW_SECONDS
