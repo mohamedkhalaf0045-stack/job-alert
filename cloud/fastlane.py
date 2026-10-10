@@ -180,6 +180,7 @@ def run_cycle() -> int:
     t0 = time.time()
     found: dict[str, dict] = {}
     ok_queries = 0
+    errors: list[str] = []
     for kw in keywords:
         for loc in locations:
             try:
@@ -191,6 +192,7 @@ def run_cycle() -> int:
                     ok_queries += 1   # empty may mean blocked, so it doesn't count
             except Exception as exc:
                 _log(f"scrape error '{kw}' / '{loc}': {exc}")
+                errors.append(f"{type(exc).__name__}: {exc}"[:300])
                 continue
             jobs = [j for j in jobs if not relevance_engine.is_nationals_only(j)]
             jobs, _dropped = engine.filter_jobs(jobs, log_prefix=f"fast '{kw}'")
@@ -202,7 +204,8 @@ def run_cycle() -> int:
         _mark_ok(url, key)
     beat = {"at": datetime.utcnow().isoformat() + "Z", "window_min": window // 60,
             "queries": len(keywords) * len(locations), "nonempty_queries": ok_queries,
-            "matched": len(found), "new": 0, "scan_secs": round(time.time() - t0)}
+            "matched": len(found), "new": 0, "scan_secs": round(time.time() - t0),
+            "errors": len(errors), "first_error": errors[0] if errors else ""}
     if not found:
         _heartbeat(url, key, beat)
         _log(f"no matching postings in the last {window // 60} min "
