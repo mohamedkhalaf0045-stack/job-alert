@@ -110,17 +110,35 @@ def _last_ok_file() -> Path:
     return _STATE_DIR / "fastlane_last_ok.txt"
 
 
-def _window_seconds() -> int:
-    """Look-back window: 15 min normally, wider if the last good cycle was long ago."""
+# Cloud mode (GitHub Actions): score with Groq instead of local Ollama, and keep
+# the last-good-cycle time in bot_state because the runner's disk is wiped.
+_CLOUD = False
+_CLOUD_STATE_KEY = "fastlane_cloud_last_ok"
+
+
+def _read_last_ok(url: str, key: str) -> float | None:
     try:
-        since = time.time() - float(_last_ok_file().read_text().strip())
+        if _CLOUD:
+            return float(db.get_config(url, key, _CLOUD_STATE_KEY, ""))
+        return float(_last_ok_file().read_text().strip())
     except Exception:
+        return None
+
+
+def _window_seconds(url: str = "", key: str = "") -> int:
+    """Look-back window: 15 min normally, wider if the last good cycle was long ago."""
+    last = _read_last_ok(url, key)
+    if last is None:
         return WINDOW_SECONDS
+    since = time.time() - last
     return int(min(max(since + 300, WINDOW_SECONDS), MAX_CATCHUP_SECONDS))
 
 
-def _mark_ok() -> None:
+def _mark_ok(url: str = "", key: str = "") -> None:
     try:
+        if _CLOUD:
+            db.set_config(url, key, _CLOUD_STATE_KEY, str(time.time()))
+            return
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         _last_ok_file().write_text(str(time.time()))
     except Exception:
@@ -145,7 +163,7 @@ def run_cycle() -> int:
         _log(f"RelevanceEngine load failed ({exc}) - keyword-only fallback")
         engine = relevance_engine.RelevanceEngine(keywords, set(), set(), set())
 
-    window = _window_seconds()
+    window = _window_seconds(url, key)
     pages = 1 if window <= WINDOW_SECONDS * 2 else 3
     if window > WINDOW_SECONDS:
         _log(f"catch-up: looking back {window // 60} min ({pages} page(s)/query)")
@@ -171,7 +189,7 @@ def run_cycle() -> int:
             time.sleep(0.4)
 
     if ok_queries:
-        _mark_ok()
+        _mark_ok(url, key)
     if not found:
         _log(f"no matching postings in the last {window // 60} min "
              f"({len(keywords) * len(locations)} queries, {time.time() - t0:.0f}s)")
@@ -184,7 +202,7 @@ def run_cycle() -> int:
          f"(scan {time.time() - t0:.0f}s)")
     if not new_ids:
         return 0
-    if not _ensure_ollama():
+    if not _CLOUD and not _ensure_ollama():
         # Jobs are stored unscored; the normal pipeline will pick them up later.
         return len(new_ids)
 
@@ -194,6 +212,8 @@ def run_cycle() -> int:
         python = python[:-len("pythonw.exe")] + "python.exe"
     cmd = [python, os.path.join(_DIR, "enricher.py"),
            "--job-ids", ",".join(new_ids), "--alert"]
+    if _CLOUD:
+        cmd.append("--prefer-cloud")   # Groq; GROQ_API_KEY comes from the env
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
@@ -222,29 +242,40 @@ def _acquire_single_instance():
 
 
 def main() -> None:
+    global _CLOUD
     parser = argparse.ArgumentParser(description="Fast-lane job alerts")
     parser.add_argument("--loop", type=int, default=0,
                         help="Run forever, one cycle every N seconds (0 = single cycle)")
+    parser.add_argument("--cloud", action="store_true",
+                        help="GitHub Actions mode: Groq scoring, state in bot_state, log to stdout")
+    parser.add_argument("--duration", type=int, default=0,
+                        help="With --loop: stop after this many seconds (0 = forever)")
     args = parser.parse_args()
+    _CLOUD = args.cloud
 
     if not args.loop:
         run_cycle()
         return
 
-    lock = _acquire_single_instance()
-    if lock is None:
-        return
-    _STATE_DIR.mkdir(parents=True, exist_ok=True)
-    log = open(_STATE_DIR / "fastlane.log", "a", encoding="utf-8", buffering=1)
-    sys.stdout = sys.stderr = log
-    _log(f"fast lane started (cycle every {args.loop}s, window {WINDOW_SECONDS // 60} min)")
-    while True:
+    if not _CLOUD:
+        lock = _acquire_single_instance()
+        if lock is None:
+            return
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        log = open(_STATE_DIR / "fastlane.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
+    deadline = time.time() + args.duration if args.duration else float("inf")
+    _log(f"fast lane started ({'cloud' if _CLOUD else 'local'}, cycle every {args.loop}s, "
+         f"window {WINDOW_SECONDS // 60} min"
+         + (f", stopping after {args.duration // 60} min)" if args.duration else ")"))
+    while time.time() < deadline:
         started = time.time()
         try:
             run_cycle()
         except Exception as exc:
             _log(f"cycle error: {exc}")
-        time.sleep(max(5, args.loop - (time.time() - started)))
+        time.sleep(max(5, min(args.loop - (time.time() - started), deadline - time.time())))
+    _log("fast lane stopping (duration reached)")
 
 
 if __name__ == "__main__":

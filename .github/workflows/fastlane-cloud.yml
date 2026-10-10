@@ -1,0 +1,48 @@
+name: Fast Lane (cloud)
+
+# Polls LinkedIn every 90 s for jobs posted in the last ~15 min, scores only the
+# new ones with Groq and sends the Telegram alert - same as the local fast lane,
+# but without needing the owner's PC. Each run lives ~5h45m (GitHub's job limit
+# is 6h); the hourly cron starts the next one, and the concurrency group queues
+# it so runs hand over instead of overlapping. GitHub delays schedules, so a
+# hand-over gap can happen; the fast lane widens its look-back to cover it.
+
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: fastlane-cloud
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  fastlane:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r cloud/requirements.txt
+
+      - name: Run fast lane
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          LINKEDIN_COOKIE:    ${{ secrets.LINKEDIN_COOKIE }}
+          LINKEDIN_PROXY:     ${{ secrets.LINKEDIN_PROXY || vars.LINKEDIN_PROXY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONUNBUFFERED:   '1'
+        run: python cloud/fastlane.py --cloud --loop 90 --duration 20700
