@@ -3,9 +3,11 @@ name: Fast Lane (cloud)
 # Polls LinkedIn every 90 s for jobs posted in the last ~15 min, scores only the
 # new ones with Groq and sends the Telegram alert - same as the local fast lane,
 # but without needing the owner's PC. Each run lives ~5h45m (GitHub's job limit
-# is 6h); the hourly cron starts the next one, and the concurrency group queues
-# it so runs hand over instead of overlapping. GitHub delays schedules, so a
-# hand-over gap can happen; the fast lane widens its look-back to cover it.
+# is 6h). When a run finishes normally it dispatches the next one itself,
+# because GitHub often skips the hourly cron for hours; the cron stays as a
+# fallback (e.g. after a crash). The concurrency group queues runs so they hand
+# over instead of overlapping, and the fast lane widens its look-back to cover
+# any hand-over gap.
 
 on:
   schedule:
@@ -15,6 +17,10 @@ on:
 concurrency:
   group: fastlane-cloud
   cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write   # dispatch the next run
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -46,3 +52,10 @@ jobs:
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONUNBUFFERED:   '1'
         run: python cloud/fastlane.py --cloud --loop 90 --duration 20700
+
+      # Only after a clean finish, so a crashing run can't chain into a loop.
+      - name: Start next run
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run fastlane-cloud.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
