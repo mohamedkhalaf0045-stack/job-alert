@@ -3,6 +3,15 @@
 Full context is in the `/job-alert` skill: `~/.claude/skills/job-alert/SKILL.md`
 Invoke with `/job-alert` at the start of any session to load all project knowledge.
 
+## Memory
+
+Project memory (current architecture, owner rules, open issues, decisions):
+@docs/MEMORY.md
+
+Read it at the start of every session. Before ending a session that changed
+behaviour, settings or decisions, update `docs/MEMORY.md` in the same commit.
+The repo is public: never write secrets or personal data there.
+
 ## Quick Reference
 
 **Stack:** Next.js 14 App Router + Python scrapers + Supabase + GitHub Actions
