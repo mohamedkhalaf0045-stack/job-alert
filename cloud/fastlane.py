@@ -145,6 +145,16 @@ def _mark_ok(url: str = "", key: str = "") -> None:
         pass
 
 
+def _heartbeat(url: str, key: str, beat: dict) -> None:
+    """Cloud mode only: last cycle's stats in bot_state (Actions logs aren't easy to reach)."""
+    if not _CLOUD:
+        return
+    try:
+        db.set_config(url, key, "fastlane_cloud_heartbeat", json.dumps(beat))
+    except Exception:
+        pass
+
+
 def run_cycle() -> int:
     """One poll -> insert -> score -> alert pass. Returns number of new jobs."""
     url    = _cfg("SUPABASE_URL", "SupabaseUrl")
@@ -190,7 +200,11 @@ def run_cycle() -> int:
 
     if ok_queries:
         _mark_ok(url, key)
+    beat = {"at": datetime.utcnow().isoformat() + "Z", "window_min": window // 60,
+            "queries": len(keywords) * len(locations), "nonempty_queries": ok_queries,
+            "matched": len(found), "new": 0, "scan_secs": round(time.time() - t0)}
     if not found:
+        _heartbeat(url, key, beat)
         _log(f"no matching postings in the last {window // 60} min "
              f"({len(keywords) * len(locations)} queries, {time.time() - t0:.0f}s)")
         return 0
@@ -198,6 +212,8 @@ def run_cycle() -> int:
     summary = db.sync_jobs(url, key, list(found.values()), source="LinkedIn")
     new_ids = [db._job_id(j) for j in summary.get("new_jobs", [])]
     new_ids = [i for i in dict.fromkeys(new_ids) if i]
+    beat["new"] = len(new_ids)
+    _heartbeat(url, key, beat)
     _log(f"{len(found)} matching posting(s), {len(new_ids)} new "
          f"(scan {time.time() - t0:.0f}s)")
     if not new_ids:
