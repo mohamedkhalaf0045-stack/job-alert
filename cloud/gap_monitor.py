@@ -168,8 +168,12 @@ def _scan_runs(hours: int) -> list[dict]:
 
 
 def _scan_coverage(posted: datetime, collected: datetime, runs: list[dict]) -> tuple[int, str]:
-    """Successful scans that finished after posting and before we got the job."""
-    window = [x for x in runs if x["end"] >= posted and x["start"] <= collected]
+    """Successful scans that finished after posting and before we got the job.
+
+    The run that collected the job ends after `collected`, so it is excluded:
+    it found the job on its first chance and is not a missed pass.
+    """
+    window = [x for x in runs if posted <= x["end"] < collected]
     ok = [x for x in window if x["conclusion"] == "success"]
     bad: dict[str, int] = {}
     for x in window:
