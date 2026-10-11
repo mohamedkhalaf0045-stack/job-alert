@@ -100,3 +100,8 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   lists jobs in search later than their posting time.
 - 2026-10-11: Issue #9 closed: no new >1h detections in the 3 gap-monitor runs
   after the 60-min window; fast-lane self-handover confirmed (22:08, 03:53).
+- 2026-10-11: Issue #10 closed (not fixable): 5 UAE/Egypt jobs surfaced in
+  LinkedIn search 6-28h after their stated posting time (several 24h-window main
+  scans missed them, then one scan found all 5). Median LinkedIn lag is now 0.0h.
+  Pattern to recognise: many jobs first collected by the same scan + earlier
+  scans in the window = LinkedIn late listing, not our miss.
