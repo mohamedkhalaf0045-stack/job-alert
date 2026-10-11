@@ -1198,7 +1198,21 @@ def main() -> None:
                 dismissed += 1
                 continue
 
-        description = li.fetch_job_description(job.get("url", ""), cookie)
+        description, closed = li.fetch_job_details(job.get("url", ""), cookie)
+        skip_reason = ""
+        if closed:
+            skip_reason = "Skipped — LinkedIn: no longer accepting applications"
+        elif relevance_engine.is_template_scam(description):
+            skip_reason = "Skipped — suspected fake listing (mass-posted template)"
+        if skip_reason:
+            _log(f"          {skip_reason}")
+            db.update_job_enrichment(
+                supabase_url, supabase_key,
+                job["job_id"], (description or "")[:500], score=0,
+                summary=skip_reason, min_score=1,
+            )
+            dismissed += 1
+            continue
         if description:
             _log(f"          Description: {len(description)} chars")
             # Secondary check: restriction may be buried in the description body

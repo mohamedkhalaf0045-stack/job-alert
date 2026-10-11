@@ -437,6 +437,22 @@ _NATIONALS_ONLY = re.compile(
 )
 
 
+# Mass-posted fake listings (2026-10): dozens of unrelated "companies" (magazines,
+# real-estate firms, law centres...) post IT roles with the same generated text:
+# "Role Description This part-time, remote role ..." / "... part-time, hybrid
+# role based in <city>, with some work-from-home flexibility". LinkedIn removes
+# them within hours, so they reach the user as expired links.
+_TEMPLATE_SCAM_HEAD = re.compile(r"^\s*Role Description\b", re.I)
+_TEMPLATE_SCAM_BODY = re.compile(
+    r"\bpart-time\b.{0,80}\b(remote|hybrid)\b|work-from-home flexibility", re.I | re.S)
+
+
+def is_template_scam(description: str) -> bool:
+    """True for the mass-posted generated-template listings described above."""
+    head = (description or "")[:400]
+    return bool(_TEMPLATE_SCAM_HEAD.search(head) and _TEMPLATE_SCAM_BODY.search(head))
+
+
 def is_nationals_only(job: dict) -> bool:
     """Return True if the job is restricted to nationals / citizens.
 

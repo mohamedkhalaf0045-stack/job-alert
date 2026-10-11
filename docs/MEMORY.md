@@ -8,7 +8,7 @@ infrastructure or decisions, update the relevant section here and commit it with
 the work. Prune stale lines instead of only appending. This repo is **public**:
 never write secrets, tokens, chat IDs, emails or personal data here.
 
-Last updated: 2026-10-10
+Last updated: 2026-10-11
 
 ## Owner rules and preferences
 - **1-hour rule:** any LinkedIn job detected more than 1h after posting is a bug
@@ -58,6 +58,14 @@ Last updated: 2026-10-10
 - Unverified on PC: "multiple PowerShell windows popping up" report; first local
   pipeline run after the 2026-10-07 stdin-freeze fix.
 
+## Job quality filters
+- Enricher skips (score 0, no alert) jobs LinkedIn marks "No longer accepting
+  applications" (`linkedin.fetch_job_details`) and mass-posted fake listings
+  (`relevance_engine.is_template_scam`: description starts "Role Description" +
+  "part-time ... remote/hybrid" / "work-from-home flexibility"). Added 2026-10-11:
+  ~11% of alerts over 14 days were this template (44 different fake "companies"),
+  which LinkedIn removes within hours → owner saw them as expired links. Not a block.
+
 ## Planned work (not started)
 Code cleanup plan (owner asked for plan first): stage 0 inventory → 1 tidy root
 (docs/, dead files like empty `gh`, `check_scores.py`, tracked `tsbuildinfo`) →
@@ -81,6 +89,8 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-08: Gap monitor built; 1h rule; newest-first scan; fast-lane catch-up.
 - 2026-10-10: Cloud fast lane added (fixes GitHub cron throttling); BOM fix;
   gap-fixer moved to persistent session; fast keywords expanded to 17.
+- 2026-10-11: "expired" alerts traced to fake template listings; enricher now
+  skips them and closed postings.
 - 2026-10-10: GitHub skipped every hourly fast-lane cron and the 12:15/15:15
   gap-monitor crons, so fast-lane runs now self-dispatch their successor; the
   gap-fixer dispatches Gap Monitor when its last run is >4h old.

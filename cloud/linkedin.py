@@ -220,6 +220,23 @@ def _parse_cards(html_text: str, keyword: str) -> list[dict]:
     return jobs
 
 
+_CLOSED_RE = re.compile(r"no longer accepting applications|closed-job", re.I)
+
+
+def fetch_job_details(job_url: str, cookie_header: str = "") -> tuple[str, bool]:
+    """(description, closed) for a job URL. `closed` is True when LinkedIn marks
+    the posting "No longer accepting applications" (filled, removed or expired)."""
+    m = re.search(r"/(?:view|jobs/view)/(\d+)", job_url or "")
+    if "linkedin.com" not in (job_url or "").lower() or not m:
+        return fetch_job_description(job_url, cookie_header), False
+    html_text = _fetch(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}",
+                       cookie_header) or ""
+    desc_m = re.search(r'class="show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>',
+                       html_text, re.DOTALL)
+    desc = _plain_text(desc_m.group(1) if desc_m else html_text)[:3000] if html_text else ""
+    return desc, bool(_CLOSED_RE.search(html_text))
+
+
 def fetch_job_description(job_url: str, cookie_header: str = "") -> str:
     """Fetch the full description text for a single job URL.
 
