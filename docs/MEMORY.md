@@ -29,7 +29,7 @@ Last updated: 2026-10-10
 | Job Alert Scan | `job-alert.yml` → `cloud/worker.py` | Full scan of all keywords × locations (~20 min, timeout 25). Cron `*/5` but GitHub only runs it every ~4–7h. Newest-first (`setting_li_sort_recent`). |
 | Job Enricher | `enricher.yml` → `cloud/enricher.py --prefer-cloud` | Groq scoring (`openai/gpt-oss-120b`). |
 | user-alerts / Daily Digest / health-check / cleanup | workflows of same name | Per-user alerts need service key (GitHub only). |
-| Gap Monitor | `gap-monitor.yml` → `cloud/gap_monitor.py --auto-fix` | Every 3h at :15 UTC. Flags LinkedIn jobs with 1h < lag ≤ 72h once (`bot_state.gap_monitor_handled`), auto-adds safe keywords, writes `gap_monitor_last` + `linkedin_health`, opens/updates GitHub issue labeled `gap-monitor` (#9). |
+| Gap Monitor | `gap-monitor.yml` → `cloud/gap_monitor.py --auto-fix` | Every 3h at :15 UTC. Flags LinkedIn jobs with 1h < lag ≤ 72h once (`bot_state.gap_monitor_handled`), auto-adds safe keywords, writes `gap_monitor_last` + `linkedin_health`, opens/updates GitHub issue labeled `gap-monitor` (#9 closed 2026-10-11 after 3 clean runs; a new one opens if gaps return). |
 | Gap-fixer routine | Claude routine `Gap monitor: find cause and fix late jobs`, every 3h at :20 UTC, posts into the persistent "Gap fixer (job-alert)" session (repo attached) | Reads the issue, finds root cause, fixes, comments/closes. Its prompt can only be edited from that session. Old routine "[OLD - no repo access]" is disabled. |
 | Local Windows worker | `linkedin-job-worker.ps1` on owner's PC | Runs worker/enricher/user_alerts; uses local Ollama. Only while PC is on. |
 | Local fast lane | `cloud/fastlane.py --loop 90` via `Start-FastLane-Hidden.vbs` startup shortcut | Ollama scoring; widens look-back after downtime. |
@@ -88,3 +88,5 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   queries returned anything, and UAE jobs matching fast keywords (posted while
   the fast lane ran) were only caught by the next main scan, because LinkedIn
   lists jobs in search later than their posting time.
+- 2026-10-11: Issue #9 closed: no new >1h detections in the 3 gap-monitor runs
+  after the 60-min window; fast-lane self-handover confirmed (22:08, 03:53).
