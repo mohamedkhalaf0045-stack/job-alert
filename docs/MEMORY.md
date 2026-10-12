@@ -40,6 +40,8 @@ Last updated: 2026-10-11
 - `setting_keywords`: 25 scan keywords (incl. IT Engineer, IT Officer, IT Executive,
   IT Service Delivery, System Engineer, Cloud Security Engineer added 2026-10-08).
 - `setting_fast_keywords`: 17 keywords (set 2026-10-10; the 8 defaults missed many titles).
+- `setting_fast_locations`: not set, so the code default applies: UAE, Egypt, Oman
+  (Oman added 2026-10-12 to match `setting_location`; 17 x 3 = 51 queries/cycle).
 - `setting_llm_min_score` = 5 (owner was asked about raising to 6; unanswered).
 - `setting_alert_max_age_hours` = 24 (default).
 
@@ -105,3 +107,7 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   scans missed them, then one scan found all 5). Median LinkedIn lag is now 0.0h.
   Pattern to recognise: many jobs first collected by the same scan + earlier
   scans in the window = LinkedIn late listing, not our miss.
+- 2026-10-12: Issue #11: fast lane default locations += Oman (an Oman job waited
+  for the main scan). 2 jobs were LinkedIn late listings (5 earlier scans missed);
+  "Front Desk ... Customer Service" (not IT) and a German-language Service Desk
+  job were loose keyword matches, not misses.

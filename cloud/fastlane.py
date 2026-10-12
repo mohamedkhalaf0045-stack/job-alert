@@ -13,7 +13,7 @@ alert for the ones that score KEEP. Nothing is sent unscored.
 
 Config (bot_state, comma separated; defaults below):
     setting_fast_keywords    e.g. "IT Support,Help Desk,System Administrator"
-    setting_fast_locations   e.g. "United Arab Emirates,Egypt"
+    setting_fast_locations   e.g. "United Arab Emirates,Egypt,Oman"
 Credentials come from env vars or settings.json (SupabaseUrl, SupabaseKey,
 LinkedInCookie; the enricher reads the Telegram token/chat from the same place).
 """
@@ -39,7 +39,9 @@ DEFAULT_KEYWORDS = [
     "IT Support", "IT Helpdesk", "Help Desk", "System Administrator",
     "IT Infrastructure", "Desktop Support", "IT Administrator", "Network Engineer",
 ]
-DEFAULT_LOCATIONS = ["United Arab Emirates", "Egypt"]
+# Oman matches the main scan's setting_location; without it Oman jobs waited for
+# the next (throttled) main scan.
+DEFAULT_LOCATIONS = ["United Arab Emirates", "Egypt", "Oman"]
 
 # Look back 60 min every cycle. LinkedIn often lists a job in search well after
 # its posting time, so a 15-min window (f_TPR=r900) never saw those jobs at all.
