@@ -39,9 +39,10 @@ Last updated: 2026-10-11
 ## Key settings (bot_state)
 - `setting_keywords`: 25 scan keywords (incl. IT Engineer, IT Officer, IT Executive,
   IT Service Delivery, System Engineer, Cloud Security Engineer added 2026-10-08).
-- `setting_fast_keywords`: 17 keywords (set 2026-10-10; the 8 defaults missed many titles).
+- `setting_fast_keywords`: 18 keywords (17 set 2026-10-10; `Information Security` added 2026-10-14
+  at the owner's request).
 - `setting_fast_locations`: not set, so the code default applies: UAE, Egypt, Oman
-  (Oman added 2026-10-12 to match `setting_location`; 17 x 3 = 51 queries/cycle).
+  (Oman added 2026-10-12 to match `setting_location`; 18 x 3 = 54 queries/cycle).
 - `setting_llm_min_score` = 5 (owner was asked about raising to 6; unanswered).
 - `setting_alert_max_age_hours` = 24 (default).
 
@@ -111,3 +112,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   for the main scan). 2 jobs were LinkedIn late listings (5 earlier scans missed);
   "Front Desk ... Customer Service" (not IT) and a German-language Service Desk
   job were loose keyword matches, not misses.
+- 2026-10-14: Owner approved adding `Information Security` to fast keywords (issue #15).
