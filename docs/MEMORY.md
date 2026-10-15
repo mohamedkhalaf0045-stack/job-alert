@@ -8,7 +8,7 @@ infrastructure or decisions, update the relevant section here and commit it with
 the work. Prune stale lines instead of only appending. This repo is **public**:
 never write secrets, tokens, chat IDs, emails or personal data here.
 
-Last updated: 2026-10-11
+Last updated: 2026-10-15
 
 ## Owner rules and preferences
 - **1-hour rule:** any LinkedIn job detected more than 1h after posting is a bug
@@ -113,3 +113,6 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   "Front Desk ... Customer Service" (not IT) and a German-language Service Desk
   job were loose keyword matches, not misses.
 - 2026-10-14: Owner approved adding `Information Security` to fast keywords (issue #15).
+- 2026-10-15: Issue #18 closed (not fixable): 3 UAE jobs reached us only through LinkedIn job-alert
+  emails (Gmail/LinkedIn); the fast lane and 4-5 main scans never got them from guest search. 1
+  more was listed in search >1h after posting. The fast lane was running and covered all 4.
