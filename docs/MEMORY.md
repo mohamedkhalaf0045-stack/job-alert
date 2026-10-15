@@ -116,3 +116,5 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-15: Issue #18 closed (not fixable): 3 UAE jobs reached us only through LinkedIn job-alert
   emails (Gmail/LinkedIn); the fast lane and 4-5 main scans never got them from guest search. 1
   more was listed in search >1h after posting. The fast lane was running and covered all 4.
+- 2026-10-15: Issue #19 closed: 3 non-fast-keyword UAE jobs (Enterprise Architect, Accounts
+  Receivable, Front Desk) waited for the throttled main scan (05:24 → 09:47). Not a fast-lane miss.
