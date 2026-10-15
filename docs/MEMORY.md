@@ -118,3 +118,5 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   more was listed in search >1h after posting. The fast lane was running and covered all 4.
 - 2026-10-15: Issue #19 closed: 3 non-fast-keyword UAE jobs (Enterprise Architect, Accounts
   Receivable, Front Desk) waited for the throttled main scan (05:24 → 09:47). Not a fast-lane miss.
+- 2026-10-15: Issue #20 closed: 3 more email-only late listings (as #18), 1 Cairo late listing,
+  3 non-fast-keyword titles waiting for the main scan. Email-only late listings now recur every day.
