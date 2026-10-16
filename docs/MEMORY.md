@@ -120,3 +120,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   Receivable, Front Desk) waited for the throttled main scan (05:24 → 09:47). Not a fast-lane miss.
 - 2026-10-15: Issue #20 closed: 3 more email-only late listings (as #18), 1 Cairo late listing,
   3 non-fast-keyword titles waiting for the main scan. Email-only late listings now recur every day.
+- 2026-10-15: Issue #21 closed: 1 email-only late listing + 2 Cairo finance jobs waiting for the main scan.
