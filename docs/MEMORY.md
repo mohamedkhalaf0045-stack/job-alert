@@ -122,3 +122,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
   3 non-fast-keyword titles waiting for the main scan. Email-only late listings now recur every day.
 - 2026-10-15: Issue #21 closed: 1 email-only late listing + 2 Cairo finance jobs waiting for the main scan.
 - 2026-10-16: Issue #22 closed: 4 more email-only late listings (UAE/Cairo); auto-added keyword `Technology Service Desk`.
+- 2026-10-16: Issue #23 closed: email-only `IT Specialist` job (keyword auto-added to scan keywords) + 1 finance late listing.
