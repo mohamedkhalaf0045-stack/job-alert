@@ -124,3 +124,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-16: Issue #22 closed: 4 more email-only late listings (UAE/Cairo); auto-added keyword `Technology Service Desk`.
 - 2026-10-16: Issue #23 closed: email-only `IT Specialist` job (keyword auto-added to scan keywords) + 1 finance late listing.
 - 2026-10-16: Issue #24 closed: 3 LinkedIn late listings (loose IT/Network Engineer matches).
+- 2026-10-17: Issue #25 closed: 7 LinkedIn late listings (4-8 scans missed each), mostly loose IT Engineer matches.
