@@ -126,3 +126,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-16: Issue #24 closed: 3 LinkedIn late listings (loose IT/Network Engineer matches).
 - 2026-10-17: Issue #25 closed: 7 LinkedIn late listings (4-8 scans missed each), mostly loose IT Engineer matches.
 - 2026-10-17: Issue #26 closed: 1 LinkedIn late listing (Help Desk Assistant, 6 scans missed).
+- 2026-10-17: Issue #27 closed: 1 LinkedIn late listing (Senior Technical Support Engineer, 8 scans missed).
