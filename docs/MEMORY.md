@@ -130,3 +130,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-18: Issue #28 closed: 1 LinkedIn late listing (HR Systems Administrator, not IT; 10 scans missed).
 - 2026-10-18: Issue #29 closed: 5 LinkedIn late listings (7-9 scans missed each); IT Manager keyword_gap left alone (owner rule).
 - 2026-10-19: Issue #30 closed: 5 non-target titles (manager, C++, finance, instructor) waited for a 7h main-scan gap.
+- 2026-10-20: Issue #31 closed: 4 LinkedIn late listings (loose IT Engineer / reposted) + 1 finance job waiting for the main scan.
