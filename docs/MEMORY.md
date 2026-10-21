@@ -134,3 +134,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-20: Issue #32 closed: 5 LinkedIn late listings (5-6 scans missed) + 3 finance jobs waiting for the main scan.
 - 2026-10-20: Issue #33 closed: 13 LinkedIn late listings (4-6 scans missed, mostly loose IT Engineer) + 6 finance jobs waiting for the main scan.
 - 2026-10-21: Issue #34 closed: 1 LinkedIn late listing (Technical Solution Architect, 7 scans missed).
+- 2026-10-21: Issue #35 closed: 2 LinkedIn late listings + 1 email-only IT Administrator job (keyword auto-added to scan keywords).
