@@ -140,3 +140,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-22: Issue #38 closed: 9 LinkedIn late listings (4-7 scans missed, IT Officer/Support/Engineer) + IT Project Manager keyword_gap left alone.
 - 2026-10-22: Issue #39 closed: 2 LinkedIn late listings (Assistant Manager cloud/infra, Accounts Payable); no fix needed.
 - 2026-10-22: Issue #40 closed: 2 LinkedIn late listings (Infrastructure System Engineer 6 scans missed, Cloud Engineer).
+- 2026-10-23: Issue #41 closed: 3 LinkedIn late listings (Solutions Architect, Accounts Payable, Database Administrator; 2-3 scans missed).
