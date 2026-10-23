@@ -144,3 +144,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-23: Issue #42 closed: 2 LinkedIn late listings (Senior Network Engineer, IT Specialist; 3 scans missed).
 - 2026-10-23: Issue #43 closed: 4 LinkedIn late listings, 2 manager titles left alone, finance + Cyber Security Engineer waiting for the main scan. Proposed adding `Cyber Security` to fast keywords (owner decision).
 - 2026-10-23: Issue #44 closed: 9 LinkedIn late listings (1-6 scans missed; loose IT Engineer/Infrastructure matches, 3 Azure posts in one batch).
+- 2026-10-23: Issue #45 closed: 2 LinkedIn late listings (IT System Administrator 6 scans missed, IT Sales Specialist).
