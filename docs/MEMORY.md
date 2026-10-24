@@ -147,3 +147,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-23: Issue #45 closed: 2 LinkedIn late listings (IT System Administrator 6 scans missed, IT Sales Specialist).
 - 2026-10-24: Issue #46 closed: 1 LinkedIn late listing (Accounts Payable, 3 scans missed).
 - 2026-10-24: Issue #47 closed: 3 LinkedIn late listings + 1 System Administrator at 1.1h (fast keyword, fast lane running; borderline, watch for repeats).
+- 2026-10-24: Issue #48 closed: 1 finance repost (Accounts Payable Supervisor) listed late; no fix.
