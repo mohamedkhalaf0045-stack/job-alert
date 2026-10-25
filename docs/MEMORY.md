@@ -150,3 +150,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-24: Issue #48 closed: 1 finance repost (Accounts Payable Supervisor) listed late; no fix.
 - 2026-10-24: Issue #49 closed: 3 LinkedIn late listings, 2 email-only keyword_gaps (manager title; one-word Technician, not added), 1 finance job waiting for the main scan.
 - 2026-10-25: Issue #50 closed: 3 LinkedIn late listings (3-8 scans missed) + IT Manager keyword_gap left alone.
+- 2026-10-25: Issue #51 closed: finance + Senior Cloud Engineer (Egypt) waited for a 5h main-scan gap. Proposed adding `Cloud Engineer` to fast keywords (owner decision).
