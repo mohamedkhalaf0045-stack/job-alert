@@ -157,3 +157,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-26: Owner chose proxy for the main scan only; removed LINKEDIN_PROXY from fastlane-cloud.yml to keep a residential proxy at ~1-3 GB/month.
 - 2026-10-26: Issue #52 closed: 2 LinkedIn late listings (one probe_blocked single empty probe) + Executive IT Specialist at 1.0h (borderline, 2nd case after #47).
 - 2026-10-26: Issue #53 closed: 3 LinkedIn late listings (Cloud/Network Security Engineer, C++) + 1 finance job waiting for the main scan.
+- 2026-10-26: Issue #54 closed: 2 LinkedIn late listings (Cloud Support/SysAdmin 7 scans missed, Data Architect).
