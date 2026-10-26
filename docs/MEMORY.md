@@ -39,10 +39,10 @@ Last updated: 2026-10-15
 ## Key settings (bot_state)
 - `setting_keywords`: 25 scan keywords (incl. IT Engineer, IT Officer, IT Executive,
   IT Service Delivery, System Engineer, Cloud Security Engineer added 2026-10-08).
-- `setting_fast_keywords`: 18 keywords (17 set 2026-10-10; `Information Security` added 2026-10-14
-  at the owner's request).
+- `setting_fast_keywords`: 20 keywords (17 set 2026-10-10; `Information Security` added 2026-10-14;
+  `Cloud Engineer` + `Cyber Security` added 2026-10-26, all at the owner's request).
 - `setting_fast_locations`: not set, so the code default applies: UAE, Egypt, Oman
-  (Oman added 2026-10-12 to match `setting_location`; 18 x 3 = 54 queries/cycle).
+  (Oman added 2026-10-12 to match `setting_location`; 20 x 3 = 60 queries/cycle).
 - `setting_llm_min_score` = 5 (owner was asked about raising to 6; unanswered).
 - `setting_alert_max_age_hours` = 24 (default).
 
@@ -151,3 +151,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-24: Issue #49 closed: 3 LinkedIn late listings, 2 email-only keyword_gaps (manager title; one-word Technician, not added), 1 finance job waiting for the main scan.
 - 2026-10-25: Issue #50 closed: 3 LinkedIn late listings (3-8 scans missed) + IT Manager keyword_gap left alone.
 - 2026-10-25: Issue #51 closed: finance + Senior Cloud Engineer (Egypt) waited for a 5h main-scan gap. Proposed adding `Cloud Engineer` to fast keywords (owner decision).
+- 2026-10-26: Owner approved ("do it") adding `Cloud Engineer` and `Cyber Security` to fast keywords (#43, #51); written to bot_state.
