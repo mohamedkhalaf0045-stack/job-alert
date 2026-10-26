@@ -52,6 +52,8 @@ Last updated: 2026-10-15
   (`linkedin_health.proxy_info.env_len = 0`). Must be added under
   Settings → Secrets and variables → Actions → Repository secrets. Webshare
   residential recommended. LinkedIn currently answers GitHub IPs without it.
+  Since 2026-10-26 the cloud fast lane does NOT get the proxy (owner choice, cost:
+  ~58k requests/day ≈ 30-40 GB/month); main scan, enricher and gap monitor still do.
 - `LINKEDIN_COOKIE` secret starts with a BOM (U+FEFF); code strips it now. Always
   `.strip().strip("﻿")` env values used in HTTP headers.
 - RLS is disabled on `public.telegram_claude_history` (owner hasn't approved the fix).
@@ -152,3 +154,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-25: Issue #50 closed: 3 LinkedIn late listings (3-8 scans missed) + IT Manager keyword_gap left alone.
 - 2026-10-25: Issue #51 closed: finance + Senior Cloud Engineer (Egypt) waited for a 5h main-scan gap. Proposed adding `Cloud Engineer` to fast keywords (owner decision).
 - 2026-10-26: Owner approved ("do it") adding `Cloud Engineer` and `Cyber Security` to fast keywords (#43, #51); written to bot_state.
+- 2026-10-26: Owner chose proxy for the main scan only; removed LINKEDIN_PROXY from fastlane-cloud.yml to keep a residential proxy at ~1-3 GB/month.
