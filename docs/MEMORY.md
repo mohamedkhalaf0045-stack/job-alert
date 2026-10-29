@@ -165,3 +165,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-28: Issue #59 closed: 9 LinkedIn late listings (3-5 scans missed, mostly fast-keyword IT Support/System Engineer titles, one batch) + 2 email-only keyword_gaps (auto-added `Information Technology Technician`). Gap Monitor crons 08:15/11:15 skipped by GitHub.
 - 2026-10-28: Issue #60 closed: 3 LinkedIn late listings (IT Engineer/Administrator, 5 scans missed) + 3 finance jobs waiting for a 6.5h main-scan gap.
 - 2026-10-29: Issue #61 closed: 1 LinkedIn late listing (Quality Systems Engineer, non-IT loose IT Engineer match). Gap Monitor 23:15 cron skipped by GitHub.
+- 2026-10-29: Issue #62 closed: 1 LinkedIn late listing (IT Category Buyer, procurement; 3 scans missed). Gap Monitor 03:15 cron skipped by GitHub.
