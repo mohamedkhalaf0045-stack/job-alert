@@ -56,7 +56,6 @@ Last updated: 2026-10-15
   ~58k requests/day ≈ 30-40 GB/month); main scan, enricher and gap monitor still do.
 - `LINKEDIN_COOKIE` secret starts with a BOM (U+FEFF); code strips it now. Always
   `.strip().strip("﻿")` env values used in HTTP headers.
-- RLS is disabled on `public.telegram_claude_history` (owner hasn't approved the fix).
 - Local `settings.json` holds the anon key → local runs can't read profiles (RLS).
 - 2 SQL migrations were unapplied as of early Oct (check `cloud/migrations/`).
 - Google OAuth for the web app still needs Supabase dashboard config.
@@ -167,3 +166,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-29: Issue #61 closed: 1 LinkedIn late listing (Quality Systems Engineer, non-IT loose IT Engineer match). Gap Monitor 23:15 cron skipped by GitHub.
 - 2026-10-29: Issue #62 closed: 1 LinkedIn late listing (IT Category Buyer, procurement; 3 scans missed). Gap Monitor 03:15 cron skipped by GitHub.
 - 2026-10-29: Issue #63 closed: 6 email-only late listings (fast-keyword IT titles, UAE/Cairo, all collected at 12:01 from job-alert emails; 3-5 scans + fast lane never saw them in search). Gap Monitor 12:15/15:15 crons skipped.
+- 2026-11-03: Owner asked to fix the Supabase "RLS Disabled in Public" alert: RLS enabled on `telegram_claude_history` (no policies; only service_role uses it). Migration in `cloud/migrations/`. Gap-fixer runs paused since 2026-10-30 (owner said "Stop"); issue #65 still open.
