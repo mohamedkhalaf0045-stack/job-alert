@@ -6,10 +6,13 @@ Triggered by .github/workflows/easy-apply.yml with --job-id input.
 Flow:
   1. Read apply_req_{job_id} from Supabase bot_state (written by the mobile app).
   2. Open the job URL in a Playwright browser with the user's LinkedIn cookie.
-  3. Click "Easy Apply", step through all pages, fill each field from the
-     confirmed answer package.
-  4. Submit the application.
-  5. Write the result back to apply_req_{job_id} (status: done/failed).
+  3. Click "Easy Apply" and step through all pages. Every question is read
+     and answered by apply_answers: saved answers first, then built-in rules,
+     then Groq AI (GROQ_API_KEY) from the CV profile.
+  4. If a required question still has no answer, stop WITHOUT submitting and
+     report it (status: needs_input, list in "missing") so the app can ask
+     the user and retry. Otherwise submit the application.
+  5. Write the result back to apply_req_{job_id} (status: done/needs_input/failed).
   6. Update the job row to status='applied' on success.
 
 Requires:
@@ -35,6 +38,7 @@ import requests
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
+import apply_answers
 import db
 
 
@@ -46,12 +50,242 @@ def _log(msg: str) -> None:
 
 
 # ── Form-fill logic ────────────────────────────────────────────────────────────
+# Every Easy Apply page is a list of "form elements" (one question each). For
+# each one we read the label, work out the control type, and answer it with
+# apply_answers (saved answers → rules → Groq). Required questions we cannot
+# answer are reported back to the app instead of being guessed.
 
-async def _fill_easy_apply(page, answers: dict, job_url: str) -> str:
-    """Navigate to a LinkedIn job page and fill the Easy Apply form.
+_GROUP_SELECTORS = [
+    "div[data-test-form-element]",
+    ".jobs-easy-apply-form-section__grouping",
+    ".fb-dash-form-element",
+]
+_PLACEHOLDER_OPTIONS = {"select an option", "select", "choose", "please select", ""}
 
-    Returns a human-readable result string.
-    Strings starting with 'ERROR:' indicate failure.
+
+class FillState:
+    """What happened while filling the form, sent back to the app."""
+
+    def __init__(self, answers: dict, profile: str, job: dict, groq_key: str):
+        self.bank = apply_answers.build_bank(answers)
+        self.custom = apply_answers.custom_pairs(answers)
+        self.profile = profile
+        self.job = job
+        self.groq_key = groq_key
+        self.filled: list[dict] = []      # {"q", "a", "source"}
+        self.missing: list[dict] = []     # {"q", "type", "options"}
+        self._ai_cache: dict[str, str | None] = {}
+
+    def answer(self, question: str, field_type: str, options: list[str]) -> tuple[str | None, str]:
+        value, source = apply_answers.answer_for(
+            question, field_type, options, self.bank, self.custom)
+        if value is not None:
+            return value, source
+        key = f"{apply_answers.normalize(question)}|{field_type}|{'|'.join(options)}"
+        if key not in self._ai_cache:
+            self._ai_cache[key] = apply_answers.ask_groq(
+                question, field_type, options, self.profile, self.job, self.groq_key)
+        value = self._ai_cache[key]
+        return (value, "ai") if value else (None, "")
+
+    def add_missing(self, question: str, field_type: str, options: list[str]) -> None:
+        if not any(m["q"] == question for m in self.missing):
+            self.missing.append({"q": question, "type": field_type, "options": options})
+
+
+async def _clean_text(locator) -> str:
+    try:
+        text = (await locator.inner_text()).strip()
+    except Exception:
+        return ""
+    # LinkedIn renders the label twice (visible + screen-reader); keep line 1.
+    line = text.splitlines()[0] if text else ""
+    return line.replace("*", "").replace("Required", "").strip()
+
+
+async def _group_label(group) -> str:
+    # Radio groups: the question is the <legend>; their <label>s are the options.
+    for sel in ["legend span[aria-hidden='true']", "legend"]:
+        loc = group.locator(sel)
+        if await loc.count() > 0:
+            text = await _clean_text(loc.first)
+            if text:
+                return text
+    for sel in ["label","span[data-test-form-builder-radio-button-form-component__title]",
+                ".fb-dash-form-element__label", "span[aria-hidden='true']"]:
+        loc = group.locator(sel)
+        if await loc.count() > 0:
+            text = await _clean_text(loc.first)
+            if text:
+                return text
+    return await _clean_text(group)
+
+
+async def _is_required(group, control) -> bool:
+    try:
+        if await control.get_attribute("required") is not None:
+            return True
+        if (await control.get_attribute("aria-required") or "").lower() == "true":
+            return True
+        return "*" in (await group.inner_text())
+    except Exception:
+        return False
+
+
+async def _radio_options(group) -> list[tuple[str, object]]:
+    """[(label text, radio input locator)] for a radio group."""
+    out = []
+    radios = group.locator("input[type='radio']")
+    for i in range(await radios.count()):
+        radio = radios.nth(i)
+        rid = await radio.get_attribute("id")
+        text = ""
+        if rid:
+            lab = group.locator(f"label[for='{rid}']")
+            if await lab.count() > 0:
+                text = await _clean_text(lab.first)
+        if not text:
+            text = await radio.get_attribute("value") or ""
+        out.append((text, radio))
+    return out
+
+
+async def _fill_group(page, group, state: FillState) -> None:
+    """Answer one question block if it is empty."""
+    label = await _group_label(group)
+    if not label:
+        return
+
+    # ── Dropdown ──────────────────────────────────────────────────────────
+    select = group.locator("select")
+    if await select.count() > 0:
+        select = select.first
+        current = (await select.evaluate(
+            "s => s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : ''")).strip()
+        if current.lower() not in _PLACEHOLDER_OPTIONS:
+            return
+        options = [o.strip() for o in await select.locator("option").all_inner_texts()
+                   if o.strip().lower() not in _PLACEHOLDER_OPTIONS]
+        value, source = state.answer(label, "select", options)
+        if value:
+            await select.select_option(label=value)
+            state.filled.append({"q": label, "a": value, "source": source})
+        elif await _is_required(group, select):
+            state.add_missing(label, "select", options)
+        return
+
+    # ── Radio buttons ─────────────────────────────────────────────────────
+    radios = await _radio_options(group)
+    if radios:
+        for _, radio in radios:
+            if await radio.is_checked():
+                return
+        options = [text for text, _ in radios]
+        value, source = state.answer(label, "radio", options)
+        if value:
+            for text, radio in radios:
+                if text == value:
+                    rid = await radio.get_attribute("id")
+                    lab = group.locator(f"label[for='{rid}']") if rid else None
+                    if lab is not None and await lab.count() > 0:
+                        await lab.first.click()
+                    else:
+                        await radio.check(force=True)
+                    state.filled.append({"q": label, "a": value, "source": source})
+                    return
+        state.add_missing(label, "radio", options)
+        return
+
+    # ── Text area ─────────────────────────────────────────────────────────
+    area = group.locator("textarea")
+    if await area.count() > 0:
+        area = area.first
+        if (await area.input_value()).strip():
+            return
+        value, source = state.answer(label, "textarea", [])
+        if value:
+            await area.fill(value)
+            state.filled.append({"q": label, "a": value, "source": source})
+        elif await _is_required(group, area):
+            state.add_missing(label, "textarea", [])
+        return
+
+    # ── Text / number input ───────────────────────────────────────────────
+    field = group.locator(
+        "input:not([type='hidden']):not([type='file']):not([type='checkbox']):not([type='radio'])")
+    if await field.count() > 0:
+        field = field.first
+        if (await field.input_value()).strip():
+            return
+        kind = (await field.get_attribute("type") or "text").lower()
+        field_type = "number" if kind == "number" or "numeric" in (
+            await field.get_attribute("id") or "") else "text"
+        value, source = state.answer(label, field_type, [])
+        if value:
+            await field.fill(value)
+            # City / location boxes are typeaheads: pick the first suggestion.
+            if (await field.get_attribute("role") or "") == "combobox":
+                await page.wait_for_timeout(1_200)
+                option = page.locator("[role='listbox'] [role='option']")
+                if await option.count() > 0:
+                    await option.first.click()
+            state.filled.append({"q": label, "a": value, "source": source})
+        elif await _is_required(group, field):
+            state.add_missing(label, field_type, [])
+        return
+
+    # ── Required checkbox (e.g. "I confirm the information is correct") ───
+    box = group.locator("input[type='checkbox']")
+    if await box.count() > 0 and await _is_required(group, box.first):
+        if await box.first.is_checked():
+            return
+        value, source = state.answer(label, "radio", ["Yes", "No"])
+        if value == "Yes":
+            await box.first.check(force=True)
+            state.filled.append({"q": label, "a": "Yes", "source": source})
+        else:
+            state.add_missing(label, "checkbox", ["Yes", "No"])
+
+
+async def _fill_page(page, modal, state: FillState) -> None:
+    groups = None
+    for sel in _GROUP_SELECTORS:
+        loc = modal.locator(sel)
+        if await loc.count() > 0:
+            groups = loc
+            break
+    if groups is None:
+        return
+    for i in range(await groups.count()):
+        group = groups.nth(i)
+        try:
+            if not await group.is_visible():
+                continue
+            await _fill_group(page, group, state)
+        except Exception as exc:  # one odd field must not stop the run
+            _log(f"  field {i + 1}: could not fill ({exc})")
+
+
+async def _error_labels(modal) -> list[str]:
+    """Labels of questions LinkedIn marked with a validation error."""
+    out = []
+    errors = modal.locator(".artdeco-inline-feedback--error")
+    for i in range(await errors.count()):
+        err = errors.nth(i)
+        if not await err.is_visible():
+            continue
+        group = err.locator("xpath=ancestor::div[@data-test-form-element][1]")
+        if await group.count() == 0:
+            group = err.locator("xpath=ancestor::div[contains(@class,'form-element')][1]")
+        label = await _group_label(group.first) if await group.count() > 0 else ""
+        out.append(label or await _clean_text(err))
+    return out
+
+
+async def _fill_easy_apply(page, job_url: str, state: FillState) -> tuple[str, str]:
+    """Open the job, fill every Easy Apply page and submit.
+
+    Returns (status, message). status is "done", "needs_input" or "failed".
     """
     from playwright.async_api import TimeoutError as PWTimeout
 
@@ -59,11 +293,10 @@ async def _fill_easy_apply(page, answers: dict, job_url: str) -> str:
     try:
         await page.goto(job_url, wait_until="domcontentloaded", timeout=45_000)
     except PWTimeout:
-        return "ERROR: Job page timed out"
+        return "failed", "Job page timed out"
 
     await page.wait_for_timeout(2_500)
 
-    # ── Click Easy Apply button ────────────────────────────────────────────
     try:
         btn = await page.wait_for_selector(
             '.jobs-apply-button--top-card, '
@@ -75,143 +308,78 @@ async def _fill_easy_apply(page, answers: dict, job_url: str) -> str:
         await page.wait_for_timeout(2_000)
         _log("Easy Apply dialog opened")
     except PWTimeout:
-        return "ERROR: No Easy Apply button found — job may not support Easy Apply or login failed"
+        return "failed", ("No Easy Apply button found — the job may not support Easy Apply, "
+                          "it may be closed, or the LinkedIn cookie has expired")
 
-    personal    = answers.get("personal",    {})
-    experience  = answers.get("experience",  {})
-    screening   = answers.get("screening",   {})
-    open_text   = answers.get("open_text",   {})
+    modal = page.locator("div.jobs-easy-apply-modal, div[role='dialog']").first
 
-    phone   = personal.get("phone",        "")
-    city    = personal.get("city",         "")
-    years   = str(experience.get("years",  4))
-    skills  = experience.get("skills",     "")
-    notice  = screening.get("notice_period",    "")
-    salary  = screening.get("expected_salary",  "")
-    why     = open_text.get("why_interested",   "")
-
-    # ── Step through form pages ────────────────────────────────────────────
-    max_steps = 12
-    for step in range(max_steps):
+    for step in range(15):
         await page.wait_for_timeout(1_200)
+        await _fill_page(page, modal, state)
 
-        # Phone
-        for sel in [
-            'input[id*="phoneNumber"]',
-            'input[aria-label*="Phone"]',
-            'input[aria-label*="phone"]',
-        ]:
-            if phone and await page.locator(sel).count() > 0:
-                field = page.locator(sel).first
-                await field.triple_click()
-                await field.fill(phone)
-                break
+        if state.missing:
+            names = "; ".join(m["q"] for m in state.missing)
+            return "needs_input", f"Stopped before submitting — please answer: {names}"
 
-        # City
-        for sel in [
-            'input[id*="city"]',
-            'input[aria-label*="City"]',
-            'input[aria-label*="city"]',
-        ]:
-            if city and await page.locator(sel).count() > 0:
-                field = page.locator(sel).first
-                await field.triple_click()
-                await field.fill(city)
-                break
-
-        # Notice period (text inputs with label containing "notice")
-        notice_inputs = page.locator('input[aria-label*="notice" i], input[id*="notice"]')
-        if notice and await notice_inputs.count() > 0:
-            await notice_inputs.first.triple_click()
-            await notice_inputs.first.fill(notice)
-
-        # Salary
-        salary_inputs = page.locator(
-            'input[aria-label*="salary" i], input[aria-label*="Salary" i],'
-            'input[id*="salary"]'
-        )
-        if salary and await salary_inputs.count() > 0:
-            await salary_inputs.first.triple_click()
-            await salary_inputs.first.fill(salary)
-
-        # Years of experience (numeric inputs)
-        year_inputs = page.locator('input[type="number"][aria-label*="year" i]')
-        for inp in await year_inputs.all():
-            await inp.triple_click()
-            await inp.fill(years)
-
-        # "Why are you interested" / cover letter text areas
-        # NOTE: no cover letter — only fill if it's a short "interest" field
-        interest_areas = page.locator(
-            'textarea[aria-label*="why" i], textarea[aria-label*="interest" i],'
-            'textarea[id*="coverLetter"]'
-        )
-        if why and await interest_areas.count() > 0:
-            ta = interest_areas.first
-            await ta.triple_click()
-            await ta.fill(why)
-
-        # Skills summary textarea
-        skills_areas = page.locator(
-            'textarea[aria-label*="skill" i], textarea[aria-label*="experience" i]'
-        )
-        if skills and await skills_areas.count() > 0:
-            ta = skills_areas.first
-            if (await ta.input_value()).strip() == "":
-                await ta.fill(skills)
-
-        # Radio/checkbox: "authorized to work" → Yes
-        for label_text in ["authorized", "legally authorized"]:
-            radio = page.locator(
-                f'label:has-text("{label_text}") input[type="radio"][value*="yes" i],'
-                f'label:has-text("{label_text}") input[type="radio"][value="1"]'
-            )
-            if await radio.count() > 0:
-                await radio.first.check()
-
-        # Sponsorship → No (unless user set it to Yes)
-        sponsor_answer = screening.get("requires_sponsorship", "No")
-        for label_text in ["sponsorship", "visa sponsorship"]:
-            val = "yes" if sponsor_answer == "Yes" else "no"
-            radio = page.locator(
-                f'label:has-text("{label_text}") input[type="radio"][value*="{val}" i]'
-            )
-            if await radio.count() > 0:
-                await radio.first.check()
-
-        # Check for submission / next page
-        submit_btn = page.locator(
-            'button[aria-label="Submit application"],'
-            'button:has-text("Submit application")'
-        )
+        submit_btn = modal.locator(
+            'button[aria-label="Submit application"]:visible, '
+            'button:has-text("Submit application"):visible')
         if await submit_btn.count() > 0:
-            _log(f"Step {step+1}: clicking Submit")
-            await submit_btn.click()
+            _log(f"Step {step + 1}: clicking Submit")
+            await submit_btn.first.click()
             await page.wait_for_timeout(3_000)
-            # Confirm dialog ("Your application was sent")
-            confirm = page.locator(
-                ':has-text("application was sent"),'
-                ':has-text("Applied")'
-            )
-            if await confirm.count() > 0:
-                return "Applied successfully via Easy Apply"
-            return "Submitted — could not confirm success toast (form may still have succeeded)"
+            sent = page.locator(':text("application was sent"), :text("Application submitted")')
+            if await sent.count() > 0:
+                return "done", "Applied successfully via Easy Apply"
+            return "done", "Submitted — could not confirm the success message (it may still have worked)"
 
-        next_btn = page.locator(
-            'button[aria-label="Continue to next step"],'
-            'button[aria-label="Review your application"],'
-            'button:has-text("Next"),'
-            'button:has-text("Review")'
-        )
-        if await next_btn.count() > 0:
-            _log(f"Step {step+1}: advancing to next step")
+        next_btn = modal.locator(
+            'button[aria-label="Continue to next step"]:visible, '
+            'button[aria-label="Review your application"]:visible, '
+            'button:has-text("Next"):visible, button:has-text("Review"):visible')
+        if await next_btn.count() == 0:
+            return "failed", f"Step {step + 1}: no Next or Submit button found"
+
+        _log(f"Step {step + 1}: next page")
+        await next_btn.first.click()
+        await page.wait_for_timeout(1_500)
+
+        bad = await _error_labels(modal)
+        if bad:
+            # Try once more: the errors may be questions that appeared late.
+            await _fill_page(page, modal, state)
+            if state.missing:
+                names = "; ".join(m["q"] for m in state.missing)
+                return "needs_input", f"Stopped before submitting — please answer: {names}"
             await next_btn.first.click()
-            continue
+            await page.wait_for_timeout(1_500)
+            bad = await _error_labels(modal)
+            if bad:
+                for label in bad:
+                    state.add_missing(label, "text", [])
+                names = "; ".join(bad)
+                return "needs_input", f"LinkedIn rejected these answers — please check: {names}"
 
-        _log(f"Step {step+1}: no Next/Submit button found — stopping")
-        break
+    return "failed", "Ran out of form steps without reaching Submit"
 
-    return "ERROR: Ran out of form steps without reaching Submit"
+
+def _profile_text(supabase_url: str, supabase_key: str, bank: dict) -> str:
+    """Plain-text CV profile for the AI fallback."""
+    lines = []
+    for key, title in [("cv_summary", "Summary"), ("cv_job_titles", "Job titles"),
+                       ("cv_years_experience", "Years of experience"), ("cv_skills", "Skills"),
+                       ("cv_certifications", "Certifications"), ("cv_education", "Education"),
+                       ("cv_languages", "Languages")]:
+        try:
+            value = db.get_config(supabase_url, supabase_key, key, "")
+        except Exception:
+            value = ""
+        if value:
+            lines.append(f"{title}: {value}")
+    for key, value in bank.items():
+        if key not in ("why_interested",):
+            lines.append(f"{key.replace('_', ' ')}: {value}")
+    return "\n".join(lines)
 
 
 # ── Main runner ────────────────────────────────────────────────────────────────
@@ -277,7 +445,15 @@ async def run(job_id: str, supabase_url: str, supabase_key: str) -> None:
         _log(result_msg)
         return
 
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    bank = apply_answers.build_bank(answers)
+    state = FillState(answers, _profile_text(supabase_url, supabase_key, bank),
+                      req, groq_key)
+    if not groq_key:
+        _log("GROQ_API_KEY not set — unknown questions will be sent back to the app")
+
     _log(f"Launching browser for job: {req.get('job_title', '?')} @ {req.get('company', '?')}")
+    status = "failed"
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -302,20 +478,27 @@ async def run(job_id: str, supabase_url: str, supabase_key: str) -> None:
             "httpOnly": True,
         }])
         page = await ctx.new_page()
+        # Fail fast on a field that never becomes usable instead of hanging.
+        page.set_default_timeout(10_000)
         try:
-            result_msg = await _fill_easy_apply(page, answers, job_url)
+            status, result_msg = await _fill_easy_apply(page, job_url, state)
         except Exception as exc:
-            result_msg = f"ERROR: Unhandled exception — {exc}"
+            status, result_msg = "failed", f"Unhandled exception — {exc}"
             _log(result_msg)
         finally:
             await browser.close()
 
     # ── Update Supabase ────────────────────────────────────────────────────
-    success = not result_msg.startswith("ERROR")
-    req["status"]     = "done" if success else "failed"
-    req["result_msg"] = result_msg
+    success = status == "done"
+    req["status"]          = status
+    req["result_msg"]      = result_msg
+    req["missing"]         = state.missing     # questions the app must ask the user
+    req["filled"]          = state.filled      # what was typed, and from where
+    req["finished_at"]     = datetime.now(timezone.utc).isoformat()
     db.set_config(supabase_url, supabase_key, f"apply_req_{job_id}", json.dumps(req))
-    _log(f"Result: {result_msg}")
+    _log(f"Result: {status} — {result_msg}")
+    for item in state.filled:
+        _log(f"  [{item['source']}] {item['q']} → {item['a'][:60]}")
 
     if success:
         # Update the jobs table so the app shows "applied"

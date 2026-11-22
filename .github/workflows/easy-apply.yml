@@ -26,7 +26,7 @@ jobs:
           cache: pip
 
       - name: Install Python dependencies
-        run: pip install requests playwright
+        run: pip install -r cloud/requirements.txt
 
       - name: Install Playwright browsers
         run: |
@@ -39,5 +39,7 @@ jobs:
           SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
           # Cookie comes from Secrets now — bot_state no longer stores it
           LINKEDIN_COOKIE: ${{ secrets.LINKEDIN_COOKIE }}
+          # Answers questions the saved answers do not cover
+          GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
         run: |
           python cloud/apply_executor.py --job-id "${{ inputs.job_id }}"

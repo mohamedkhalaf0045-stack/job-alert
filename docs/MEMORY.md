@@ -8,7 +8,7 @@ infrastructure or decisions, update the relevant section here and commit it with
 the work. Prune stale lines instead of only appending. This repo is **public**:
 never write secrets, tokens, chat IDs, emails or personal data here.
 
-Last updated: 2026-10-15
+Last updated: 2026-11-22
 
 ## Owner rules and preferences
 - **1-hour rule:** any LinkedIn job detected more than 1h after posting is a bug
@@ -56,6 +56,10 @@ Last updated: 2026-10-15
   ~58k requests/day ≈ 30-40 GB/month); main scan, enricher and gap monitor still do.
 - `LINKEDIN_COOKIE` secret starts with a BOM (U+FEFF); code strips it now. Always
   `.strip().strip("﻿")` env values used in HTTP headers.
+- `bot_state` RLS lockdown (`cloud/migrations/2026-06-10-bot-state-rls-lockdown.sql`) is
+  NOT applied as of 2026-11-22: anon still has full read/write (`anon_full_access_bot_state`).
+  Applying it would block the mobile app's writes (settings, apply requests) until they go
+  through a server route. Owner decision pending.
 - Local `settings.json` holds the anon key → local runs can't read profiles (RLS).
 - 2 SQL migrations were unapplied as of early Oct (check `cloud/migrations/`).
 - Google OAuth for the web app still needs Supabase dashboard config.
@@ -69,6 +73,24 @@ Last updated: 2026-10-15
   "part-time ... remote/hybrid" / "work-from-home flexibility"). Added 2026-10-11:
   ~11% of alerts over 14 days were this template (44 different fake "companies"),
   which LinkedIn removes within hours → owner saw them as expired links. Not a block.
+
+## Easy Apply (auto-apply)
+- Mobile "Easy Apply" → `apply_req_{job_id}` in bot_state → `easy-apply.yml` →
+  `cloud/apply_executor.py` (Playwright + `LINKEDIN_COOKIE`). LinkedIn Easy Apply only.
+- Since 2026-11-22 (owner asked for AIApply-style auto-apply): the executor reads every
+  question on each form page and answers it via `cloud/apply_answers.py`: saved answers
+  for that exact question → rules over the answer bank → Groq (`GROQ_API_KEY`, only when
+  confident, choice answers must be a listed option). A required question with no answer
+  stops the run before submitting (`status: needs_input`, list in `missing`); the app shows
+  those questions, saves the answers (phone-local "Saved Answers", SharedPreferences) and
+  retries. Never guesses or submits invented data.
+- The job is marked `applied` only by the executor after a successful submit.
+- The workflow previously installed only requests+playwright (no `supabase`), so it could
+  never run; it now installs `cloud/requirements.txt`. Both earlier runs (May 2026) failed.
+- Tested against a mock form only (sandbox cannot reach LinkedIn); the LinkedIn selectors
+  are unverified until a real run. Tests: `python -m pytest cloud/tests`.
+- Ideas not built yet: per-job tailored CV upload, apply queue with daily limit,
+  Greenhouse/Lever company forms.
 
 ## Planned work (not started)
 Code cleanup plan (owner asked for plan first): stage 0 inventory → 1 tidy root
@@ -167,3 +189,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-29: Issue #62 closed: 1 LinkedIn late listing (IT Category Buyer, procurement; 3 scans missed). Gap Monitor 03:15 cron skipped by GitHub.
 - 2026-10-29: Issue #63 closed: 6 email-only late listings (fast-keyword IT titles, UAE/Cairo, all collected at 12:01 from job-alert emails; 3-5 scans + fast lane never saw them in search). Gap Monitor 12:15/15:15 crons skipped.
 - 2026-11-03: Owner asked to fix the Supabase "RLS Disabled in Public" alert: RLS enabled on `telegram_claude_history` (no policies; only service_role uses it). Migration in `cloud/migrations/`. Gap-fixer runs paused since 2026-10-30 (owner said "Stop"); issue #65 still open.
+- 2026-11-22: Easy Apply upgraded to answer any form question (saved answers → rules → Groq), stop with `needs_input` instead of guessing, and fixed the workflow's missing `supabase` install. Gap-fixer still paused.

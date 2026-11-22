@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/job.dart';
 import '../services/supabase_service.dart';
 import '../services/github_service.dart';
+import '../services/apply_answers_store.dart';
+import 'saved_answers_screen.dart';
 
 /// Displayed before submitting a LinkedIn / Indeed Easy Apply application.
 ///
@@ -44,6 +46,11 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
   bool _submitted       = false;
   String? _errorMsg;
 
+  /// Previous apply request for this job (status, missing questions ...).
+  Map<String, dynamic>? _lastRequest;
+  /// Answers typed for questions a previous run could not answer.
+  final Map<String, TextEditingController> _missingCtrls = {};
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +69,9 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
     _noticeCtrl.dispose();
     _salaryCtrl.dispose();
     _whyCtrl.dispose();
+    for (final c in _missingCtrls.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -97,8 +107,21 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
           ? topSkills
           : 'IT Support, Windows Server, Active Directory, Networking';
 
-      _noticeCtrl.text  = '1 month';
-      _salaryCtrl.text  = '';
+      final saved = await ApplyAnswersStore.loadBank();
+      if ((saved['phone'] ?? '').isNotEmpty) _phoneCtrl.text = saved['phone']!;
+      _noticeCtrl.text  = saved['notice_period'] ?? '1 month';
+      _salaryCtrl.text  = saved['expected_salary'] ?? '';
+
+      final last = await SupabaseService.getApplyRequest(widget.job.jobId);
+      for (final c in _missingCtrls.values) {
+        c.dispose();
+      }
+      _missingCtrls.clear();
+      for (final m in (last?['missing'] as List<dynamic>? ?? [])) {
+        final q = (m is Map ? m['q'] : null)?.toString() ?? '';
+        if (q.isNotEmpty) _missingCtrls[q] = TextEditingController();
+      }
+      _lastRequest = last;
 
       _whyCtrl.text = _generateWhyText(
         jobTitle:     widget.job.title,
@@ -157,6 +180,19 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
         '$summaryLine';
   }
 
+  /// "Options: Yes / No" hint for a missing choice question.
+  String? _optionsHint(String question) {
+    for (final m in (_lastRequest?['missing'] as List<dynamic>? ?? [])) {
+      if (m is Map && m['q'] == question) {
+        final opts = (m['options'] as List<dynamic>? ?? [])
+            .map((e) => e.toString())
+            .toList();
+        if (opts.isNotEmpty) return 'Options: ${opts.join(' / ')}';
+      }
+    }
+    return null;
+  }
+
   // ── Submit ────────────────────────────────────────────────────────────────
 
   Future<void> _submit() async {
@@ -203,6 +239,14 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
 
     setState(() { _submitting = true; _errorMsg = null; });
 
+    // Answers typed for questions the last run could not answer are saved
+    // for every future application too.
+    final newAnswers = <SavedQA>[
+      for (final e in _missingCtrls.entries)
+        if (e.value.text.trim().isNotEmpty) SavedQA(e.key, e.value.text.trim()),
+    ];
+    if (newAnswers.isNotEmpty) await ApplyAnswersStore.upsertCustom(newAnswers);
+
     // Build the structured answers payload
     final answers = {
       'personal': {
@@ -225,6 +269,11 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
       'open_text': {
         'why_interested': _whyCtrl.text.trim(),
       },
+      // Saved Answers screen: reused on every form (see cloud/apply_answers.py)
+      'bank':   await ApplyAnswersStore.loadBank(),
+      'custom': (await ApplyAnswersStore.loadCustom())
+          .map((e) => e.toJson())
+          .toList(),
     };
 
     try {
@@ -240,8 +289,8 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
       // 2. Trigger GitHub Actions easy-apply workflow
       final triggered = await GitHubService.triggerEasyApply(widget.job.jobId);
 
-      // 3. Mark job as applied in jobs table
-      await SupabaseService.updateJobStatus(widget.job.url, 'applied');
+      // The cloud worker marks the job 'applied' only after a successful
+      // submit, so nothing is marked here.
 
       if (mounted) {
         setState(() {
@@ -286,6 +335,40 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
         children: [
           // ── Job header ────────────────────────────────────────────────────
           _JobHeader(job: job),
+          const SizedBox(height: 12),
+          if (_lastRequest != null) ...[
+            _LastRunCard(request: _lastRequest!, onRefresh: _loadProfile),
+            const SizedBox(height: 12),
+          ],
+          if (_missingCtrls.isNotEmpty) ...[
+            _Section('Questions to answer'),
+            Text(
+              'The last attempt stopped before submitting because these questions '
+              'had no saved answer. Your answers are saved for future applications too.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 10),
+            for (final e in _missingCtrls.entries) ...[
+              _Field(
+                label: e.key,
+                controller: e.value,
+                hintText: _optionsHint(e.key),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Required' : null,
+              ),
+              const SizedBox(height: 10),
+            ],
+            const SizedBox(height: 10),
+          ],
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const SavedAnswersScreen()));
+              _loadProfile();
+            },
+            icon: const Icon(Icons.bookmark_outline, size: 18),
+            label: const Text('Saved answers (used on every application)'),
+          ),
           const SizedBox(height: 16),
 
           // ── Your details ─────────────────────────────────────────────────
@@ -478,7 +561,7 @@ class _SuccessView extends StatelessWidget {
             const Icon(Icons.check_circle, color: Colors.teal, size: 72),
             const SizedBox(height: 20),
             Text(
-              'Application Submitted!',
+              'Application Sent to Worker',
               style: Theme.of(context)
                   .textTheme
                   .headlineSmall
@@ -502,8 +585,10 @@ class _SuccessView extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Text(
-                'The Easy Apply form is being filled by the cloud worker. '
-                'Check the Cloud tab to see the job-alert workflow run status.',
+                'The cloud worker is filling the Easy Apply form now. It answers '
+                'each question from your saved answers, then AI. If a question '
+                'has no answer it stops without submitting — open Easy Apply on '
+                'this job again in a few minutes to see the result.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13),
               ),
@@ -516,6 +601,40 @@ class _SuccessView extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Last run status ──────────────────────────────────────────────────────────
+
+class _LastRunCard extends StatelessWidget {
+  final Map<String, dynamic> request;
+  final VoidCallback onRefresh;
+  const _LastRunCard({required this.request, required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = (request['status'] ?? '').toString();
+    final msg = (request['result_msg'] ?? '').toString();
+    final (Color color, IconData icon, String title) = switch (status) {
+      'done'        => (Colors.green, Icons.check_circle, 'Applied'),
+      'needs_input' => (Colors.orange, Icons.help_outline, 'Needs your answers'),
+      'failed'      => (Colors.red, Icons.error_outline, 'Last attempt failed'),
+      'running'     => (Colors.blue, Icons.sync, 'Applying now…'),
+      _             => (Colors.blueGrey, Icons.schedule, 'Waiting for the worker'),
+    };
+    final filled = (request['filled'] as List<dynamic>? ?? []).length;
+    return Card(
+      color: color.withValues(alpha: 0.08),
+      child: ListTile(
+        leading: Icon(icon, color: color),
+        title: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+        subtitle: Text([
+          if (msg.isNotEmpty) msg,
+          if (filled > 0) '$filled question${filled == 1 ? '' : 's'} answered automatically',
+        ].join('\n')),
+        trailing: IconButton(icon: const Icon(Icons.refresh), onPressed: onRefresh),
       ),
     );
   }
