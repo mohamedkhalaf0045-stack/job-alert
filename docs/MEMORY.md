@@ -56,10 +56,22 @@ Last updated: 2026-11-22
   ~58k requests/day ≈ 30-40 GB/month); main scan, enricher and gap monitor still do.
 - `LINKEDIN_COOKIE` secret starts with a BOM (U+FEFF); code strips it now. Always
   `.strip().strip("﻿")` env values used in HTTP headers.
-- `bot_state` RLS lockdown (`cloud/migrations/2026-06-10-bot-state-rls-lockdown.sql`) is
-  NOT applied as of 2026-11-22: anon still has full read/write (`anon_full_access_bot_state`).
-  Applying it would block the mobile app's writes (settings, apply requests) until they go
-  through a server route. Owner decision pending.
+- **Security audit 2026-11-22:**
+  - A fine-grained GitHub PAT was compiled into every APK (`--dart-define=GITHUB_TOKEN`) and
+    the APKs are on the public Releases page → token public. Owner must REVOKE it and
+    issue a new `GH_PAT` (repo secret + Vercel). Fixed in code: build-apk.yml no longer
+    passes it; the app controls workflows via `web/src/app/api/mobile/github` (admin-only,
+    workflow allowlist, GH_PAT server-side). Never put secrets in `--dart-define`.
+  - bot_state and jobs: anon (key is public) has full read/write. Phase 1 migration
+    `cloud/migrations/2026-11-22-security-phase1.sql` (private apply_req_*/cv_data:*,
+    admin-only update_*, admin list in `app_admins`, revoke API execute on trigger funcs)
+    is written but NOT applied yet (Supabase asked for confirmation; owner to approve).
+    After applying, insert the owner's auth user id into `app_admins` (not in the repo).
+  - Phase 2 (needs owner): PC `settings.json` SupabaseKey → service_role, then remove all
+    anon writes (bot_state and jobs). The old 2026-06-10 lockdown migration is superseded.
+  - Telegram webhook checks `TELEGRAM_WEBHOOK_SECRET` when set (owner: set it in Vercel and
+    re-run setWebhook with secret_token). LinkedIn fetch-url SSRF fixed.
+  - Still open: leaked-password protection off; restrict Firebase API key.
 - Local `settings.json` holds the anon key → local runs can't read profiles (RLS).
 - 2 SQL migrations were unapplied as of early Oct (check `cloud/migrations/`).
 - Google OAuth for the web app still needs Supabase dashboard config.
@@ -201,3 +213,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-03: Owner asked to fix the Supabase "RLS Disabled in Public" alert: RLS enabled on `telegram_claude_history` (no policies; only service_role uses it). Migration in `cloud/migrations/`. Gap-fixer runs paused since 2026-10-30 (owner said "Stop"); issue #65 still open.
 - 2026-11-22: Easy Apply upgraded to answer any form question (saved answers → rules → Groq), stop with `needs_input` instead of guessing, and fixed the workflow's missing `supabase` install. Gap-fixer still paused.
 - 2026-11-22: Tailored CV per job in the owner's resume design, uploaded during Easy Apply (master CV in private `cv_master` table).
+- 2026-11-22: Security audit: GitHub PAT found in public APKs (owner to revoke); app now uses a server route for GitHub; DB lockdown phase 1 written, awaiting owner approval.

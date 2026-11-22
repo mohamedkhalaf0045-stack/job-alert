@@ -70,7 +70,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const url  = typeof body?.url === 'string' ? body.url.trim() : ''
 
-    if (!url || !url.includes('linkedin.com')) {
+    // Parse properly: a plain substring check would let URLs like
+    // http://internal-host/?linkedin.com through (server-side request forgery).
+    let parsed: URL | null = null
+    try { parsed = new URL(url) } catch { parsed = null }
+    const host = parsed?.hostname.toLowerCase() ?? ''
+    if (!parsed || parsed.protocol !== 'https:' ||
+        !(host === 'linkedin.com' || host.endsWith('.linkedin.com'))) {
       return NextResponse.json(
         { error: 'Enter a valid LinkedIn profile URL (linkedin.com/in/…)' },
         { status: 400 }

@@ -1,15 +1,18 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config.dart';
 import '../models/cloud_status.dart';
 
 class GitHubService {
   static const _base = 'https://api.github.com';
 
-  // Runtime token — seeded from compile-time --dart-define (GH_PAT secret in
-  // build-apk.yml). SECURITY: it is never read from or written to Supabase —
-  // bot_state is readable with the public anon key, so a token stored there
-  // is public. (That is exactly how the original token leaked.)
+  // SECURITY: no GitHub token is compiled into the APK any more. The APK is
+  // published on the public Releases page, so a token inside it is public.
+  // Reading run status needs no token (the repo is public); run / cancel /
+  // enable / disable go through the web app (/api/mobile/github), which keeps
+  // GH_PAT on the server and only accepts the admin's Supabase session.
+  // A token typed in Settings is kept in memory only, as a fallback.
   static String _token = Config.githubToken;
 
   /// Called by the settings screen after saving a new token (in-memory only).
@@ -36,8 +39,8 @@ class GitHubService {
     );
     if (runsRes.statusCode != 200) {
       String errorMsg = 'API error (${runsRes.statusCode})';
-      if (_token.isEmpty) {
-        errorMsg = 'No GitHub token — add it in Settings';
+      if (runsRes.statusCode == 403 && _token.isEmpty) {
+        errorMsg = 'GitHub rate limit reached — try again later';
       } else if (runsRes.statusCode == 401 || runsRes.statusCode == 403) {
         errorMsg = 'GitHub token invalid or expired';
       } else if (runsRes.statusCode >= 500) {
@@ -118,40 +121,38 @@ class GitHubService {
     );
   }
 
-  static Future<bool> triggerRun(int workflowId) async {
-    final res = await http.post(
-      Uri.parse('$_base/repos/${Config.githubRepo}/actions/workflows/$workflowId/dispatches'),
-      headers: {..._headers, 'Content-Type': 'application/json'},
-      body: '{"ref":"main"}',
-    );
-    return res.statusCode == 204;
+  /// Sends a control action to the web app, which calls GitHub server-side.
+  static Future<bool> _control(Map<String, dynamic> body) async {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null || Config.webAppUrl.isEmpty) return false;
+    try {
+      final res = await http.post(
+        Uri.parse('${Config.webAppUrl}/api/mobile/github'),
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': 'Bearer ${session.accessToken}',
+        },
+        body: jsonEncode(body),
+      );
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
   }
 
-  static Future<bool> cancelRun(int runId) async {
-    final res = await http.post(
-      Uri.parse('$_base/repos/${Config.githubRepo}/actions/runs/$runId/cancel'),
-      headers: _headers,
-    );
-    return res.statusCode == 202;
-  }
+  static Future<bool> triggerRun(int workflowId) =>
+      _control({'action': 'dispatch', 'workflow': workflowId});
+
+  static Future<bool> cancelRun(int runId) =>
+      _control({'action': 'cancel', 'run_id': runId});
 
   /// Dispatch the easy-apply.yml workflow for the given jobId.
-  static Future<bool> triggerEasyApply(String jobId) async {
-    final res = await http.post(
-      Uri.parse(
-          '$_base/repos/${Config.githubRepo}/actions/workflows/easy-apply.yml/dispatches'),
-      headers: {..._headers, 'Content-Type': 'application/json'},
-      body: jsonEncode({'ref': 'main', 'inputs': {'job_id': jobId}}),
-    );
-    return res.statusCode == 204;
-  }
+  static Future<bool> triggerEasyApply(String jobId) =>
+      _control({'action': 'dispatch', 'workflow': 'easy-apply.yml', 'job_id': jobId});
 
-  static Future<bool> toggleSchedule(int workflowId, bool currentlyActive) async {
-    final action = currentlyActive ? 'disable' : 'enable';
-    final res = await http.put(
-      Uri.parse('$_base/repos/${Config.githubRepo}/actions/workflows/$workflowId/$action'),
-      headers: _headers,
-    );
-    return res.statusCode == 204;
-  }
+  static Future<bool> toggleSchedule(int workflowId, bool currentlyActive) =>
+      _control({
+        'action': currentlyActive ? 'disable' : 'enable',
+        'workflow': workflowId,
+      });
 }

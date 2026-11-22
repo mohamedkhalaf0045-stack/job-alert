@@ -90,6 +90,13 @@ async function processMessage(chatId: number, userText: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // Telegram sends the secret_token given to setWebhook in this header. When
+  // TELEGRAM_WEBHOOK_SECRET is set, anything without it is not from Telegram.
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET
+  if (secret && req.headers.get('x-telegram-bot-api-secret-token') !== secret) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const body = await req.json()
   const message = body?.message
   if (!message?.text) return NextResponse.json({ ok: true })

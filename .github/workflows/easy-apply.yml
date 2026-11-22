@@ -41,7 +41,8 @@ jobs:
       - name: Run Easy Apply executor
         env:
           SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
+          # Service key: apply requests are private rows (security phase 1)
+          SUPABASE_KEY:    ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           # Cookie comes from Secrets now — bot_state no longer stores it
           LINKEDIN_COOKIE: ${{ secrets.LINKEDIN_COOKIE }}
           # Answers questions the saved answers do not cover
