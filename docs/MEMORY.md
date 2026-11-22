@@ -89,8 +89,18 @@ Last updated: 2026-11-22
   never run; it now installs `cloud/requirements.txt`. Both earlier runs (May 2026) failed.
 - Tested against a mock form only (sandbox cannot reach LinkedIn); the LinkedIn selectors
   are unverified until a real run. Tests: `python -m pytest cloud/tests`.
-- Ideas not built yet: per-job tailored CV upload, apply queue with daily limit,
-  Greenhouse/Lever company forms.
+- Tailored CV (2026-11-22, owner's design from their uploaded resume): master CV JSON in
+  the private `cv_master` table (id `default`; RLS on, no policies → service_role only;
+  migration `2026-11-22-cv-master.sql`). Never put CV data in the repo or bot_state.
+  `cloud/cv_builder.py`: Groq only reorders skills/bullets/certs by index and may rewrite
+  headline + summary (rejected if it adds any number not in the master); renders A4 PDF
+  via Playwright; executor uploads it on the resume step (`use_tailored_cv`, default on).
+  Workflow needs `SUPABASE_SERVICE_ROLE_KEY` (passed as SUPABASE_SERVICE_KEY); input
+  `cv_only` builds the PDF without applying; PDF kept 7 days as an artifact. Public repo:
+  logs show question + source only, never answer values. To change the CV, update the
+  `cv_master` row (no app editor yet).
+- Ideas not built yet: apply queue with daily limit, Greenhouse/Lever company forms,
+  editing the master CV from the app.
 
 ## Planned work (not started)
 Code cleanup plan (owner asked for plan first): stage 0 inventory → 1 tidy root
@@ -190,3 +200,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-10-29: Issue #63 closed: 6 email-only late listings (fast-keyword IT titles, UAE/Cairo, all collected at 12:01 from job-alert emails; 3-5 scans + fast lane never saw them in search). Gap Monitor 12:15/15:15 crons skipped.
 - 2026-11-03: Owner asked to fix the Supabase "RLS Disabled in Public" alert: RLS enabled on `telegram_claude_history` (no policies; only service_role uses it). Migration in `cloud/migrations/`. Gap-fixer runs paused since 2026-10-30 (owner said "Stop"); issue #65 still open.
 - 2026-11-22: Easy Apply upgraded to answer any form question (saved answers → rules → Groq), stop with `needs_input` instead of guessing, and fixed the workflow's missing `supabase` install. Gap-fixer still paused.
+- 2026-11-22: Tailored CV per job in the owner's resume design, uploaded during Easy Apply (master CV in private `cv_master` table).

@@ -39,6 +39,7 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
   // ── Switches ─────────────────────────────────────────────────────────────
   bool _authorized      = true;
   bool _sponsorship     = false;
+  bool _tailoredCv      = true;
 
   // ── State ────────────────────────────────────────────────────────────────
   bool _loading         = true;
@@ -284,6 +285,7 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
         jobTitle: widget.job.title,
         company:  widget.job.company,
         answers:  answers,
+        useTailoredCv: _tailoredCv,
       );
 
       // 2. Trigger GitHub Actions easy-apply workflow
@@ -461,6 +463,20 @@ class _ApplyPreviewScreenState extends State<ApplyPreviewScreen> {
           ),
           const SizedBox(height: 20),
 
+          // ── CV ─────────────────────────────────────────────────────────────
+          _Section('CV'),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Upload a CV tailored to this job'),
+            subtitle: const Text(
+                'Same design as your CV. Skills and experience most relevant to '
+                'this job are moved to the top; nothing is invented. Off = use the '
+                'CV already saved on LinkedIn.'),
+            value: _tailoredCv,
+            onChanged: (v) => setState(() => _tailoredCv = v),
+          ),
+          const SizedBox(height: 20),
+
           // ── Why this role ─────────────────────────────────────────────────
           _Section('Why This Role'),
           _Field(
@@ -625,6 +641,11 @@ class _LastRunCard extends StatelessWidget {
       _             => (Colors.blueGrey, Icons.schedule, 'Waiting for the worker'),
     };
     final filled = (request['filled'] as List<dynamic>? ?? []).length;
+    final cvFile = (request['cv_file'] ?? '').toString();
+    final cvNote = cvFile.isEmpty
+        ? ''
+        : '${request['cv_uploaded'] == true ? 'Uploaded' : 'Built'} '
+          '${request['cv_tailored'] == true ? 'tailored' : 'standard'} CV: $cvFile';
     return Card(
       color: color.withValues(alpha: 0.08),
       child: ListTile(
@@ -633,6 +654,7 @@ class _LastRunCard extends StatelessWidget {
         subtitle: Text([
           if (msg.isNotEmpty) msg,
           if (filled > 0) '$filled question${filled == 1 ? '' : 's'} answered automatically',
+          if (cvNote.isNotEmpty) cvNote,
         ].join('\n')),
         trailing: IconButton(icon: const Icon(Icons.refresh), onPressed: onRefresh),
       ),

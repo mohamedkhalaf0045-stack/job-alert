@@ -7,6 +7,11 @@ on:
         description: 'Job ID to apply to (from Supabase jobs table)'
         required: true
         type: string
+      cv_only:
+        description: 'Only build the tailored CV PDF (do not apply)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   apply:
@@ -41,5 +46,24 @@ jobs:
           LINKEDIN_COOKIE: ${{ secrets.LINKEDIN_COOKIE }}
           # Answers questions the saved answers do not cover
           GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
+          # Reads the private master CV (cv_master table) for the tailored CV
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          JOB_ID:          ${{ inputs.job_id }}
+          CV_ONLY:         ${{ inputs.cv_only }}
         run: |
-          python cloud/apply_executor.py --job-id "${{ inputs.job_id }}"
+          if [ "$CV_ONLY" = "true" ]; then
+            python cloud/apply_executor.py --job-id "$JOB_ID" --cv-only
+          else
+            python cloud/apply_executor.py --job-id "$JOB_ID"
+          fi
+
+      - name: Upload tailored CV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailored-cv-${{ github.run_id }}
+          path: tailored_cv/*.pdf
+          if-no-files-found: ignore
+          # Public repo: artifacts are visible to signed-in GitHub users, and
+          # the CV has contact details, so keep it only briefly.
+          retention-days: 7

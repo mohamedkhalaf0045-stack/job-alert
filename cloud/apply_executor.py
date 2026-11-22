@@ -39,6 +39,7 @@ import requests
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
 import apply_answers
+import cv_builder
 import db
 
 
@@ -72,6 +73,8 @@ class FillState:
         self.profile = profile
         self.job = job
         self.groq_key = groq_key
+        self.resume_path: str | None = None   # tailored CV PDF to upload
+        self.resume_uploaded = False
         self.filled: list[dict] = []      # {"q", "a", "source"}
         self.missing: list[dict] = []     # {"q", "type", "options"}
         self._ai_cache: dict[str, str | None] = {}
@@ -247,7 +250,38 @@ async def _fill_group(page, group, state: FillState) -> None:
             state.add_missing(label, "checkbox", ["Yes", "No"])
 
 
+async def _upload_resume(modal, state: FillState) -> None:
+    """Upload the tailored CV on the resume step (once).
+
+    LinkedIn's resume step has a hidden <input type=file> (id contains
+    'upload-resume'); setting a file on it uploads and selects that CV.
+    Cover-letter file inputs are left alone.
+    """
+    if not state.resume_path or state.resume_uploaded:
+        return
+    inputs = modal.locator("input[type='file']")
+    for i in range(await inputs.count()):
+        inp = inputs.nth(i)
+        ident = " ".join(filter(None, [
+            await inp.get_attribute("id"), await inp.get_attribute("name"),
+            await inp.get_attribute("aria-label")])).lower()
+        if "cover" in ident:
+            continue
+        if not ident or "resume" in ident or "cv" in ident:
+            await inp.set_input_files(state.resume_path)
+            await modal.page.wait_for_timeout(3_000)
+            state.resume_uploaded = True
+            state.filled.append({"q": "Resume", "a": os.path.basename(state.resume_path),
+                                 "source": "tailored_cv"})
+            _log(f"  uploaded tailored CV {os.path.basename(state.resume_path)}")
+            return
+
+
 async def _fill_page(page, modal, state: FillState) -> None:
+    try:
+        await _upload_resume(modal, state)
+    except Exception as exc:
+        _log(f"  resume upload failed ({exc}) — LinkedIn's default CV will be used")
     groups = None
     for sel in _GROUP_SELECTORS:
         loc = modal.locator(sel)
@@ -454,6 +488,7 @@ async def run(job_id: str, supabase_url: str, supabase_key: str) -> None:
 
     _log(f"Launching browser for job: {req.get('job_title', '?')} @ {req.get('company', '?')}")
     status = "failed"
+    cv_info: dict = {}
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -477,6 +512,12 @@ async def run(job_id: str, supabase_url: str, supabase_key: str) -> None:
             "secure": True,
             "httpOnly": True,
         }])
+        # Tailored CV (in the owner's design) to upload on the resume step.
+        if req.get("use_tailored_cv", True):
+            cv_info = await _build_tailored_cv(job_id, req, supabase_url, supabase_key,
+                                               groq_key, browser)
+            state.resume_path = cv_info.get("path")
+
         page = await ctx.new_page()
         # Fail fast on a field that never becomes usable instead of hanging.
         page.set_default_timeout(10_000)
@@ -494,11 +535,16 @@ async def run(job_id: str, supabase_url: str, supabase_key: str) -> None:
     req["result_msg"]      = result_msg
     req["missing"]         = state.missing     # questions the app must ask the user
     req["filled"]          = state.filled      # what was typed, and from where
+    req["cv_file"]         = cv_info.get("file", "")
+    req["cv_tailored"]     = cv_info.get("tailored", False)
+    req["cv_uploaded"]     = state.resume_uploaded
     req["finished_at"]     = datetime.now(timezone.utc).isoformat()
     db.set_config(supabase_url, supabase_key, f"apply_req_{job_id}", json.dumps(req))
     _log(f"Result: {status} — {result_msg}")
     for item in state.filled:
-        _log(f"  [{item['source']}] {item['q']} → {item['a'][:60]}")
+        # Question + source only: the repo is public, so logs must not show
+        # answers (phone, salary ...). Full answers are in apply_req_{job_id}.
+        _log(f"  [{item['source']}] {item['q']}")
 
     if success:
         # Update the jobs table so the app shows "applied"
@@ -522,6 +568,48 @@ async def run(job_id: str, supabase_url: str, supabase_key: str) -> None:
             _log(f"Warning: job status update failed — {exc}")
 
 
+# ── Tailored CV ────────────────────────────────────────────────────────────────
+
+CV_OUT_DIR = os.path.join(_DIR, "..", "tailored_cv")   # uploaded as a workflow artifact
+
+
+def _service_key(supabase_key: str) -> str:
+    """cv_master is service_role only; fall back to SUPABASE_KEY if that is it."""
+    return (os.environ.get("SUPABASE_SERVICE_KEY") or supabase_key or "").strip()
+
+
+async def _build_tailored_cv(job_id: str, req: dict, supabase_url: str, supabase_key: str,
+                             groq_key: str, browser=None) -> dict:
+    """Tailor the master CV to this job and print it to PDF.
+
+    Returns {"path", "file", "tailored"} or {} when no master CV is stored.
+    """
+    master = cv_builder.load_master(supabase_url, _service_key(supabase_key))
+    if not master:
+        _log("No master CV in cv_master (needs SUPABASE_SERVICE_KEY) — using LinkedIn's saved CV")
+        return {}
+    job = db.get_job_by_id(supabase_url, supabase_key, job_id) or {}
+    job_info = {"job_title": req.get("job_title") or job.get("title", ""),
+                "company": req.get("company") or job.get("company", "")}
+    cv, tailored = cv_builder.tailor(master, job_info, job.get("description") or "", groq_key)
+    os.makedirs(CV_OUT_DIR, exist_ok=True)
+    name = cv_builder.file_name(cv, job_info)
+    path = os.path.join(CV_OUT_DIR, name)
+    await cv_builder.render_pdf(cv, path, browser=browser)
+    _log(f"Built {'tailored' if tailored else 'master'} CV: {name}")
+    return {"path": path, "file": name, "tailored": tailored}
+
+
+async def build_cv_only(job_id: str, supabase_url: str, supabase_key: str) -> None:
+    """--cv-only: make the tailored CV for a job without applying."""
+    raw = db.get_config(supabase_url, supabase_key, f"apply_req_{job_id}", "")
+    req = json.loads(raw) if raw else {}
+    info = await _build_tailored_cv(job_id, req, supabase_url, supabase_key,
+                                    os.environ.get("GROQ_API_KEY", "").strip())
+    if not info:
+        sys.exit(1)
+
+
 # ── CLI entry point ────────────────────────────────────────────────────────────
 
 def _load_settings() -> dict:
@@ -542,6 +630,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Easy Apply executor")
     parser.add_argument("--job-id", required=True, help="job_id to process")
+    parser.add_argument("--cv-only", action="store_true",
+                        help="only build the tailored CV PDF (no application)")
     args = parser.parse_args()
 
     cfg          = _load_settings()
@@ -552,4 +642,7 @@ if __name__ == "__main__":
         _log("ERROR: Set SUPABASE_URL / SUPABASE_KEY env vars or fill them in settings.json")
         sys.exit(1)
 
-    asyncio.run(run(args.job_id, supa_url, supa_key))
+    if args.cv_only:
+        asyncio.run(build_cv_only(args.job_id, supa_url, supa_key))
+    else:
+        asyncio.run(run(args.job_id, supa_url, supa_key))

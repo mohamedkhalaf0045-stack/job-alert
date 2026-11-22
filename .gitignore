@@ -23,3 +23,6 @@ __pycache__/
 .ruff_cache/
 .vercel
 .gstack/
+
+# Tailored CV PDFs built by cloud/apply_executor.py (personal data)
+tailored_cv/

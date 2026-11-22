@@ -280,6 +280,7 @@ class SupabaseService {
     required String jobTitle,
     required String company,
     required Map<String, dynamic> answers,
+    bool useTailoredCv = true,
   }) async {
     final data = jsonEncode({
       'job_id':    jobId,
@@ -287,6 +288,8 @@ class SupabaseService {
       'job_title': jobTitle,
       'company':   company,
       'answers':   answers,
+      // Cloud worker builds and uploads a CV tailored to this job.
+      'use_tailored_cv': useTailoredCv,
       'status':    'pending',
       'created_at': DateTime.now().toUtc().toIso8601String(),
     });
