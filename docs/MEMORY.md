@@ -62,11 +62,12 @@ Last updated: 2026-11-22
     issue a new `GH_PAT` (repo secret + Vercel). Fixed in code: build-apk.yml no longer
     passes it; the app controls workflows via `web/src/app/api/mobile/github` (admin-only,
     workflow allowlist, GH_PAT server-side). Never put secrets in `--dart-define`.
-  - bot_state and jobs: anon (key is public) has full read/write. Phase 1 migration
-    `cloud/migrations/2026-11-22-security-phase1.sql` (private apply_req_*/cv_data:*,
-    admin-only update_*, admin list in `app_admins`, revoke API execute on trigger funcs)
-    is written but NOT applied yet (Supabase asked for confirmation; owner to approve).
-    After applying, insert the owner's auth user id into `app_admins` (not in the repo).
+  - Phase 1 APPLIED 2026-11-23 (owner said "apply it"):
+    `cloud/migrations/2026-11-22-security-phase1.sql`. apply_req_* and cv_data:* are hidden
+    from anon and non-admin users; update_* is admin-only to write; trigger functions are
+    no longer callable via /rpc. Owner's user id is in `app_admins` (set in the DB, not
+    the repo). Verified as anon: 0 private rows visible, update_apk_url not writable,
+    setting_* still writable (PC worker unaffected). `jobs` still allows anon read/write.
   - Phase 2 (needs owner): PC `settings.json` SupabaseKey → service_role, then remove all
     anon writes (bot_state and jobs). The old 2026-06-10 lockdown migration is superseded.
   - Telegram webhook checks `TELEGRAM_WEBHOOK_SECRET` when set (owner: set it in Vercel and
@@ -213,4 +214,6 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-03: Owner asked to fix the Supabase "RLS Disabled in Public" alert: RLS enabled on `telegram_claude_history` (no policies; only service_role uses it). Migration in `cloud/migrations/`. Gap-fixer runs paused since 2026-10-30 (owner said "Stop"); issue #65 still open.
 - 2026-11-22: Easy Apply upgraded to answer any form question (saved answers → rules → Groq), stop with `needs_input` instead of guessing, and fixed the workflow's missing `supabase` install. Gap-fixer still paused.
 - 2026-11-22: Tailored CV per job in the owner's resume design, uploaded during Easy Apply (master CV in private `cv_master` table).
-- 2026-11-22: Security audit: GitHub PAT found in public APKs (owner to revoke); app now uses a server route for GitHub; DB lockdown phase 1 written, awaiting owner approval.
+- 2026-11-22: Security audit: GitHub PAT found in public APKs (owner to revoke); app now uses a server route for GitHub.
+- 2026-11-23: Owner approved and DB lockdown phase 1 applied. Gap-fixer resumed ("resume").
+- 2026-11-23: Issue #65 closed: 275 late jobs from Oct 30 – Nov 22 (paused period). ~190 LinkedIn late listings (not fixable), 33 finance jobs waiting for the main scan, 26 loose IT matches waiting for the main scan, 20 keyword_gaps (mostly manager titles). Proposed: `Accounts Payable` + `Accounts Receivable` to fast keywords, `IT Technician` to scan keywords (owner decision). Issue #64 was closed before the pause (details not logged).
