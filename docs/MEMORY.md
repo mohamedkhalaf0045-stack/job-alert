@@ -220,3 +220,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-23: Issue #66 closed: 6 LinkedIn late listings (loose IT/System Engineer matches, 13-25h, fast lane running) + Accounts Payable and a telecom PM waiting for a 10h main-scan gap. Gap Monitor 15:15 cron skipped.
 - 2026-11-24: Issue #67 closed: 2 LinkedIn late listings (loose IT Engineer, 23-31h), Solution Architect late pickup, a manager title left alone, and Junior Accounts Payable waiting for an 11.5h main-scan gap.
 - 2026-11-24: Issue #68 closed: 1 LinkedIn late listing (second listing of the Revolut graduate InfoSec job from #67).
+- 2026-11-24: Issue #69 closed: 9 LinkedIn late listings in one batch (fast-keyword UAE IT titles, 21-27h, all collected by the 10:36 scan; fast lane running) + 4 non-fast titles (2 manager, BIM, Accounts Payable) waiting for a 9.5h main-scan gap.
