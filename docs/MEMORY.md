@@ -8,7 +8,7 @@ infrastructure or decisions, update the relevant section here and commit it with
 the work. Prune stale lines instead of only appending. This repo is **public**:
 never write secrets, tokens, chat IDs, emails or personal data here.
 
-Last updated: 2026-11-23
+Last updated: 2026-11-24
 
 ## Owner rules and preferences
 - **1-hour rule:** any LinkedIn job detected more than 1h after posting is a bug
@@ -218,3 +218,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-23: Owner approved and DB lockdown phase 1 applied. Gap-fixer resumed ("resume").
 - 2026-11-23: Issue #65 closed: 275 late jobs from Oct 30 – Nov 22 (paused period). ~190 LinkedIn late listings (not fixable), 33 finance jobs waiting for the main scan, 26 loose IT matches waiting for the main scan, 20 keyword_gaps (mostly manager titles). Proposed: `Accounts Payable` + `Accounts Receivable` to fast keywords, `IT Technician` to scan keywords (owner decision). Issue #64 was closed before the pause (details not logged).
 - 2026-11-23: Issue #66 closed: 6 LinkedIn late listings (loose IT/System Engineer matches, 13-25h, fast lane running) + Accounts Payable and a telecom PM waiting for a 10h main-scan gap. Gap Monitor 15:15 cron skipped.
+- 2026-11-24: Issue #67 closed: 2 LinkedIn late listings (loose IT Engineer, 23-31h), Solution Architect late pickup, a manager title left alone, and Junior Accounts Payable waiting for an 11.5h main-scan gap.
