@@ -222,3 +222,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-24: Issue #68 closed: 1 LinkedIn late listing (second listing of the Revolut graduate InfoSec job from #67).
 - 2026-11-24: Issue #69 closed: 9 LinkedIn late listings in one batch (fast-keyword UAE IT titles, 21-27h, all collected by the 10:36 scan; fast lane running) + 4 non-fast titles (2 manager, BIM, Accounts Payable) waiting for a 9.5h main-scan gap.
 - 2026-11-25: Issue #70 closed: 7 LinkedIn late listings (20-38h, fast lane running), an IT Manager keyword_gap left alone, 3 non-fast titles waiting for a 10h main-scan gap.
+- 2026-11-25: Issue #71 closed: 7 LinkedIn late listings (15-28h, fast lane running) + 4 non-fast titles (IT QA, Accounts Receivable, Data Architect, DevOps) waiting for a 9.8h main-scan gap.
