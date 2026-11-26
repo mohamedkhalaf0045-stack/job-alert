@@ -8,7 +8,7 @@ infrastructure or decisions, update the relevant section here and commit it with
 the work. Prune stale lines instead of only appending. This repo is **public**:
 never write secrets, tokens, chat IDs, emails or personal data here.
 
-Last updated: 2026-11-25
+Last updated: 2026-11-26
 
 ## Owner rules and preferences
 - **1-hour rule:** any LinkedIn job detected more than 1h after posting is a bug
@@ -223,3 +223,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-24: Issue #69 closed: 9 LinkedIn late listings in one batch (fast-keyword UAE IT titles, 21-27h, all collected by the 10:36 scan; fast lane running) + 4 non-fast titles (2 manager, BIM, Accounts Payable) waiting for a 9.5h main-scan gap.
 - 2026-11-25: Issue #70 closed: 7 LinkedIn late listings (20-38h, fast lane running), an IT Manager keyword_gap left alone, 3 non-fast titles waiting for a 10h main-scan gap.
 - 2026-11-25: Issue #71 closed: 7 LinkedIn late listings (15-28h, fast lane running) + 4 non-fast titles (IT QA, Accounts Receivable, Data Architect, DevOps) waiting for a 9.8h main-scan gap.
+- 2026-11-26: Issue #72 closed: 5 LinkedIn late listings (22-35h, incl. a 3-post Talentmate batch; fast lane running) + Systems Architect keyword_gap (also listed late).
