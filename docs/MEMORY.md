@@ -224,3 +224,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-25: Issue #70 closed: 7 LinkedIn late listings (20-38h, fast lane running), an IT Manager keyword_gap left alone, 3 non-fast titles waiting for a 10h main-scan gap.
 - 2026-11-25: Issue #71 closed: 7 LinkedIn late listings (15-28h, fast lane running) + 4 non-fast titles (IT QA, Accounts Receivable, Data Architect, DevOps) waiting for a 9.8h main-scan gap.
 - 2026-11-26: Issue #72 closed: 5 LinkedIn late listings (22-35h, incl. a 3-post Talentmate batch; fast lane running) + Systems Architect keyword_gap (also listed late).
+- 2026-11-26: Issue #73 closed: 14 LinkedIn late listings (14-33h, incl. 2 keyword_gaps; fast lane running) + 4 jobs (Network & Security Engineer, D365, ICT Security, Accounts Receivable) waiting for a 9.8h main-scan gap.
