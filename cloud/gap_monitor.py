@@ -238,6 +238,23 @@ def _linkedin_health(url: str, key: str) -> dict:
     return res
 
 
+HANDLED_CAP = 3000
+
+
+def _merge_handled(handled: set[str], current: set[str], cap: int = HANDLED_CAP) -> list[str]:
+    """Ids to remember as already reported.
+
+    The ids still in this run's window are always kept; older ones fill the rest
+    up to `cap`, newest (highest numeric id) first. Before 2026-11-27 the list was
+    cut to the 500 highest ids, which dropped jobs that were still in the window
+    and re-reported them on every run (#74-#76).
+    """
+    def order(s: str) -> tuple[int, str]:
+        return (len(s), s)  # numeric order for digit ids of different length
+    rest = sorted(handled - current, key=order)[-max(cap - len(current), 0):] if cap > len(current) else []
+    return sorted(current | set(rest), key=order)
+
+
 def _load_handled(url: str, key: str) -> set[str]:
     try:
         return set(json.loads(db.get_config(url, key, "gap_monitor_handled", "[]")))
@@ -392,7 +409,7 @@ def main() -> int:
     if a.auto_fix:
         try:
             db.set_config(url, key, "gap_monitor_handled",
-                          json.dumps(sorted(handled | {f["job_id"] for f in findings})[-500:]))
+                          json.dumps(_merge_handled(handled, {f["job_id"] for f in findings})))
         except Exception as exc:  # noqa: BLE001
             print(f"[Gap] could not store handled ids: {exc}")
     if new_findings or a.always:
