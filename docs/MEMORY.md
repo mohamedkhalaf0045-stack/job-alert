@@ -8,7 +8,7 @@ infrastructure or decisions, update the relevant section here and commit it with
 the work. Prune stale lines instead of only appending. This repo is **public**:
 never write secrets, tokens, chat IDs, emails or personal data here.
 
-Last updated: 2026-11-27
+Last updated: 2026-11-28
 
 ## Owner rules and preferences
 - **1-hour rule:** any LinkedIn job detected more than 1h after posting is a bug
@@ -229,3 +229,4 @@ Open questions to owner: PR per stage? Still use `linux/`, Railway (`railway.tom
 - 2026-11-27: Issue #75 closed: second listing of the Salesforce Solution Architect job from #74.
 - 2026-11-27: Issue #76: the Salesforce job of #74/#75 (same job id 4470659508) was re-reported each run. Root cause: `gap_monitor_handled` kept only the 500 highest ids, so jobs still in the window were dropped and re-flagged. Fixed: `_merge_handled` always keeps the current findings, cap 3000 (test in `cloud/tests/test_gap_monitor.py`).
 - 2026-11-27: Issue #77 closed: 8 LinkedIn late listings (21-30h, 3 manager titles left alone; fast lane running) + Accounts Receivable and OT Cyber Security waiting for a 9.9h main-scan gap. Handled-ids fix verified (511 ids stored, Salesforce job included).
+- 2026-11-28: Issue #78 closed: 3 new (F5 Security Engineer late listing, a manager title, Accounts Receivable in an 8.2h main-scan gap); 10 older findings stayed quiet, confirming the #76 fix.
